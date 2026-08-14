@@ -1,0 +1,28 @@
+# Binaries and build outputs
+/steinel-bridge
+/steinel-bridge.exe
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin/
+dist/
+
+# Local Nabto SDK cache (downloaded via scripts/setup-sdk)
+.sdk/
+
+# Persistent data, pairing keys and secrets
+data/
+*.key
+.env
+.env.local
+scrypted-data/
+
+# OS and Editor artifacts
+.DS_Store
+*.log
+*.tmp
+.idea/
+.vscode/
+*.swp
