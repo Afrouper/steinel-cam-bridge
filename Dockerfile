@@ -52,6 +52,13 @@ WORKDIR /app
 COPY --from=builder /app/steinel-bridge /app/steinel-bridge
 COPY --from=builder /usr/lib/libnabto_client.so /lib/libnabto_client.so
 
+# OCI Image Labels
+LABEL org.opencontainers.image.title="steinel-cam-bridge"
+LABEL org.opencontainers.image.description="Standalone ONVIF, 2-Way Audio & Home Assistant Bridge for Steinel L 625 CAM SC"
+LABEL org.opencontainers.image.authors="Afrouper"
+LABEL org.opencontainers.image.source="https://github.com/Afrouper/steinel-cam-bridge"
+LABEL org.opencontainers.image.licenses="MIT"
+
 # Default configuration environment variables
 ENV CAMERA_IP="192.168.1.100"
 ENV QR_CODE=""
