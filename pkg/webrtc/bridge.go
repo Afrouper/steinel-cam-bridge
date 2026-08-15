@@ -524,9 +524,6 @@ func (b *Bridge) handleDataChannelMessage(data []byte) {
 		}
 		return
 	}
-
-	// 3. Log all other incoming camera reports / events
-	log.Printf("[DataChannel] 📩 Received camera message: %s", str)
 }
 
 func (b *Bridge) onMCUStatus(cfg *mcu.ConfigInfo) {
