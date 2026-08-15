@@ -20,15 +20,20 @@ type MotionEvent struct {
 }
 
 type DeviceStatus struct {
-	IsMotion     bool      `json:"is_motion"`
-	MotionLastAt time.Time `json:"motion_last_at"`
-	LampMode     int       `json:"lamp_mode"`
-	Lux          int       `json:"lux"`
-	PIRActive    bool      `json:"pir_active"`
-	PIRThreshold int       `json:"pir_threshold"`
-	FirmwareVer  string    `json:"firmware_ver"`
-	Resolution   string    `json:"resolution"`
-	LastSeen     time.Time `json:"last_seen"`
+	IsMotion       bool      `json:"is_motion"`
+	MotionLastAt   time.Time `json:"motion_last_at"`
+	LampMode       int       `json:"lamp_mode"` // 0=Off, 1=On (Dauerlicht), 2=Sensor (Auto)
+	Lux            int       `json:"lux"`
+	PIRActive      bool      `json:"pir_active"`
+	PIRSensitivity int       `json:"pir_sensitivity"`
+	Highlight      int       `json:"highlight"`      // 10 - 100%
+	HighlightTime  int       `json:"highlight_time"` // 5 - 900s
+	Lowlight       int       `json:"lowlight"`       // 0 - 50%
+	LowlightTime   int       `json:"lowlight_time"`
+	ColorTemp      int       `json:"color_temp"`
+	FirmwareVer    string    `json:"firmware_ver"`
+	Resolution     string    `json:"resolution"`
+	LastSeen       time.Time `json:"last_seen"`
 }
 
 type Listener func(evt EventType, data interface{})
@@ -44,8 +49,11 @@ var GlobalBus = NewBus()
 func NewBus() *Bus {
 	return &Bus{
 		status: DeviceStatus{
-			Resolution: "1080p",
-			LastSeen:   time.Now(),
+			Highlight:      100,
+			HighlightTime:  60,
+			PIRSensitivity: 50,
+			Resolution:     "1080p",
+			LastSeen:       time.Now(),
 		},
 	}
 }

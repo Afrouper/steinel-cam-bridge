@@ -9,19 +9,19 @@ import (
 )
 
 type ConfigInfo struct {
-	HVersion                  string
-	SVersion                  string
-	Mode                      int
-	Lux                       int
-	PIRActive                 bool
-	MotionDetected            bool
-	PhotosensitiveDetection   bool
-	PIRSensitivity            int
-	ColorTemp                 int
-	Highlight                 int
-	HighlightTime             int
-	Lowlight                  int
-	LowlightTime              int
+	HVersion                string
+	SVersion                string
+	Mode                    int
+	Lux                     int
+	PIRActive               bool
+	MotionDetected          bool
+	PhotosensitiveDetection bool
+	PIRSensitivity          int
+	ColorTemp               int
+	Highlight               int
+	HighlightTime           int
+	Lowlight                int
+	LowlightTime            int
 }
 
 // ParseFrame parses the 18-byte (36-hex) MCU frame starting with 5A0F0F
@@ -109,3 +109,66 @@ const (
 	// CmdLightAuto: 5A 02 01 02 -> CS 5F
 	CmdLightAuto = "5A020102"
 )
+
+// BuildSetMode creates command for mode: 0 = Off, 1 = On, 2 = Sensor Auto
+func BuildSetMode(mode int) (string, error) {
+	if mode < 0 || mode > 2 {
+		return "", fmt.Errorf("invalid mode %d (must be 0, 1, 2)", mode)
+	}
+	return BuildCommand(fmt.Sprintf("5A0201%02X", mode))
+}
+
+// BuildSetHighlight creates command for highlight brightness (10 - 100%)
+func BuildSetHighlight(percent int) (string, error) {
+	if percent < 0 {
+		percent = 0
+	} else if percent > 100 {
+		percent = 100
+	}
+	return BuildCommand(fmt.Sprintf("5A0207%02X", percent))
+}
+
+// BuildSetHighlightTime creates command for highlight duration in seconds (5 - 900s)
+func BuildSetHighlightTime(seconds int) (string, error) {
+	if seconds < 5 {
+		seconds = 5
+	} else if seconds > 900 {
+		seconds = 900
+	}
+	return BuildCommand(fmt.Sprintf("5A0308%04X", seconds))
+}
+
+// BuildSetLowlight creates command for lowlight / base light brightness (0 - 50%)
+func BuildSetLowlight(percent int) (string, error) {
+	if percent < 0 {
+		percent = 0
+	} else if percent > 50 {
+		percent = 50
+	}
+	return BuildCommand(fmt.Sprintf("5A020A%02X", percent))
+}
+
+// BuildSetLowlightTime creates command for lowlight duration
+func BuildSetLowlightTime(timeVal int) (string, error) {
+	return BuildCommand(fmt.Sprintf("5A030B%04X", timeVal))
+}
+
+// BuildSetPIRSensitivity creates command for PIR sensitivity (0 - 100%)
+func BuildSetPIRSensitivity(percent int) (string, error) {
+	if percent < 0 {
+		percent = 0
+	} else if percent > 100 {
+		percent = 100
+	}
+	return BuildCommand(fmt.Sprintf("5A0206%02X", percent))
+}
+
+// BuildSetLuxThreshold creates command for ambient light trigger threshold in Lux (2 - 1000 lx, 10000 = day)
+func BuildSetLuxThreshold(lux int) (string, error) {
+	if lux < 2 {
+		lux = 2
+	} else if lux > 10000 {
+		lux = 10000
+	}
+	return BuildCommand(fmt.Sprintf("5A0304%04X", lux))
+}

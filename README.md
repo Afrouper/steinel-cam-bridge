@@ -1,39 +1,44 @@
-# Steinel L 625 CAM SC — Standalone ONVIF Profile S/T & 2-Way Audio Bridge
+# Steinel L 625 CAM SC — Standalone ONVIF, 2-Way Audio & Home Assistant Bridge
 
 [![CI Test & Build](https://github.com/OWNER/REPO/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/REPO/actions/workflows/ci.yml)
 [![Docker Image](https://img.shields.io/badge/Docker-GHCR-blue?logo=docker)](https://github.com/OWNER/REPO/pkgs/container/steinel-cam-bridge)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Go Version](https://img.shields.io/badge/Go-1.24-00ADD8?logo=go)](https://go.dev)
 
-Ein hochperformanter, 100 % autarker **Go-Daemon**, der die **Steinel L 625 CAM SC** Außenleuchte in eine standardkonforme **ONVIF Profile S/T Kamera** mit **RTSP-Streaming** und **2-Wege-Audio (Gegensprechen)** verwandelt – zur nahtlosen Integration in **Scrypted / Apple HomeKit Secure Video (HKSV)**, **Home Assistant**, **Synology Surveillance Station** und **Frigate**.
+Ein hochperformanter, 100 % autarker **Go-Daemon**, der die **Steinel L 625 CAM SC** Außenleuchte in eine standardkonforme **ONVIF Profile S/T Kamera** mit **RTSP-Streaming**, **2-Wege-Audio (Gegensprechen)** und vollständiger **MQTT Home Assistant Auto-Discovery** verwandelt – zur nahtlosen Integration in **Home Assistant**, **Scrypted / Apple HomeKit Secure Video (HKSV)**, **Synology Surveillance Station** und **Frigate**.
 
 ---
 
 ## ✨ Features
 
+- **🏠 Volle Home Assistant MQTT Auto-Discovery**:
+  - **Hauptlicht (`light`)**: An/Aus und Dimmung (`10`–`100 %`).
+  - **Betriebsmodus (`select`)**: Umschalten zwischen `Sensor (Automatik)`, `Dauerlicht` und `Aus`.
+  - **Helligkeitssensor (`sensor`)**: Live-Dämmerungswert in Lux (`lx`).
+  - **Bewegungsmelder (`binary_sensor`)**: Hardware-PIR Bewegungserkennung (`motion`).
+  - **PIR-Status (`binary_sensor`)**: Zeigt an, ob der PIR-Sensor aktiv/scharf ist.
+  - **Schieberegler (`number`)**:
+    - PIR-Empfindlichkeit (`0`–`100 %`)
+    - Dämmerungsschwelle (`2`–`1000 lx`)
+    - Nachlaufzeit des Hauptlichts (`5`–`900 s`)
+    - Grundlicht Helligkeit (`0`–`50 %`)
+  - **Alarmsirene (`siren`)**: Akustischer Alarm der Außenleuchte.
+  - **Videoauflösung (`select`)**: Live-Umschaltung (`1080p`, `720p`, `360p`).
 - **Standardisierter ONVIF Profile S & Profile T Server**:
-  - **WS-Discovery (UDP 3702)**: Automatische Erkennung im lokalen Netzwerk durch Scrypted, Home Assistant, NVRs.
-  - **Dynamische Auflösungssteuerung**: `Profile_Main` (1080p @ 15fps) & `Profile_Sub` (360p @ 10fps) sowie Umschaltung zur Laufzeit via `SetVideoEncoderConfiguration`.
-  - **Snapshot-API (`/snapshot.jpg`)**: Bereitstellung von JPEG-Vorschaubildern für Push-Benachrichtigungen.
+  - **WS-Discovery (UDP 3702)**: Automatische Erkennung im lokalen Netzwerk.
+  - **Snapshot-API (`/snapshot.jpg`)**: JPEG-Vorschaubilder für Benachrichtigungen.
 - **🔊 Volles 2-Way Audio (Gegensprechen)**:
   - **RTSP Audio Backchannel**: Durchleitung von HomeKit/Scrypted-Sprachdaten direkt an den Lautsprecher der Steinel-Leuchte (PCMU / G.711u 8000 Hz).
 - **🚨 Hardware-PIR Bewegungserkennung (ONVIF Events)**:
-  - Empfang der physischen MCU-Sensorberichte der Leuchte.
-  - Weitergabe als **ONVIF Motion Events** (`tns1:RuleEngine/CellMotionDetector/Motion`) an Scrypted/HKSV – **keine Fehlalarme, 0 % Server-CPU-Last**.
-- **💡 Integrierte Lampen- & Sensorsteuerung**:
-  - Licht ein-/ausschalten, Sensorbetrieb aktivieren (`/api/light?mode=on|off|auto` oder ONVIF Auxiliary/Relay).
-  - Statusabfrage via REST (`/api/status`).
+  - Weitergabe als **ONVIF Motion Events** (`tns1:RuleEngine/CellMotionDetector/Motion`) an Scrypted/HKSV – **0 % Server-CPU-Last**.
 - **100 % Autarkes Single-Binary**: Kein Python, kein Node.js und kein separater MediaMTX-Server erforderlich.
-- **24/7 Resilienz & Watchdog**:
-  - **RTP-Silence Watchdog**: Erkennt Stream-Abbrüche automatisch und führt gezielte Session-Resets durch.
-  - **30s Cooldown**: Wartet 30 Sekunden vor jedem Reconnect, um neu startende Kameras zu schonen.
-  - **Automatischer mDNS-Wake-Up**: Weckt die Kamera zuverlässig auf.
+- **24/7 Resilienz & Watchdog**: RTP-Silence Watchdog, 30s Cooldown, mDNS-Wakeup.
 
 ---
 
 ## 🐳 Bereitstellung (Docker & Docker Compose)
 
-### Option A: Standalone Docker Run
+### Option A: Standalone Docker Run (mit MQTT & Home Assistant)
 
 ```bash
 docker run -d \
@@ -42,6 +47,9 @@ docker run -d \
   --net=host \
   -e CAMERA_IP="192.168.1.100" \
   -e QR_CODE="did=de-xxxxxxx,pid=pr-xxxxx,sct=xxxx,pairPwd=xxxx" \
+  -e MQTT_BROKER="tcp://192.168.1.50:1883" \
+  -e MQTT_USER="homeassistant" \
+  -e MQTT_PASSWORD="secretpassword" \
   -v ./data:/data \
   ghcr.io/Afrouper/steinel-cam-bridge:latest
 ```
@@ -61,6 +69,9 @@ services:
       - RESOLUTION=1080p
       - RTSP_PORT=8554
       - ONVIF_PORT=8000
+      - MQTT_BROKER=tcp://192.168.1.50:1883
+      - MQTT_USER=homeassistant
+      - MQTT_PASSWORD=secretpassword
     volumes:
       - ./data:/data
 
@@ -84,18 +95,15 @@ docker compose up -d
 
 ---
 
-## 📱 Einbindung in Scrypted (Apple HomeKit / HKSV)
+## 📱 Einbindung in Home Assistant & Scrypted
 
-1. In der Scrypted Management Console das **ONVIF Plugin** installieren.
-2. Auf **Add ONVIF Camera** klicken:
-   - **IP-Adresse**: `<IP-des-Docker-Hosts>` (Port `8000`)
-   - Benutzername / Passwort: leer lassen.
-3. Scrypted erkennt automatisch:
-   - **Video Stream**: 1080p H.264
-   - **Audio Stream**: PCMU Mikrofon
-   - **Two-Way Audio**: Gegensprechanlage über ONVIF Profile T
-   - **Motion Sensor**: Hardware-PIR der Steinel-Leuchte
-4. Im **HomeKit Plugin** die Kamera aktivieren ➔ In Apple Home erscheint die Kamera inkl. Gegensprechen und Aufnahme-Auslöser!
+### 1. Home Assistant (MQTT)
+Sobald `MQTT_BROKER` konfiguriert ist, verbindet sich die Bridge mit dem Broker. In Home Assistant unter **Einstellungen ➔ Geräte & Dienste ➔ MQTT** erscheint automatisch das Gerät **"Steinel L 625 CAM SC"** mit allen Licht-, Sensor- und Steuerungsentitäten!
+
+### 2. Scrypted (Apple HomeKit / HKSV)
+1. Im Scrypted **ONVIF Plugin** auf *Add Camera* klicken (Host-IP, Port `8000`).
+2. Scrypted erkennt automatisch **1080p Video, Mikrofon, Gegensprechanlage und den Hardware-PIR-Bewegungssensor**.
+3. Im **HomeKit Plugin** die Kamera aktivieren ➔ Fertig!
 
 ---
 
@@ -105,8 +113,8 @@ docker compose up -d
 # 1. Offizielles Nabto Client SDK nach .sdk/ herunterladen (git-ignored)
 ./scripts/setup-sdk.sh
 
-# 2. Lokal bauen und starten
-./scripts/run-dev.sh -ip 192.168.1.100 -qr "did=de-...,pid=pr-...,sct=...,pairPwd=..."
+# 2. Lokal bauen und starten (optional mit MQTT)
+./scripts/run-dev.sh -ip 192.168.1.100 -qr "did=de-...,pid=pr-...,sct=...,pairPwd=..." -mqtt-broker "tcp://192.168.1.50:1883"
 ```
 
 ---
@@ -121,7 +129,11 @@ docker compose up -d
 | `RESOLUTION` | `-res` | `1080p` | Videoauflösung (`1080p`, `720p`, `360p`) |
 | `RTSP_PORT` | `-port` | `8554` | Port des integrierten RTSP-Servers |
 | `ONVIF_PORT` | `-onvif` | `8000` | Port des integrierten ONVIF HTTP-Servers |
-| `RTSP_PATH` | `-path` | `steinel` | Pfad des RTSP-Streams (`rtsp://host:port/path`) |
+| `MQTT_BROKER` | `-mqtt-broker` | `""` | MQTT Broker URL (z. B. `tcp://192.168.1.100:1883`) |
+| `MQTT_USER` | `-mqtt-user` | `""` | MQTT Benutzername |
+| `MQTT_PASSWORD` | `-mqtt-pass` | `""` | MQTT Passwort |
+| `MQTT_TOPIC_PREFIX` | `-mqtt-topic` | `steinel/<did>` | MQTT Basis-Topic |
+| `MQTT_DISCOVERY_PREFIX` | `-mqtt-disc` | `homeassistant` | Home Assistant MQTT Auto-Discovery Prefix |
 
 ---
 

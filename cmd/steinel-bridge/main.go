@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"time"
 
+	"steinel-cam-bridge/pkg/mcu"
+	"steinel-cam-bridge/pkg/mqtt"
 	"steinel-cam-bridge/pkg/nabto"
 	"steinel-cam-bridge/pkg/onvif"
 	"steinel-cam-bridge/pkg/rtsp"
@@ -52,6 +54,96 @@ func (m *BridgeManager) SetLampState(mode string) error {
 	return b.SetLampState(mode)
 }
 
+func (m *BridgeManager) SetHighlight(percent int) error {
+	m.mu.RLock()
+	b := m.currentBridge
+	m.mu.RUnlock()
+
+	if b == nil {
+		return fmt.Errorf("camera bridge offline")
+	}
+	b64, err := mcu.BuildSetHighlight(percent)
+	if err != nil {
+		return err
+	}
+	return b.SendCommand("tran_ctl", map[string]interface{}{"data": b64})
+}
+
+func (m *BridgeManager) SetHighlightTime(seconds int) error {
+	m.mu.RLock()
+	b := m.currentBridge
+	m.mu.RUnlock()
+
+	if b == nil {
+		return fmt.Errorf("camera bridge offline")
+	}
+	b64, err := mcu.BuildSetHighlightTime(seconds)
+	if err != nil {
+		return err
+	}
+	return b.SendCommand("tran_ctl", map[string]interface{}{"data": b64})
+}
+
+func (m *BridgeManager) SetLowlight(percent int) error {
+	m.mu.RLock()
+	b := m.currentBridge
+	m.mu.RUnlock()
+
+	if b == nil {
+		return fmt.Errorf("camera bridge offline")
+	}
+	b64, err := mcu.BuildSetLowlight(percent)
+	if err != nil {
+		return err
+	}
+	return b.SendCommand("tran_ctl", map[string]interface{}{"data": b64})
+}
+
+func (m *BridgeManager) SetLowlightTime(timeVal int) error {
+	m.mu.RLock()
+	b := m.currentBridge
+	m.mu.RUnlock()
+
+	if b == nil {
+		return fmt.Errorf("camera bridge offline")
+	}
+	b64, err := mcu.BuildSetLowlightTime(timeVal)
+	if err != nil {
+		return err
+	}
+	return b.SendCommand("tran_ctl", map[string]interface{}{"data": b64})
+}
+
+func (m *BridgeManager) SetPIRSensitivity(percent int) error {
+	m.mu.RLock()
+	b := m.currentBridge
+	m.mu.RUnlock()
+
+	if b == nil {
+		return fmt.Errorf("camera bridge offline")
+	}
+	b64, err := mcu.BuildSetPIRSensitivity(percent)
+	if err != nil {
+		return err
+	}
+	return b.SendCommand("tran_ctl", map[string]interface{}{"data": b64})
+}
+
+func (m *BridgeManager) SetLuxThreshold(lux int) error {
+	m.mu.RLock()
+	b := m.currentBridge
+	m.mu.RUnlock()
+
+	if b == nil {
+		return fmt.Errorf("camera bridge offline")
+	}
+	b64, err := mcu.BuildSetLuxThreshold(lux)
+	if err != nil {
+		return err
+	}
+	return b.SendCommand("tran_ctl", map[string]interface{}{"data": b64})
+}
+
 func (m *BridgeManager) SetSiren(on bool) error {
 	m.mu.RLock()
 	b := m.currentBridge
@@ -74,12 +166,17 @@ func main() {
 	rtspPort := flag.Int("port", 8554, "RTSP server port")
 	rtspPath := flag.String("path", "steinel", "RTSP stream path (e.g. steinel -> rtsp://host:port/steinel)")
 	onvifPort := flag.Int("onvif", 8000, "ONVIF HTTP server port")
+	mqttBroker := flag.String("mqtt-broker", "", "MQTT broker URL (e.g. tcp://192.168.1.100:1883)")
+	mqttUser := flag.String("mqtt-user", "", "MQTT username")
+	mqttPass := flag.String("mqtt-pass", "", "MQTT password")
+	mqttTopic := flag.String("mqtt-topic", "", "MQTT topic prefix")
+	mqttDisc := flag.String("mqtt-disc", "homeassistant", "MQTT Home Assistant Discovery Prefix")
 	flag.Parse()
 
-	fmt.Println("═══════════════════════════════════════════════════════════════")
-	fmt.Println(" Steinel L 625 CAM SC — Standalone ONVIF & 2-Way Audio Bridge")
-	fmt.Println(" 100% Native Single Binary (Nabto + WebRTC + RTSP + ONVIF)")
-	fmt.Println("═══════════════════════════════════════════════════════════════")
+	fmt.Println("═══════════════════════════════════════════════════════════════════")
+	fmt.Println(" Steinel L 625 CAM SC — Standalone ONVIF & Home Assistant Bridge")
+	fmt.Println(" 100% Native Single Binary (Nabto + WebRTC + RTSP + ONVIF + MQTT)")
+	fmt.Println("═══════════════════════════════════════════════════════════════════")
 
 	// Default fallback config
 	cfg := &nabto.Config{
@@ -117,6 +214,21 @@ func main() {
 			*onvifPort = p
 		}
 	}
+	if mb := os.Getenv("MQTT_BROKER"); mb != "" {
+		*mqttBroker = mb
+	}
+	if mu := os.Getenv("MQTT_USER"); mu != "" {
+		*mqttUser = mu
+	}
+	if mp := os.Getenv("MQTT_PASSWORD"); mp != "" {
+		*mqttPass = mp
+	}
+	if mt := os.Getenv("MQTT_TOPIC_PREFIX"); mt != "" {
+		*mqttTopic = mt
+	}
+	if md := os.Getenv("MQTT_DISCOVERY_PREFIX"); md != "" {
+		*mqttDisc = md
+	}
 	if sct := os.Getenv("SCT"); sct != "" {
 		cfg.SCT = sct
 	}
@@ -138,6 +250,9 @@ func main() {
 	log.Printf("[Config] Camera: %s (ID: %s, Res: %s)", cfg.CameraIP, cfg.DeviceID, *resolution)
 	log.Printf("[Config] Key:    %s", cfg.KeyPath)
 	log.Printf("[Config] Ports:  RTSP=%d, ONVIF=%d, WS-Discovery=3702/udp", *rtspPort, *onvifPort)
+	if *mqttBroker != "" {
+		log.Printf("[Config] MQTT:   Broker=%s, Discovery=%s", *mqttBroker, *mqttDisc)
+	}
 
 	// Context and signal trap for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
@@ -186,9 +301,41 @@ func main() {
 		log.Printf("[!] Warning: Could not start ONVIF server: %v", err)
 	}
 
+	// 3. Start MQTT Client (Optional)
+	if *mqttBroker != "" {
+		mqttClient := mqtt.NewClient(mqtt.Config{
+			Broker:          *mqttBroker,
+			Username:        *mqttUser,
+			Password:        *mqttPass,
+			TopicPrefix:     *mqttTopic,
+			DiscoveryPrefix: *mqttDisc,
+			DeviceID:        cfg.DeviceID,
+			ProductID:       cfg.ProductID,
+			Model:           "L 625 CAM SC",
+			BridgeHTTPURL:   fmt.Sprintf("http://%s:%d", cfg.CameraIP, *onvifPort),
+		}, mqtt.Callbacks{
+			SetLampMode:      bridgeMgr.SetLampState,
+			SetHighlight:     bridgeMgr.SetHighlight,
+			SetHighlightTime: bridgeMgr.SetHighlightTime,
+			SetLowlight:      bridgeMgr.SetLowlight,
+			SetLowlightTime:  bridgeMgr.SetLowlightTime,
+			SetPIRSensitivity: bridgeMgr.SetPIRSensitivity,
+			SetLuxThreshold:  bridgeMgr.SetLuxThreshold,
+			SetSiren:         bridgeMgr.SetSiren,
+			SetResolution:    bridgeMgr.SetResolution,
+		})
+		defer mqttClient.Close()
+
+		go func() {
+			if err := mqttClient.Start(ctx); err != nil {
+				log.Printf("[MQTT] ⚠️ MQTT client error: %v", err)
+			}
+		}()
+	}
+
 	const reconnectCooldown = 30 * time.Second
 
-	// 3. Supervisor loop for Nabto + WebRTC
+	// 4. Supervisor loop for Nabto + WebRTC
 	for ctx.Err() == nil {
 		client, err := nabto.NewClient(cfg)
 		if err != nil {

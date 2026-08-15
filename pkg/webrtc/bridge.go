@@ -507,7 +507,12 @@ func (b *Bridge) onMCUStatus(cfg *mcu.ConfigInfo) {
 	status.LampMode = cfg.Mode
 	status.Lux = cfg.Lux
 	status.PIRActive = cfg.PIRActive
-	status.PIRThreshold = cfg.PIRSensitivity
+	status.PIRSensitivity = cfg.PIRSensitivity
+	status.Highlight = cfg.Highlight
+	status.HighlightTime = cfg.HighlightTime
+	status.Lowlight = cfg.Lowlight
+	status.LowlightTime = cfg.LowlightTime
+	status.ColorTemp = cfg.ColorTemp
 	status.Resolution = b.resolution
 	events.GlobalBus.UpdateStatus(status)
 
