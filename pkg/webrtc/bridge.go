@@ -237,13 +237,16 @@ func (b *Bridge) Run(ctx context.Context) error {
 		// Request resolution
 		_ = b.SetResolution(b.resolution)
 
+		// Enable notification setting on camera
+		_ = b.sendJSONCmd("set_notification_setting", map[string]interface{}{"enable": true})
+
 		// Request media tracks via CoAP
 		go func() {
 			time.Sleep(200 * time.Millisecond)
 			_, _ = b.nabtoClient.RequestTracks()
 		}()
 
-		// Start periodic MCU polling (every 15s)
+		// Start periodic MCU polling (every 2s)
 		go b.runMCUPollingLoop(sessCtx)
 	})
 
@@ -467,11 +470,29 @@ func (b *Bridge) SetLampState(mode string) error {
 	}
 }
 
+func (b *Bridge) sendJSONCmd(cmdName string, info map[string]interface{}) error {
+	b.mu.Lock()
+	dc := b.dc
+	b.mu.Unlock()
+
+	if dc == nil {
+		return fmt.Errorf("data channel not available")
+	}
+
+	cmd := map[string]interface{}{
+		"from":  "Android",
+		"cmd":   cmdName,
+		"msgid": uuid.New().String(),
+	}
+	if info != nil {
+		cmd["info"] = info
+	}
+	data, _ := json.Marshal(cmd)
+	return dc.SendText(string(data))
+}
+
 func (b *Bridge) handleDataChannelMessage(data []byte) {
 	str := string(data)
-	if !strings.Contains(str, "resp") && !strings.Contains(str, "tran_report") {
-		return
-	}
 
 	var root map[string]interface{}
 	if err := json.Unmarshal(data, &root); err != nil {
@@ -499,7 +520,11 @@ func (b *Bridge) handleDataChannelMessage(data []byte) {
 			status.FirmwareVer = fw
 			events.GlobalBus.UpdateStatus(status)
 		}
+		return
 	}
+
+	// 3. Log all other incoming camera reports / events
+	log.Printf("[DataChannel] 📩 Received camera message: %s", str)
 }
 
 func (b *Bridge) onMCUStatus(cfg *mcu.ConfigInfo) {
