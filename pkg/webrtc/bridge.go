@@ -625,6 +625,26 @@ func (b *Bridge) runWatchdogLoop(ctx context.Context, cancel context.CancelFunc)
 	}
 }
 
+// RequestKeyframe sends an immediate RTCP Picture Loss Indication (PLI) to the camera
+func (b *Bridge) RequestKeyframe() {
+	ssrc := atomic.LoadUint32(&b.videoSSRC)
+	b.mu.Lock()
+	pc := b.pc
+	b.mu.Unlock()
+
+	if pc != nil {
+		targetSSRC := ssrc
+		if targetSSRC == 0 {
+			targetSSRC = 1
+		}
+		_ = pc.WriteRTCP([]rtcp.Packet{
+			&rtcp.PictureLossIndication{
+				MediaSSRC: targetSSRC,
+			},
+		})
+	}
+}
+
 func (b *Bridge) runPLILoop(ctx context.Context) {
 	// Fast initial burst of PLIs to request immediate keyframe
 	time.Sleep(500 * time.Millisecond)

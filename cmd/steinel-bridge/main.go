@@ -158,6 +158,16 @@ func (m *BridgeManager) SetSiren(on bool) error {
 	return b.SendCommand("alarm_voice_ctl", cmd)
 }
 
+func (m *BridgeManager) RequestKeyframe() {
+	m.mu.RLock()
+	b := m.currentBridge
+	m.mu.RUnlock()
+
+	if b != nil {
+		b.RequestKeyframe()
+	}
+}
+
 func main() {
 	qrFlag := flag.String("qr", "", "Steinel camera QR code string (did=...,pid=...,sct=...,pairPwd=...)")
 	ipFlag := flag.String("ip", "", "Steinel camera local IP address")
@@ -274,6 +284,8 @@ func main() {
 		log.Fatalf("[!] Failed to initialize RTSP server: %v", err)
 	}
 	defer rtspServer.Close()
+
+	rtspServer.SetOnPlayHandler(bridgeMgr.RequestKeyframe)
 
 	if err := rtspServer.Start(); err != nil {
 		log.Fatalf("[!] Failed to start RTSP server: %v", err)
@@ -395,7 +407,7 @@ func main() {
 		log.Printf("[Bridge] 🚀 [ONLINE] Stream ready at rtsp://0.0.0.0:%d/%s", *rtspPort, *rtspPath)
 		log.Printf("[Bridge] 🛰️ [ONVIF] Endpoints active at http://0.0.0.0:%d/onvif/device_service", *onvifPort)
 
-		bridge := webrtc.NewBridge(client, stream, rtspServer, *resolution, 3*time.Second)
+		bridge := webrtc.NewBridge(client, stream, rtspServer, *resolution, 2*time.Second)
 		bridgeMgr.SetBridge(bridge)
 
 		_ = bridge.Run(ctx)
