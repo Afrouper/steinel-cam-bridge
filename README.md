@@ -26,7 +26,7 @@ Ein hochperformanter, 100 % autarker **Go-Daemon**, der die **Steinel L 625 CAM 
   - **Videoauflösung (`select`)**: Live-Umschaltung (`1080p`, `720p`, `360p`).
 - **Standardisierter ONVIF Profile S & Profile T Server**:
   - **WS-Discovery (UDP 3702)**: Automatische Erkennung im lokalen Netzwerk.
-  - **Snapshot-API (`/snapshot.jpg`)**: JPEG-Vorschaubilder für Benachrichtigungen.
+  - **Native Live-Snapshots**: NVRs und Clients (z. B. Scrypted Prebuffer, Home Assistant) generieren hochauflösende Live-Standbilder direkt aus dem H.264-Videostream ohne Dummy-Platzhalter.
 - **🔊 Volles 2-Way Audio (Gegensprechen)**:
   - **RTSP Audio Backchannel**: Durchleitung von HomeKit/Scrypted-Sprachdaten direkt an den Lautsprecher der Steinel-Leuchte (PCMU / G.711u 8000 Hz).
 - **🚨 Hardware-PIR Bewegungserkennung (ONVIF Events)**:

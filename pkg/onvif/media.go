@@ -34,9 +34,6 @@ func (h *MediaHandler) Handle(action string, reqXML string, host string) (string
 	if strings.Contains(action, "GetStreamUri") || strings.Contains(reqXML, "GetStreamUri") {
 		return h.getStreamUri(host), nil
 	}
-	if strings.Contains(action, "GetSnapshotUri") || strings.Contains(reqXML, "GetSnapshotUri") {
-		return h.getSnapshotUri(host), nil
-	}
 	if strings.Contains(action, "GetVideoEncoderConfigurationOptions") || strings.Contains(reqXML, "GetVideoEncoderConfigurationOptions") {
 		return h.getVideoEncoderConfigurationOptions(), nil
 	}
@@ -183,20 +180,6 @@ func (h *MediaHandler) getStreamUri(host string) string {
     <tt:Timeout>PT60S</tt:Timeout>
   </trt:MediaUri>
 </trt:GetStreamUriResponse>`, NS_TRT, NS_TT, rtspURL)
-}
-
-func (h *MediaHandler) getSnapshotUri(host string) string {
-	ip := extractHostIP(host)
-	snapURL := fmt.Sprintf("http://%s:%d/snapshot.jpg", ip, h.onvifPort)
-
-	return fmt.Sprintf(`<trt:GetSnapshotUriResponse xmlns:trt="%s" xmlns:tt="%s">
-  <trt:MediaUri>
-    <tt:Uri>%s</tt:Uri>
-    <tt:InvalidAfterConnect>false</tt:InvalidAfterConnect>
-    <tt:InvalidAfterReboot>false</tt:InvalidAfterReboot>
-    <tt:Timeout>PT60S</tt:Timeout>
-  </trt:MediaUri>
-</trt:GetSnapshotUriResponse>`, NS_TRT, NS_TT, snapURL)
 }
 
 func (h *MediaHandler) getVideoEncoderConfigurationOptions() string {

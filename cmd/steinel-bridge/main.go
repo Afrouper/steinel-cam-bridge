@@ -305,7 +305,6 @@ func main() {
 		},
 		bridgeMgr.SetLampState,
 		bridgeMgr.SetSiren,
-		rtspServer.GetSnapshot,
 	)
 	defer onvifServer.Close()
 

@@ -14,9 +14,4 @@ func TestServerStartClose(t *testing.T) {
 	if err := srv.Start(); err != nil {
 		t.Fatalf("Failed to start server: %v", err)
 	}
-
-	snap := srv.GetSnapshot()
-	if len(snap) == 0 {
-		t.Errorf("Expected snapshot not to be empty")
-	}
 }

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"io"
-	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -35,7 +34,6 @@ func TestONVIFServices(t *testing.T) {
 		changeRes,
 		nil,
 		setLamp,
-		nil,
 		nil,
 	)
 
@@ -149,14 +147,6 @@ func TestONVIFServices(t *testing.T) {
 
 	if lampMode != "on" {
 		t.Errorf("Expected lampMode on, got %s", lampMode)
-	}
-
-	// 6. Test Snapshot Endpoint
-	req = httptest.NewRequest("GET", "/snapshot.jpg", nil)
-	w = httptest.NewRecorder()
-	server.handleSnapshot(w, req)
-	if w.Result().StatusCode != http.StatusOK || w.Header().Get("Content-Type") != "image/jpeg" {
-		t.Errorf("Snapshot endpoint failed with status %d", w.Result().StatusCode)
 	}
 }
 

@@ -24,7 +24,6 @@ type Server struct {
 	eventHandler  *EventHandler
 	deviceIO      *DeviceIOHandler
 	discovery     *DiscoveryServer
-	snapshotFunc  func() []byte
 	mu            sync.RWMutex
 }
 
@@ -38,7 +37,6 @@ func NewServer(
 	rebootFunc func() error,
 	setLampFunc func(mode string) error,
 	setSirenFunc func(on bool) error,
-	snapshotFunc func() []byte,
 ) *Server {
 	if port == 0 {
 		port = 8000
@@ -57,7 +55,6 @@ func NewServer(
 		eventHandler:  evtHandler,
 		deviceIO:      ioHandler,
 		discovery:     discServer,
-		snapshotFunc:  snapshotFunc,
 	}
 
 	mux := http.NewServeMux()
@@ -65,7 +62,6 @@ func NewServer(
 	mux.HandleFunc("/onvif/media_service", s.handleSOAP)
 	mux.HandleFunc("/onvif/event_service", s.handleSOAP)
 	mux.HandleFunc("/onvif/deviceio_service", s.handleSOAP)
-	mux.HandleFunc("/snapshot.jpg", s.handleSnapshot)
 	mux.HandleFunc("/api/status", s.handleAPIStatus)
 	mux.HandleFunc("/api/light", s.handleAPILight)
 
@@ -133,7 +129,7 @@ func (s *Server) handleSOAP(w http.ResponseWriter, r *http.Request) {
 		// Fallback detection by content
 		if strings.Contains(reqStr, "GetDeviceInformation") || strings.Contains(reqStr, "GetCapabilities") || strings.Contains(reqStr, "GetServices") {
 			innerResp, handleErr = s.deviceHandler.Handle(action, reqStr, host)
-		} else if strings.Contains(reqStr, "GetProfiles") || strings.Contains(reqStr, "GetStreamUri") || strings.Contains(reqStr, "GetSnapshotUri") {
+		} else if strings.Contains(reqStr, "GetProfiles") || strings.Contains(reqStr, "GetStreamUri") {
 			innerResp, handleErr = s.mediaHandler.Handle(action, reqStr, host)
 		} else if strings.Contains(reqStr, "PullMessages") || strings.Contains(reqStr, "CreatePullPointSubscription") {
 			innerResp, handleErr = s.eventHandler.Handle(action, reqStr, host, subID)
@@ -152,42 +148,6 @@ func (s *Server) handleSOAP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/soap+xml; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(wrapSOAPResponse(innerResp)))
-}
-
-func (s *Server) handleSnapshot(w http.ResponseWriter, r *http.Request) {
-	var snap []byte
-	if s.snapshotFunc != nil {
-		snap = s.snapshotFunc()
-	}
-
-	if len(snap) == 0 {
-		// Return 1x1 transparent JPEG placeholder if no keyframe captured yet
-		w.Header().Set("Content-Type", "image/jpeg")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.WriteHeader(http.StatusOK)
-		// Minimal valid 1x1 JPEG
-		_, _ = w.Write([]byte{
-			0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01,
-			0x01, 0x01, 0x00, 0x48, 0x00, 0x48, 0x00, 0x00, 0xFF, 0xDB, 0x00, 0x43,
-			0x00, 0x08, 0x06, 0x06, 0x07, 0x06, 0x05, 0x08, 0x07, 0x07, 0x07, 0x09,
-			0x09, 0x08, 0x0A, 0x0C, 0x14, 0x0D, 0x0C, 0x0B, 0x0B, 0x0C, 0x19, 0x12,
-			0x13, 0x0F, 0x14, 0x1D, 0x1A, 0x1F, 0x1E, 0x1D, 0x1A, 0x1C, 0x1C, 0x20,
-			0x24, 0x2E, 0x27, 0x20, 0x22, 0x2C, 0x23, 0x1C, 0x1C, 0x28, 0x37, 0x29,
-			0x2C, 0x30, 0x31, 0x34, 0x34, 0x34, 0x1F, 0x27, 0x39, 0x3D, 0x38, 0x32,
-			0x3C, 0x2E, 0x33, 0x34, 0x32, 0xFF, 0xC0, 0x00, 0x0B, 0x08, 0x00, 0x01,
-			0x00, 0x01, 0x01, 0x01, 0x11, 0x00, 0xFF, 0xC4, 0x00, 0x1F, 0x00, 0x00,
-			0x01, 0x05, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00,
-			0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-			0x09, 0x0A, 0x0B, 0xFF, 0xDA, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3F,
-			0x00, 0xBF, 0x80, 0xFF, 0xD9,
-		})
-		return
-	}
-
-	w.Header().Set("Content-Type", "image/jpeg")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(snap)
 }
 
 func (s *Server) handleAPIStatus(w http.ResponseWriter, r *http.Request) {

@@ -1,11 +1,7 @@
 package rtsp
 
 import (
-	"bytes"
 	"fmt"
-	"image"
-	"image/color"
-	"image/jpeg"
 	"log"
 	"strings"
 	"sync"
@@ -34,21 +30,7 @@ type Server struct {
 	port                    int
 	audioBackchannelHandler AudioBackchannelHandler
 	onPlayHandler           OnPlayHandler
-	defaultSnapshot         []byte
-	lastSnapshot            []byte
 	mu                      sync.RWMutex
-}
-
-func generateDefaultSnapshot() []byte {
-	img := image.NewRGBA(image.Rect(0, 0, 1920, 1080))
-	for y := 0; y < 1080; y++ {
-		for x := 0; x < 1920; x++ {
-			img.Set(x, y, color.RGBA{R: 32, G: 34, B: 37, A: 255})
-		}
-	}
-	var buf bytes.Buffer
-	_ = jpeg.Encode(&buf, img, &jpeg.Options{Quality: 80})
-	return buf.Bytes()
 }
 
 func NewServer(port int, pathName string) (*Server, error) {
@@ -97,8 +79,6 @@ func NewServer(port int, pathName string) (*Server, error) {
 		Medias: []*description.Media{vMedia, aMedia, bcMedia},
 	}
 
-	defSnap := generateDefaultSnapshot()
-
 	s := &Server{
 		session:           meds,
 		videoFormat:       vFormat,
@@ -109,8 +89,6 @@ func NewServer(port int, pathName string) (*Server, error) {
 		backchannelMedia:  bcMedia,
 		pathName:          pathName,
 		port:              port,
-		defaultSnapshot:   defSnap,
-		lastSnapshot:      defSnap,
 	}
 
 	srv := &gortsplib.Server{
@@ -217,16 +195,6 @@ func (s *Server) WriteAudioPacket(pkt *rtp.Packet) {
 	}
 	pkt.Header.PayloadType = 0
 	st.WritePacketRTP(s.audioMedia, pkt)
-}
-
-// GetSnapshot returns cached 16:9 snapshot data
-func (s *Server) GetSnapshot() []byte {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if len(s.lastSnapshot) > 0 {
-		return s.lastSnapshot
-	}
-	return s.defaultSnapshot
 }
 
 // --- gortsplib Server Callbacks ---
