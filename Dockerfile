@@ -4,7 +4,7 @@
 # ==============================================================================
 
 # --- Stage 1: Build native Go binary with CGo & Nabto SDK ---
-FROM golang:1.24-bookworm AS builder
+FROM golang:1.26-bookworm AS builder
 
 ARG TARGETARCH
 

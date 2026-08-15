@@ -12,6 +12,8 @@ Dieses Dokument beschreibt die Codebase-Architektur, Designentscheidungen, den P
 - In den Dokumentationen niemals Secrets oder Keys nennen. Z.B. immer nur von "DeviceID" oder "ProductKey" sprechen.
 - Keine IP Adressen im Klartext hinterlegen. In Examples immer "<IP_ADDRESS>" verwenden
 - Keine echten Hostnamen hinterlegen und z.B. immer "<HOSTNAME>" verwenden.
+- Immer die aktuellen Versionen der benötigten Bibliothken (Dependencies) und Programmiersprachen verwenden.
+  - In der Go-Modul-Datei `go.mod` ist immer die höchste stabile Version zu verwenden, welche nicht als veraltet markiert wurde oder als unstable gilt.
 
 ## 1. High-Level Architektur
 
