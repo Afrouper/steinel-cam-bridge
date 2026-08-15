@@ -406,7 +406,7 @@ func main() {
 		log.Printf("[Bridge] 🚀 [ONLINE] Stream ready at rtsp://0.0.0.0:%d/%s", *rtspPort, *rtspPath)
 		log.Printf("[Bridge] 🛰️ [ONVIF] Endpoints active at http://0.0.0.0:%d/onvif/device_service", *onvifPort)
 
-		bridge := webrtc.NewBridge(client, stream, rtspServer, *resolution, 2*time.Second)
+		bridge := webrtc.NewBridge(client, stream, rtspServer, *resolution, 1*time.Second)
 		bridgeMgr.SetBridge(bridge)
 
 		_ = bridge.Run(ctx)
