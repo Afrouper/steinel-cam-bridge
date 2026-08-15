@@ -8,13 +8,63 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
 	"steinel-cam-bridge/pkg/nabto"
+	"steinel-cam-bridge/pkg/onvif"
 	"steinel-cam-bridge/pkg/rtsp"
 	"steinel-cam-bridge/pkg/webrtc"
 )
+
+type BridgeManager struct {
+	currentBridge *webrtc.Bridge
+	mu            sync.RWMutex
+}
+
+func (m *BridgeManager) SetBridge(b *webrtc.Bridge) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.currentBridge = b
+}
+
+func (m *BridgeManager) SetResolution(res string) error {
+	m.mu.RLock()
+	b := m.currentBridge
+	m.mu.RUnlock()
+
+	if b == nil {
+		return fmt.Errorf("camera bridge offline")
+	}
+	return b.SetResolution(res)
+}
+
+func (m *BridgeManager) SetLampState(mode string) error {
+	m.mu.RLock()
+	b := m.currentBridge
+	m.mu.RUnlock()
+
+	if b == nil {
+		return fmt.Errorf("camera bridge offline")
+	}
+	return b.SetLampState(mode)
+}
+
+func (m *BridgeManager) SetSiren(on bool) error {
+	m.mu.RLock()
+	b := m.currentBridge
+	m.mu.RUnlock()
+
+	if b == nil {
+		return fmt.Errorf("camera bridge offline")
+	}
+	cmd := map[string]interface{}{
+		"play": on,
+	}
+	return b.SendCommand("alarm_voice_ctl", cmd)
+}
 
 func main() {
 	qrFlag := flag.String("qr", "", "Steinel camera QR code string (did=...,pid=...,sct=...,pairPwd=...)")
@@ -23,12 +73,13 @@ func main() {
 	resolution := flag.String("res", "1080p", "Video resolution (1080p, 720p, 360p)")
 	rtspPort := flag.Int("port", 8554, "RTSP server port")
 	rtspPath := flag.String("path", "steinel", "RTSP stream path (e.g. steinel -> rtsp://host:port/steinel)")
+	onvifPort := flag.Int("onvif", 8000, "ONVIF HTTP server port")
 	flag.Parse()
 
-	fmt.Println("══════════════════════════════════════════════════")
-	fmt.Println(" Steinel L 625 CAM SC — Standalone Go Bridge")
-	fmt.Println(" 100% Native Single Binary (Nabto + WebRTC + RTSP)")
-	fmt.Println("══════════════════════════════════════════════════")
+	fmt.Println("═══════════════════════════════════════════════════════════════")
+	fmt.Println(" Steinel L 625 CAM SC — Standalone ONVIF & 2-Way Audio Bridge")
+	fmt.Println(" 100% Native Single Binary (Nabto + WebRTC + RTSP + ONVIF)")
+	fmt.Println("═══════════════════════════════════════════════════════════════")
 
 	// Default fallback config
 	cfg := &nabto.Config{
@@ -61,6 +112,11 @@ func main() {
 	if res := os.Getenv("RESOLUTION"); res != "" {
 		*resolution = res
 	}
+	if portStr := os.Getenv("ONVIF_PORT"); portStr != "" {
+		if p, err := strconv.Atoi(portStr); err == nil && p > 0 {
+			*onvifPort = p
+		}
+	}
 	if sct := os.Getenv("SCT"); sct != "" {
 		cfg.SCT = sct
 	}
@@ -81,6 +137,7 @@ func main() {
 
 	log.Printf("[Config] Camera: %s (ID: %s, Res: %s)", cfg.CameraIP, cfg.DeviceID, *resolution)
 	log.Printf("[Config] Key:    %s", cfg.KeyPath)
+	log.Printf("[Config] Ports:  RTSP=%d, ONVIF=%d, WS-Discovery=3702/udp", *rtspPort, *onvifPort)
 
 	// Context and signal trap for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
@@ -94,7 +151,9 @@ func main() {
 		cancel()
 	}()
 
-	// 1. Start embedded RTSP Server
+	bridgeMgr := &BridgeManager{}
+
+	// 1. Start embedded RTSP Server (with Profile T 2-Way Audio Backchannel)
 	rtspServer, err := rtsp.NewServer(*rtspPort, *rtspPath)
 	if err != nil {
 		log.Fatalf("[!] Failed to initialize RTSP server: %v", err)
@@ -105,9 +164,31 @@ func main() {
 		log.Fatalf("[!] Failed to start RTSP server: %v", err)
 	}
 
+	// 2. Start embedded ONVIF Profile S/T Server (WS-Discovery + Media + Events + DeviceIO)
+	onvifServer := onvif.NewServer(
+		*onvifPort,
+		*rtspPort,
+		*rtspPath,
+		cfg.DeviceID,
+		cfg.ProductID,
+		bridgeMgr.SetResolution,
+		func() error {
+			log.Printf("[ONVIF] Reboot requested")
+			return nil
+		},
+		bridgeMgr.SetLampState,
+		bridgeMgr.SetSiren,
+		rtspServer.GetSnapshot,
+	)
+	defer onvifServer.Close()
+
+	if err := onvifServer.Start(ctx); err != nil {
+		log.Printf("[!] Warning: Could not start ONVIF server: %v", err)
+	}
+
 	const reconnectCooldown = 30 * time.Second
 
-	// 2. Supervisor loop for Nabto + WebRTC
+	// 3. Supervisor loop for Nabto + WebRTC
 	for ctx.Err() == nil {
 		client, err := nabto.NewClient(cfg)
 		if err != nil {
@@ -165,10 +246,14 @@ func main() {
 		}
 
 		log.Printf("[Bridge] 🚀 [ONLINE] Stream ready at rtsp://0.0.0.0:%d/%s", *rtspPort, *rtspPath)
+		log.Printf("[Bridge] 🛰️ [ONVIF] Endpoints active at http://0.0.0.0:%d/onvif/device_service", *onvifPort)
 
 		bridge := webrtc.NewBridge(client, stream, rtspServer, *resolution, 3*time.Second)
+		bridgeMgr.SetBridge(bridge)
+
 		_ = bridge.Run(ctx)
 
+		bridgeMgr.SetBridge(nil)
 		stream.Close()
 		client.Close()
 
@@ -183,5 +268,6 @@ func main() {
 	}
 
 	rtspServer.Close()
+	onvifServer.Close()
 	log.Printf("[*] Standalone Go Bridge stopped cleanly.")
 }

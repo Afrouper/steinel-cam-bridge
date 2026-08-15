@@ -10,10 +10,14 @@ import (
 	"sync/atomic"
 	"time"
 
+	"steinel-cam-bridge/pkg/events"
+	"steinel-cam-bridge/pkg/mcu"
 	"steinel-cam-bridge/pkg/nabto"
 	"steinel-cam-bridge/pkg/rtsp"
 
+	"github.com/google/uuid"
 	"github.com/pion/rtcp"
+	"github.com/pion/rtp"
 	pion "github.com/pion/webrtc/v4"
 )
 
@@ -25,10 +29,12 @@ type Bridge struct {
 	pliInterval     time.Duration
 	pc              *pion.PeerConnection
 	dc              *pion.DataChannel
+	audioSendTrack  *pion.TrackLocalStaticRTP
 	videoSSRC       uint32
 	audioSSRC       uint32
 	videoTrack      *pion.TrackRemote
 	lastVideoPacket atomic.Int64
+	motionResetTimer *time.Timer
 	mu              sync.Mutex
 }
 
@@ -39,13 +45,20 @@ func NewBridge(client *nabto.Client, stream *nabto.Stream, rtspServer *rtsp.Serv
 	if pliInterval == 0 {
 		pliInterval = 3 * time.Second
 	}
-	return &Bridge{
+	b := &Bridge{
 		nabtoClient: client,
 		stream:      stream,
 		rtspServer:  rtspServer,
 		resolution:  resolution,
 		pliInterval: pliInterval,
 	}
+
+	// Register audio backchannel handler with RTSP server
+	if rtspServer != nil {
+		rtspServer.SetAudioBackchannelHandler(b.WriteAudioBackchannel)
+	}
+
+	return b
 }
 
 func (b *Bridge) Run(ctx context.Context) error {
@@ -129,8 +142,25 @@ func (b *Bridge) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to create peer connection: %w", err)
 	}
+
+	// Create local Audio Track for Two-Way Audio (Backchannel -> Camera Speaker)
+	audioSendTrack, err := pion.NewTrackLocalStaticRTP(
+		pion.RTPCodecCapability{MimeType: pion.MimeTypePCMU, ClockRate: 8000, Channels: 1},
+		"audioLabel",
+		"audioStream",
+	)
+	if err != nil {
+		pc.Close()
+		return fmt.Errorf("failed to create local audio send track: %w", err)
+	}
+
+	if _, err := pc.AddTrack(audioSendTrack); err != nil {
+		log.Printf("[WebRTC] ⚠️ Could not add audio send track: %v", err)
+	}
+
 	b.mu.Lock()
 	b.pc = pc
+	b.audioSendTrack = audioSendTrack
 	b.mu.Unlock()
 	defer pc.Close()
 
@@ -193,26 +223,28 @@ func (b *Bridge) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to create data channel: %w", err)
 	}
+	b.mu.Lock()
 	b.dc = dc
+	b.mu.Unlock()
+
+	dc.OnMessage(func(msg pion.DataChannelMessage) {
+		b.handleDataChannelMessage(msg.Data)
+	})
 
 	dc.OnOpen(func() {
-		// Request 1080p resolution
-		videoSetting := map[string]interface{}{
-			"action":     "all",
-			"message_id": "1",
-			"resp":       "set_video_setting",
-			"set_video_setting": map[string]interface{}{
-				"quality": b.resolution,
-			},
-		}
-		settingJSON, _ := json.Marshal(videoSetting)
-		dc.SendText(string(settingJSON))
+		log.Printf("[DataChannel] 📡 DataChannel 'test' opened. Configuring initial video quality: %s", b.resolution)
+
+		// Request resolution
+		_ = b.SetResolution(b.resolution)
 
 		// Request media tracks via CoAP
 		go func() {
 			time.Sleep(200 * time.Millisecond)
 			_, _ = b.nabtoClient.RequestTracks()
 		}()
+
+		// Start periodic MCU polling (every 15s)
+		go b.runMCUPollingLoop(sessCtx)
 	})
 
 	// 5. Create initial OFFER and wait for ICE gathering (Vanilla ICE)
@@ -331,6 +363,188 @@ func (b *Bridge) Run(ctx context.Context) error {
 	}
 }
 
+// WriteAudioBackchannel forwards an incoming PCMU RTP packet to the camera speaker via WebRTC
+func (b *Bridge) WriteAudioBackchannel(pkt *rtp.Packet) error {
+	b.mu.Lock()
+	track := b.audioSendTrack
+	b.mu.Unlock()
+
+	if track == nil {
+		return fmt.Errorf("audio send track not active")
+	}
+
+	pkt.Header.PayloadType = 0 // PCMU
+	return track.WriteRTP(pkt)
+}
+
+// SetResolution sends a DataChannel command to change video quality dynamically
+func (b *Bridge) SetResolution(resolution string) error {
+	b.mu.Lock()
+	b.resolution = resolution
+	dc := b.dc
+	b.mu.Unlock()
+
+	if dc == nil {
+		return fmt.Errorf("data channel not available")
+	}
+
+	cmd := map[string]interface{}{
+		"from":   "Android",
+		"cmd":    "set_video_setting",
+		"msgid":  uuid.New().String(),
+		"action": "all",
+		"info": map[string]interface{}{
+			"quality": map[string]interface{}{
+				"sub1": map[string]interface{}{
+					"resolution": resolution,
+				},
+			},
+		},
+	}
+	data, _ := json.Marshal(cmd)
+	log.Printf("[DataChannel] 🎦 Requesting camera resolution: %s", resolution)
+	return dc.SendText(string(data))
+}
+
+// SendCommand sends an arbitrary JSON command over the DataChannel
+func (b *Bridge) SendCommand(cmdName string, info map[string]interface{}) error {
+	b.mu.Lock()
+	dc := b.dc
+	b.mu.Unlock()
+
+	if dc == nil {
+		return fmt.Errorf("data channel not available")
+	}
+
+	cmd := map[string]interface{}{
+		"from":  "Android",
+		"cmd":   cmdName,
+		"msgid": uuid.New().String(),
+		"info":  info,
+	}
+	data, _ := json.Marshal(cmd)
+	return dc.SendText(string(data))
+}
+
+// SendMCUCommand sends a raw Hex command to the MCU via tran_ctl
+func (b *Bridge) SendMCUCommand(cmdHex string) error {
+	b64, err := mcu.BuildCommand(cmdHex)
+	if err != nil {
+		return err
+	}
+
+	b.mu.Lock()
+	dc := b.dc
+	b.mu.Unlock()
+
+	if dc == nil {
+		return fmt.Errorf("data channel not available")
+	}
+
+	cmd := map[string]interface{}{
+		"from":  "Android",
+		"cmd":   "tran_ctl",
+		"msgid": uuid.New().String(),
+		"info": map[string]interface{}{
+			"data": b64,
+		},
+	}
+	data, _ := json.Marshal(cmd)
+	return dc.SendText(string(data))
+}
+
+// SetLampState turns the lamp on, off or auto
+func (b *Bridge) SetLampState(mode string) error {
+	switch strings.ToLower(mode) {
+	case "on", "1":
+		return b.SendMCUCommand(mcu.CmdLightOn)
+	case "off", "0":
+		return b.SendMCUCommand(mcu.CmdLightOff)
+	case "auto", "2":
+		return b.SendMCUCommand(mcu.CmdLightAuto)
+	default:
+		return fmt.Errorf("unknown lamp mode: %s (use on, off, auto)", mode)
+	}
+}
+
+func (b *Bridge) handleDataChannelMessage(data []byte) {
+	str := string(data)
+	if !strings.Contains(str, "resp") && !strings.Contains(str, "tran_report") {
+		return
+	}
+
+	var root map[string]interface{}
+	if err := json.Unmarshal(data, &root); err != nil {
+		return
+	}
+
+	// 1. Check for MCU tran_report
+	if strVal, ok := root["resp"].(string); ok && strVal == "tran_report" || strings.Contains(str, "tran_report") {
+		if infoMap, ok := root["info"].(map[string]interface{}); ok {
+			if b64Data, ok := infoMap["data"].(string); ok {
+				cfg, err := mcu.ParseBase64Data(b64Data)
+				if err == nil && cfg != nil {
+					b.onMCUStatus(cfg)
+				}
+			}
+		}
+		return
+	}
+
+	// 2. Check for get_device_info
+	if strVal, ok := root["resp"].(string); ok && strVal == "get_device_info" {
+		if infoMap, ok := root["info"].(map[string]interface{}); ok {
+			fw, _ := infoMap["FW_version"].(string)
+			status := events.GlobalBus.GetStatus()
+			status.FirmwareVer = fw
+			events.GlobalBus.UpdateStatus(status)
+		}
+	}
+}
+
+func (b *Bridge) onMCUStatus(cfg *mcu.ConfigInfo) {
+	status := events.GlobalBus.GetStatus()
+	status.LampMode = cfg.Mode
+	status.Lux = cfg.Lux
+	status.PIRActive = cfg.PIRActive
+	status.PIRThreshold = cfg.PIRSensitivity
+	status.Resolution = b.resolution
+	events.GlobalBus.UpdateStatus(status)
+
+	// Motion Detection Handling
+	if cfg.MotionDetected {
+		log.Printf("[MCU] 🚨 Motion detected by Steinel Hardware PIR! (Lux: %d, Mode: %d)", cfg.Lux, cfg.Mode)
+		events.GlobalBus.SetMotion(true)
+
+		b.mu.Lock()
+		if b.motionResetTimer != nil {
+			b.motionResetTimer.Stop()
+		}
+		b.motionResetTimer = time.AfterFunc(10*time.Second, func() {
+			log.Printf("[MCU] ⚪ Motion cleared (10s timeout)")
+			events.GlobalBus.SetMotion(false)
+		})
+		b.mu.Unlock()
+	}
+}
+
+func (b *Bridge) runMCUPollingLoop(ctx context.Context) {
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+
+	// Immediate first query
+	_ = b.SendMCUCommand(mcu.CmdGetLightInfo)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			_ = b.SendMCUCommand(mcu.CmdGetLightInfo)
+		}
+	}
+}
+
 func (b *Bridge) readVideoLoop(ctx context.Context, track *pion.TrackRemote, cancel context.CancelFunc) {
 	log.Printf("[Video] 🎬 1080p H.264 video stream active")
 	for {
@@ -355,7 +569,7 @@ func (b *Bridge) readVideoLoop(ctx context.Context, track *pion.TrackRemote, can
 }
 
 func (b *Bridge) readAudioLoop(ctx context.Context, track *pion.TrackRemote) {
-	log.Printf("[Audio] 🔊 PCMU audio stream active")
+	log.Printf("[Audio] 🔊 PCMU audio stream active (Microphone -> Clients)")
 	for {
 		select {
 		case <-ctx.Done():
@@ -390,7 +604,6 @@ func (b *Bridge) runWatchdogLoop(ctx context.Context, cancel context.CancelFunc)
 		case <-ticker.C:
 			lastNano := b.lastVideoPacket.Load()
 			if lastNano == 0 {
-				// No video packet received after grace period
 				log.Printf("[Watchdog] ⚠️ Silence detected: No video packets received within 8s of session start. Camera might be unresponsive. Triggering session reset...")
 				cancel()
 				return
@@ -459,7 +672,6 @@ func sanitizeSDP(sdp string) string {
 	var cleanLines []string
 
 	for _, line := range lines {
-		// Strip candidate lines pointing to local loopback or mdns
 		if strings.HasPrefix(line, "a=candidate:") && strings.Contains(line, "127.0.0.1") {
 			continue
 		}

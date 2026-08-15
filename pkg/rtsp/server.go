@@ -13,17 +13,23 @@ import (
 	"github.com/pion/rtp"
 )
 
+type AudioBackchannelHandler func(pkt *rtp.Packet) error
+
 type Server struct {
-	server      *gortsplib.Server
-	stream      *gortsplib.ServerStream
-	session     *description.Session
-	videoFormat *format.H264
-	audioFormat *format.G711
-	videoMedia  *description.Media
-	audioMedia  *description.Media
-	pathName    string
-	port        int
-	mu          sync.RWMutex
+	server                  *gortsplib.Server
+	stream                  *gortsplib.ServerStream
+	session                 *description.Session
+	videoFormat             *format.H264
+	audioFormat             *format.G711
+	backchannelFormat       *format.G711
+	videoMedia              *description.Media
+	audioMedia              *description.Media
+	backchannelMedia        *description.Media
+	pathName                string
+	port                    int
+	audioBackchannelHandler AudioBackchannelHandler
+	lastSnapshot            []byte
+	mu                      sync.RWMutex
 }
 
 func NewServer(port int, pathName string) (*Server, error) {
@@ -35,7 +41,7 @@ func NewServer(port int, pathName string) (*Server, error) {
 		pathName = "steinel"
 	}
 
-	// 1. Setup H.264 video format
+	// 1. Setup H.264 video format (Main Live Feed)
 	vFormat := &format.H264{
 		PayloadTyp:        96,
 		PacketizationMode: 1,
@@ -45,7 +51,7 @@ func NewServer(port int, pathName string) (*Server, error) {
 		Formats: []format.Format{vFormat},
 	}
 
-	// 2. Setup PCMU (G.711u) audio format
+	// 2. Setup PCMU (G.711u) audio format (Camera Microphone -> Clients)
 	aFormat := &format.G711{
 		MULaw:        true,
 		SampleRate:   8000,
@@ -56,18 +62,32 @@ func NewServer(port int, pathName string) (*Server, error) {
 		Formats: []format.Format{aFormat},
 	}
 
+	// 3. Setup PCMU Audio Backchannel format (Client Microphone -> Camera Speaker)
+	bcFormat := &format.G711{
+		MULaw:        true,
+		SampleRate:   8000,
+		ChannelCount: 1,
+	}
+	bcMedia := &description.Media{
+		Type:          description.MediaTypeAudio,
+		Formats:       []format.Format{bcFormat},
+		IsBackChannel: true,
+	}
+
 	meds := &description.Session{
-		Medias: []*description.Media{vMedia, aMedia},
+		Medias: []*description.Media{vMedia, aMedia, bcMedia},
 	}
 
 	s := &Server{
-		session:     meds,
-		videoFormat: vFormat,
-		audioFormat: aFormat,
-		videoMedia:  vMedia,
-		audioMedia:  aMedia,
-		pathName:    pathName,
-		port:        port,
+		session:           meds,
+		videoFormat:       vFormat,
+		audioFormat:       aFormat,
+		backchannelFormat: bcFormat,
+		videoMedia:        vMedia,
+		audioMedia:        aMedia,
+		backchannelMedia:  bcMedia,
+		pathName:          pathName,
+		port:              port,
 	}
 
 	srv := &gortsplib.Server{
@@ -79,8 +99,14 @@ func NewServer(port int, pathName string) (*Server, error) {
 	return s, nil
 }
 
+func (s *Server) SetAudioBackchannelHandler(handler AudioBackchannelHandler) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.audioBackchannelHandler = handler
+}
+
 func (s *Server) Start() error {
-	log.Printf("[RTSP] Server listening at rtsp://0.0.0.0:%d/%s", s.port, s.pathName)
+	log.Printf("[RTSP] Server listening at rtsp://0.0.0.0:%d/%s (Profile T Audio Backchannel enabled)", s.port, s.pathName)
 	if err := s.server.Start(); err != nil {
 		return err
 	}
@@ -108,7 +134,7 @@ func (s *Server) Close() {
 func (s *Server) checkPath(p string) bool {
 	p = strings.TrimPrefix(p, "/")
 	cleanPath := strings.TrimPrefix(s.pathName, "/")
-	return p == cleanPath
+	return p == cleanPath || p == cleanPath+"/main" || p == cleanPath+"/sub"
 }
 
 // WriteVideoPacket forwards a raw H.264 RTP packet to all connected RTSP clients
@@ -135,6 +161,13 @@ func (s *Server) WriteAudioPacket(pkt *rtp.Packet) {
 	}
 	pkt.Header.PayloadType = 0
 	st.WritePacketRTP(s.audioMedia, pkt)
+}
+
+// GetSnapshot returns cached snapshot data or empty
+func (s *Server) GetSnapshot() []byte {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.lastSnapshot
 }
 
 // --- gortsplib Server Callbacks ---

@@ -64,9 +64,10 @@ ENV KEY_PATH="/data/client.key"
 ENV RESOLUTION="1080p"
 ENV RTSP_PORT="8554"
 ENV RTSP_PATH="steinel"
+ENV ONVIF_PORT="8000"
 
 VOLUME ["/data"]
 
-EXPOSE 8554
+EXPOSE 8554 8554/udp 8000 3702/udp
 
 ENTRYPOINT ["/app/steinel-bridge"]
