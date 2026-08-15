@@ -4,17 +4,6 @@ Dieses Dokument beschreibt die Codebase-Architektur, Designentscheidungen, den P
 
 ---
 
-## Security Vorgaben
-- Der QR Code zum Pairen und der enthaltende String ist als Secret anzusehen. Immer unkenntlich ablegen und in Beispielen nur die unkenntliche Version verwenden
-  - did=<DeviceID>,pid=<ProductID>,sct=<Secret>,pairPwd=<Pairing Passwort>
-- Niemals Secrets und Keys in den Kommentaren oder im Code hinterlegen.
-- Immer nach dem sichersten Vorgehen im Umgang mit Security relevanten Code fragst. z.B. beim Thema Crypto, Secrets und Credentials.
-- In den Dokumentationen niemals Secrets oder Keys nennen. Z.B. immer nur von "DeviceID" oder "ProductKey" sprechen.
-- Keine IP Adressen im Klartext hinterlegen. In Examples immer "<IP_ADDRESS>" verwenden
-- Keine echten Hostnamen hinterlegen und z.B. immer "<HOSTNAME>" verwenden.
-- Immer die aktuellen Versionen der benötigten Bibliothken (Dependencies) und Programmiersprachen verwenden.
-  - In der Go-Modul-Datei `go.mod` ist immer die höchste stabile Version zu verwenden, welche nicht als veraltet markiert wurde oder als unstable gilt.
-
 ## 1. High-Level Architektur
 
 Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, der die **Steinel L 625 CAM SC** Außenleuchte in eine standardkonforme **ONVIF Profile S/T Kamera** mit **RTSP-Streaming**, **2-Wege-Audio (Gegensprechen)** und **MQTT Home Assistant Auto-Discovery** wandelt – zur nahtlosen Integration in **Scrypted / Apple HomeKit Secure Video (HKSV)**, **Home Assistant**, **Synology Surveillance Station** und **Frigate**.
@@ -108,9 +97,17 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
 2. **Zero Transcoding**:
    - Reiche H.264 NAL-Units und PCMU Audio-Pakete direkt weiter (< 0,3 % CPU-Last auf dem Host).
 3. **Keine Secrets oder reale IPs im Git**:
-   - Niemals echte IP-Adressen (`192.168.88.x`) oder echte QR-Code-Strings (`did=...`, `sct=...`, `pairPwd=...`) in Dokumentationen oder Code einchecken.
-   - Immer generische Platzhalter (`192.168.1.100`, `did=de-xxxxxxx,pid=pr-xxxxx,sct=xxxx,pairPwd=xxxx`) verwenden.
    - `.key` Dateien, `.sdk/` Verzeichnisse und Binaries gehören in `.gitignore`.
+   - Der QR Code zum Pairen und der enthaltende String ist als Secret anzusehen. Immer unkenntlich ablegen und in Beispielen nur die unkenntliche Version verwenden
+     - did=<DeviceID>,pid=<ProductID>,sct=<Secret>,pairPwd=<Pairing Passwort>
+   - Niemals Secrets und Keys in den Kommentaren oder im Code hinterlegen.
+   - Immer nach dem sichersten Vorgehen im Umgang mit Security relevanten Code fragst. z.B. beim Thema Crypto, Secrets und Credentials.
+   - In den Dokumentationen niemals Secrets oder Keys nennen. Z.B. immer nur von "DeviceID" oder "ProductKey" sprechen.
+   - Keine IP Adressen im Klartext hinterlegen. In Examples immer "<IP_ADDRESS>" verwenden
+   - Keine echten Hostnamen hinterlegen und z.B. immer "<HOSTNAME>" verwenden.
+   - Immer die aktuellen Versionen der benötigten Bibliothken (Dependencies) und Programmiersprachen verwenden.
+     - In der Go-Modul-Datei `go.mod` ist immer die höchste stabile Version zu verwenden, welche nicht als veraltet markiert wurde oder als unstable gilt.
+   - `extracts` Ordner ist niemals im git einzuchecken. Es können Informationen und Traces (z.B. Wireshark, Apps, ...) abgelegt werden
 4. **Hierarchische Scopes**:
    - Alle MQTT-Topics müssen immer unter `<baseTopic>/<deviceID>/...` liegen, um Mehrkamera-Setups zu unterstützen.
 
