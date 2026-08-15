@@ -269,12 +269,14 @@ func (s *Server) OnPlay(ctx *gortsplib.ServerHandlerOnPlayCtx) (*base.Response, 
 	for _, sm := range ctx.Session.SetuppedMedias() {
 		if sm == s.backchannelMedia {
 			log.Printf("[RTSP] 🎙️ Audio backchannel session active (Client -> Lamp Speaker)")
-			ctx.Session.OnPacketRTP(s.backchannelMedia, s.backchannelFormat, func(pkt *rtp.Packet) {
-				s.mu.RLock()
-				handler := s.audioBackchannelHandler
-				s.mu.RUnlock()
-				if handler != nil {
-					_ = handler(pkt)
+			ctx.Session.OnPacketRTPAny(func(medi *description.Media, forma format.Format, pkt *rtp.Packet) {
+				if medi == s.backchannelMedia {
+					s.mu.RLock()
+					handler := s.audioBackchannelHandler
+					s.mu.RUnlock()
+					if handler != nil {
+						_ = handler(pkt)
+					}
 				}
 			})
 		}
@@ -296,12 +298,14 @@ func (s *Server) OnRecord(ctx *gortsplib.ServerHandlerOnRecordCtx) (*base.Respon
 	for _, sm := range ctx.Session.SetuppedMedias() {
 		if sm == s.backchannelMedia {
 			log.Printf("[RTSP] 🎙️ Audio backchannel recording session active (Client -> Lamp Speaker)")
-			ctx.Session.OnPacketRTP(s.backchannelMedia, s.backchannelFormat, func(pkt *rtp.Packet) {
-				s.mu.RLock()
-				handler := s.audioBackchannelHandler
-				s.mu.RUnlock()
-				if handler != nil {
-					_ = handler(pkt)
+			ctx.Session.OnPacketRTPAny(func(medi *description.Media, forma format.Format, pkt *rtp.Packet) {
+				if medi == s.backchannelMedia {
+					s.mu.RLock()
+					handler := s.audioBackchannelHandler
+					s.mu.RUnlock()
+					if handler != nil {
+						_ = handler(pkt)
+					}
 				}
 			})
 		}

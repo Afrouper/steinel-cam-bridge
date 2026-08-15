@@ -22,8 +22,8 @@ type Config struct {
 	ClientID        string
 	TopicPrefix     string // Base topic, default: "steinel"
 	DiscoveryPrefix string // Default: "homeassistant"
-	DeviceID        string // e.g. "de-xxxxxxx"
-	ProductID       string // e.g. "pr-xxxxx"
+	DeviceID        string // e.g. "de-m4yfowbr"
+	ProductID       string // e.g. "pr-qtatbtbi"
 	Model           string // e.g. "L 625 CAM SC"
 	BridgeHTTPURL   string
 }
@@ -102,12 +102,16 @@ func (c *Client) Start(ctx context.Context) error {
 	opts.SetKeepAlive(30 * time.Second)
 
 	opts.OnConnect = func(client paho.Client) {
+		c.mu.Lock()
+		c.client = client
+		c.mu.Unlock()
+
 		log.Printf("[MQTT] 🔌 Connected to MQTT broker: %s (Topic: %s)", c.cfg.Broker, c.baseTopic)
 		// 1. Publish Online Status
 		client.Publish(availTopic, 1, true, "online")
 
 		// 2. Publish Home Assistant Discovery Topics
-		c.publishDiscovery()
+		c.publishDiscovery(client)
 
 		// 3. Subscribe to Command Topics
 		cmdFilter := fmt.Sprintf("%s/+/set", c.baseTopic)
@@ -124,15 +128,21 @@ func (c *Client) Start(ctx context.Context) error {
 	}
 
 	client := paho.NewClient(opts)
+	c.mu.Lock()
+	c.client = client
+	c.mu.Unlock()
+
 	if token := client.Connect(); token.Wait() && token.Error() != nil {
 		return fmt.Errorf("MQTT connection error: %w", token.Error())
 	}
 
-	c.client = client
-
 	// Hook into Global Event Bus
 	events.GlobalBus.Subscribe(func(evt events.EventType, data interface{}) {
-		if c.client != nil && c.client.IsConnected() {
+		c.mu.RLock()
+		cl := c.client
+		c.mu.RUnlock()
+
+		if cl != nil && cl.IsConnected() {
 			switch evt {
 			case events.EventMotion:
 				if m, ok := data.(events.MotionEvent); ok {
@@ -150,16 +160,20 @@ func (c *Client) Start(ctx context.Context) error {
 }
 
 func (c *Client) Close() {
-	if c.client != nil && c.client.IsConnected() {
+	c.mu.RLock()
+	cl := c.client
+	c.mu.RUnlock()
+
+	if cl != nil && cl.IsConnected() {
 		availTopic := fmt.Sprintf("%s/availability", c.baseTopic)
-		c.client.Publish(availTopic, 1, true, "offline").Wait()
-		c.client.Disconnect(250)
+		cl.Publish(availTopic, 1, true, "offline").Wait()
+		cl.Disconnect(250)
 	}
 }
 
 // --- Home Assistant Auto-Discovery ---
 
-func (c *Client) publishDiscovery() {
+func (c *Client) publishDiscovery(client paho.Client) {
 	availTopic := fmt.Sprintf("%s/availability", c.baseTopic)
 	devMap := map[string]interface{}{
 		"identifiers":  []string{c.nodeID},
@@ -182,7 +196,7 @@ func (c *Client) publishDiscovery() {
 
 		discTopic := fmt.Sprintf("%s/%s/%s/%s/config", c.cfg.DiscoveryPrefix, component, c.nodeID, objectID)
 		payload, _ := json.Marshal(config)
-		c.client.Publish(discTopic, 1, true, payload)
+		client.Publish(discTopic, 1, true, payload)
 	}
 
 	// 1. Light (Hauptlicht mit Dimmung)
@@ -300,16 +314,32 @@ func (c *Client) publishDiscovery() {
 // --- State Publication ---
 
 func (c *Client) publishMotion(isMotion bool) {
+	c.mu.RLock()
+	cl := c.client
+	c.mu.RUnlock()
+
+	if cl == nil || !cl.IsConnected() {
+		return
+	}
+
 	state := "OFF"
 	if isMotion {
 		state = "ON"
 	}
-	c.client.Publish(fmt.Sprintf("%s/motion/state", c.baseTopic), 1, false, state)
+	cl.Publish(fmt.Sprintf("%s/motion/state", c.baseTopic), 1, false, state)
 }
 
 func (c *Client) publishStatus(st events.DeviceStatus) {
+	c.mu.RLock()
+	cl := c.client
+	c.mu.RUnlock()
+
+	if cl == nil || !cl.IsConnected() {
+		return
+	}
+
 	pub := func(subTopic string, val string) {
-		c.client.Publish(fmt.Sprintf("%s/%s", c.baseTopic, subTopic), 1, true, val)
+		cl.Publish(fmt.Sprintf("%s/%s", c.baseTopic, subTopic), 1, true, val)
 	}
 
 	// 1. Lamp State & Mode
