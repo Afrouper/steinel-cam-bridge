@@ -1,80 +1,104 @@
 # Steinel L 625 CAM SC — Entwickler- & Agenten-Leitfaden
 
-Dieses Dokument beschreibt die Codebase-Architektur, Designentscheidungen, den Protokollablauf und Richtlinien für zukünftige Entwickler und KI-Agenten.
+Dieses Dokument beschreibt die Codebase-Architektur, Designentscheidungen, den Protokollablauf und Richtlinien für zukünftige Entwickler und KI-Agenten im Repository `steinel-cam-bridge`.
 
 ---
 
 ## 1. High-Level Architektur
 
-Die Steinel CAM Bridge ist ein hochperformanter, autarker Go-Daemon, der den proprietären **Nabto Edge P2P WebRTC-Feed** der **Steinel L 625 CAM SC** Kamera in einen standardkonformen **RTSP-Stream** (`rtsp://host:port/steinel`) wandelt – zur Weiternutzung in **Scrypted / Apple HomeKit Secure Video (HKSV)**, **Home Assistant** und **VLC**.
+Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, der die **Steinel L 625 CAM SC** Außenleuchte in eine standardkonforme **ONVIF Profile S/T Kamera** mit **RTSP-Streaming**, **2-Wege-Audio (Gegensprechen)** und **MQTT Home Assistant Auto-Discovery** wandelt – zur nahtlosen Integration in **Scrypted / Apple HomeKit Secure Video (HKSV)**, **Home Assistant**, **Synology Surveillance Station** und **Frigate**.
 
 ```
-┌───────────────────────────────┐
-│     Steinel L 625 CAM SC      │
-│  (Embedded Linux + SoC DSP)   │
-└──────────────┬────────────────┘
-               │ 1. mDNS Wake-Up (UDP 5353 / 5592)
-               │ 2. Nabto Edge P2P Direct Tunnel (CGo Wrapper)
-               │ 3. CoAP /p2p/webrtc-info & /webrtc/tracks
-               │ 4. WebRTC SDP & ICE über Nabto Virtual Stream
-               ▼
-┌───────────────────────────────┐
-│   Steinel Bridge Daemon (Go)  │
-│  ├── pkg/nabto (CGo Client)   │
-│  ├── pkg/webrtc (Pion Engine) │
-│  │   ├── RTCP PLI Keyframe Loop (3s GOP)
-│  │   └── RTP Silence Watchdog (6s Threshold)
-│  └── pkg/rtsp (gortsplib v4)  │
-└──────────────┬────────────────┘
-               │
-               │ RTSP H.264 Passthrough (:8554/steinel)
-               ▼
-┌───────────────────────────────┐
-│ Scrypted / HomeKit HKSV / HA  │
-└───────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                 Steinel L 625 CAM SC                        │
+│  ├── Linux SoC / IPC: WiFi, Nabto Edge, WebRTC Video/Audio  │
+│  └── MCU: 230V Triac, LED Dimmung, PIR Sensor, Lux Sensor   │
+└──────────────────────────────┬──────────────────────────────┘
+                               │ 1. mDNS Wake-Up (UDP 5353 / 5592)
+                               │ 2. Nabto Edge P2P Direct Tunnel (CGo Wrapper)
+                               │ 3. CoAP /p2p/webrtc-info & /webrtc/tracks
+                               │ 4. WebRTC DTLS/SRTP Media + DataChannel 'test'
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│               Steinel Bridge Daemon (Go)                    │
+│  ├── pkg/nabto: CGo Wrapper für Nabto Edge Client SDK       │
+│  ├── pkg/webrtc: Pion WebRTC Engine (H.264, PCMU, Backchan) │
+│  ├── pkg/mcu: 18-Byte UART Hex Parser & Command Builder     │
+│  ├── pkg/events: Zentraler Event-Bus (Motion, Lux, Lamp)    │
+│  ├── pkg/rtsp: gortsplib v4 RTSP Server + Profile T Backch. │
+│  ├── pkg/onvif: WS-Discovery (UDP 3702), Device, Media, Evt │
+│  └── pkg/mqtt: Home Assistant MQTT Auto-Discovery Client    │
+└──────────────┬──────────────────────────────┬───────────────┘
+               │ RTSP (:8554) & ONVIF (:8000) │ MQTT (:1883)
+               ▼                              ▼
+┌──────────────────────────────┐ ┌────────────────────────────┐
+│ Scrypted / HomeKit HKSV      │ │ Home Assistant (Auto-Disc) │
+│ (1080p, 2-Way Audio, PIR Evt)│ │ (Licht, Dimmer, PIR, Lux)  │
+└──────────────────────────────┘ └────────────────────────────┘
 ```
 
 ---
 
-## 2. Paketstruktur & Verantwortlichkeiten
+## 2. Paketstruktur & Modul-Verantwortlichkeiten
 
 - **`cmd/steinel-bridge/main.go`**:
-  - CLI-Flags (`-ip`, `-qr`, `-key`, `-port`, `-path`, `-res`) und Umgebungsvariablen (`CAMERA_IP`, `QR_CODE`, `KEY_PATH`).
-  - Initialisiert den persistenten, integrierten RTSP-Server.
+  - CLI-Flags (`-ip`, `-qr`, `-key`, `-port`, `-path`, `-res`, `-onvif`, `-mqtt-broker`, `-mqtt-topic`) und Umgebungsvariablen (`CAMERA_IP`, `QR_CODE`, `KEY_PATH`, `MQTT_BROKER`, etc.).
+  - Initialisiert Server (`rtsp.Server`, `onvif.Server`, `mqtt.Client`).
   - Beherbergt den **Supervisor-Loop**: Fängt Verbindungsabbrüche, Session-Beendigungen oder Watchdog-Resets ab und erzwingt einen sauberen **30-Sekunden-Cooldown**, damit neu startende Kameras stabil hochfahren können, ohne das Netzwerk zu fluten.
 
 - **`pkg/nabto/`**:
   - `client.go`: CGo-Bindings für das Nabto Edge Client SDK (`nabto_client.h`).
-  - Verwaltet kryptografische Schlüssel (`client.key`), passwortbasiertes IAM-Pairing (`/iam/pairing/password-open`), CoAP-Signaling-Port-Erkennung (`/p2p/webrtc-info`) und Track-Aktivierung (`/webrtc/tracks`).
-  - Verwaltet den virtuellen Nabto-Stream (4-Byte Little-Endian Längen-Framing).
+  - Verwaltet kryptografische ECC-Schlüssel (`client.key`), automatisches IAM-Pairing (`/iam/pairing/password-open`), CoAP-Signaling-Port-Erkennung (`/p2p/webrtc-info`) und Track-Aktivierung (`/webrtc/tracks`).
   - `qr.go`: Parst die Kamera-Zugangsdaten (`did`, `pid`, `sct`, `pairPwd`) aus dem QR-Code-String der Steinel App.
 
 - **`pkg/webrtc/`**:
-  - `bridge.go`: Nutzt **Pion WebRTC v4** (`github.com/pion/webrtc/v4`), um WebRTC-Sessions mit der Kamera über den virtuellen Nabto-Stream auszuhandeln.
+  - `bridge.go`: Nutzt **Pion WebRTC v4** (`github.com/pion/webrtc/v4`) für DTLS/SRTP WebRTC-Sessions über den virtuellen Nabto-Stream.
   - Sendet initiales SDP-Offer mit `no_trickle: true` und Vanilla ICE Candidates.
-  - Hält den **RTCP-PLI Loop**: Sendet einen initialen Burst von Picture Loss Indications (Keyframe-Anforderungen) für sofortigen Bildaufbau und danach periodische PLIs alle 3,0 Sekunden für minimale Live-Latenz (< 1s).
-  - **RTP Silence Watchdog (`runWatchdogLoop`)**: Überwacht die Zeitstempel eingehender Videopakete. Bleiben Pakete für > 6s aus, wird die Session abgebrochen und der 30s-Reconnect ausgelöst.
-  - **WebRTC State Listeners**: Überwacht `pc.OnConnectionStateChange` und `pc.OnICEConnectionStateChange`, um bei `Failed` oder `Disconnected` sofort den Reset auszulösen.
-  - `types.go`: JSON-Serialisierung für Nabto WebRTC Signaling Envelopes.
+  - Hält den **RTCP-PLI Loop**: Periodische PLIs alle 3,0 Sekunden für minimale Live-Latenz (< 1s).
+  - **RTP Silence Watchdog (`runWatchdogLoop`)**: Überwacht Video-Pakete. Bei Ausfall > 6s wird die Session abgebrochen und der 30s-Reconnect ausgelöst.
+  - **2-Way Audio Uplink**: Eigener `TrackLocalStaticRTP` für `audio/PCMU` (8000 Hz, Payload Typ 0) im WebRTC SDP (`a=sendrecv`) für Gegensprechen.
+  - **DataChannel 'test'**: Verarbeitet eingehende `tran_report` MCU-Statusframes und sendet `tran_ctl` Befehle.
 
 - **`pkg/rtsp/`**:
   - `server.go`: Integrierter RTSP-Server auf Basis von `github.com/bluenviron/gortsplib/v4`.
-  - Stellt H.264 (Payload Type 96, Packetization Mode 1) und PCMU-Audio (G.711u 8000 Hz) bereit.
-  - **Zero-Transcoding Passthrough**: Direkte Weiterleitung der RTP-Pakete vom Pion-Receiver in die RTSP-Streams (0 % CPU-Transcoding-Last auf dem Host).
+  - H.264 Video (Main Feed), PCMU Audio (Mikrofon der Kamera) und **ONVIF Profile T Audio Backchannel** (`IsBackChannel: true`).
+  - Leitet empfangene Rückkanal-RTP-Pakete von HomeKit/Scrypted verzögerungsfrei an `webrtc.Bridge.WriteAudioBackchannel` weiter.
+
+- **`pkg/onvif/`**:
+  - `discovery.go`: **WS-Discovery Server** auf UDP Multicast `239.255.255.250:3702` (reagiert auf `wsdd:Probe`).
+  - `device.go`: Device Service (`GetDeviceInformation`, `GetCapabilities`, `GetServices`, `GetSystemDateAndTime`).
+  - `media.go`: Media Service (`Profile_Main` 1080p, `Profile_Sub` 360p, `GetStreamUri`, `GetSnapshotUri`, `SetVideoEncoderConfiguration`).
+  - `events.go`: Event Service (WS-BaseNotification PullPoint: `CreatePullPointSubscription`, `PullMessages` für `tns1:RuleEngine/CellMotionDetector/Motion`).
+  - `deviceio.go`: DeviceIO / Relay / Auxiliary Service für Licht- und Sirenensteuerung.
+  - `server.go`: HTTP Server auf Port `8000` (SOAP Dispatcher + Snapshot Endpoint `/snapshot.jpg` + REST `/api/status`).
+
+- **`pkg/mqtt/`**:
+  - `client.go`: Home Assistant MQTT Auto-Discovery Client auf Basis von `paho.mqtt.golang`.
+  - Veröffentlicht Discovery-Configs für `light`, `select`, `sensor`, `binary_sensor`, `number`, `siren`.
+  - **Hierarchische Topic-Struktur**: `steinel/<deviceID>/...` (keine Konflikte bei mehreren Kameras).
+  - Zwei-Wege-Synchronisation mit `events.GlobalBus`.
+
+- **`pkg/mcu/`**:
+  - `mcu.go`: Parser für die 18-Byte (36 Hex-Zeichen) MCU-UART-Frames `5A0F0F...` und Command-Builder für Dimmstufen, Nachlaufzeit, Grundlicht, PIR-Sensitivität, Dämmerungsschwelle (Lux) und Sirene.
+
+- **`pkg/events/`**:
+  - `events.go`: Thread-sicherer zentraler Publish/Subscribe-Event-Bus (`GlobalBus`) zur Entkopplung aller Subsysteme.
 
 ---
 
-## 3. Zentrale Architekturregeln
+## 3. Zentrale Architektur- & Sicherheitsregeln
 
-1. **Zero Transcoding**: Niemals das H.264-Video auf dem Host transkodieren. Reiche rohe NAL-Units direkt an den RTSP-Server weiter. Audio wird nativ durchgereicht (Downstream-Tools wie Scrypted wandeln PCMU bei Bedarf in AAC-ELD für Apple HomeKit um).
-2. **24/7 Resilienz**:
-   - Die Nabto/WebRTC-Session muss immer in einem abbrechbaren Session-Kontext laufen.
-   - Jeder Fehler oder Timeout muss den Supervisor-Loop unblockieren.
-   - Die 30-Sekunden-Verzögerung vor Reconnects muss zwingend eingehalten werden.
-3. **Keine Binärdateien im Git**:
-   - Niemals `.so`, `.dylib`, `.dll`, `.key` oder `.sdk/` ins Git committen.
-   - Für die lokale Entwicklung `./scripts/setup-sdk.sh` (macOS/Linux) oder `.\scripts\setup-sdk.ps1` (Windows) nutzen.
-   - Das Dockerfile lädt die SDK-Artefakte während des Builds dynamisch direkt von GitHub herunter.
+1. **Hardware-Schonung der Kamera**:
+   - Die Steinel-Kamera hat eine schwache embedded CPU. **Niemals mehrere parallele WebRTC-Sessions aufbauen**.
+   - Nach Verbindungsabbrüchen immer den **30-Sekunden-Cooldown** einhalten.
+2. **Zero Transcoding**:
+   - Reiche H.264 NAL-Units und PCMU Audio-Pakete direkt weiter (< 0,3 % CPU-Last auf dem Host).
+3. **Keine Secrets oder reale IPs im Git**:
+   - Niemals echte IP-Adressen (`192.168.88.x`) oder echte QR-Code-Strings (`did=...`, `sct=...`, `pairPwd=...`) in Dokumentationen oder Code einchecken.
+   - Immer generische Platzhalter (`192.168.1.100`, `did=de-xxxxxxx,pid=pr-xxxxx,sct=xxxx,pairPwd=xxxx`) verwenden.
+   - `.key` Dateien, `.sdk/` Verzeichnisse und Binaries gehören in `.gitignore`.
+4. **Hierarchische Scopes**:
+   - Alle MQTT-Topics müssen immer unter `<baseTopic>/<deviceID>/...` liegen, um Mehrkamera-Setups zu unterstützen.
 
 ---
 
@@ -84,13 +108,12 @@ Die Steinel CAM Bridge ist ein hochperformanter, autarker Go-Daemon, der den pro
 # 1. Lokale SDK-Artefakte herunterladen (macOS / Linux)
 ./scripts/setup-sdk.sh
 
-# 2. Lokalen Entwicklungs-Build starten
-./scripts/run-dev.sh -key data/client.key -ip 192.168.1.100
+# 2. Lokalen Entwicklungs-Build starten (Beispiel mit Platzhaltern)
+./scripts/run-dev.sh -key data/client.key -ip 192.168.1.100 -qr "did=de-xxxxxxx,pid=pr-xxxxx,sct=xxxx,pairPwd=xxxx"
 
-# 3. Code formatieren und prüfen
-go fmt ./...
-go vet ./...
+# 3. Unit-Tests ausführen
+go test -v ./...
 
-# 4. Docker-Container lokal bauen
+# 4. Multi-Arch Docker-Container lokal bauen
 docker build -t steinel-cam-bridge .
 ```
