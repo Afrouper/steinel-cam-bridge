@@ -94,12 +94,12 @@ func (d *DiscoveryServer) handleProbe(conn net.PacketConn, src net.Addr, raw str
 	endpointRef := fmt.Sprintf("urn:uuid:%s", d.deviceUUID)
 
 	responseXML := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
-<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope" xmlns:a="http://www.w3.org/2005/08/addressing" xmlns:d="http://schemas.xmlsoap.org/ws/2005/04/discovery" xmlns:dn="http://www.onvif.org/ver10/network/wsdl">
+<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope" xmlns:a="http://schemas.xmlsoap.org/ws/2004/08/addressing" xmlns:d="http://schemas.xmlsoap.org/ws/2005/04/discovery" xmlns:dn="http://www.onvif.org/ver10/network/wsdl" xmlns:tds="http://www.onvif.org/ver10/device/wsdl">
   <s:Header>
     <a:Action>http://schemas.xmlsoap.org/ws/2005/04/discovery/ProbeMatches</a:Action>
     <a:MessageID>urn:uuid:%s</a:MessageID>
     <a:RelatesTo>%s</a:RelatesTo>
-    <a:To>http://www.w3.org/2005/08/addressing/anonymous</a:To>
+    <a:To>http://schemas.xmlsoap.org/ws/2004/08/addressing/role/anonymous</a:To>
   </s:Header>
   <s:Body>
     <d:ProbeMatches>
