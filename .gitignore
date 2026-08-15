@@ -8,6 +8,7 @@
 *.dylib
 bin/
 dist/
+extracts/
 
 # Local Nabto SDK cache (downloaded via scripts/setup-sdk)
 .sdk/
@@ -17,7 +18,6 @@ data/
 *.key
 .env
 .env.local
-scrypted-data/
 
 # OS and Editor artifacts
 .DS_Store
