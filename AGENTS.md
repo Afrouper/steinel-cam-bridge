@@ -85,6 +85,7 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
   - `events.go`: Thread-sicherer zentraler Publish/Subscribe-Event-Bus (`GlobalBus`) zur Entkopplung aller Subsysteme.
 
 - **`extracts/`**: Niemals in git einchecken. Nur für die Agenten zum Nachschlagen von Informationen und Dokumentationen.
+  - `AGENTS.MD`: Weitere Informationen und Details zu den Elementen in diesem Ordner.
 
 
 ---
