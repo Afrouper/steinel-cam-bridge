@@ -96,6 +96,7 @@ func NewServer(port int, pathName string) (*Server, error) {
 		RTSPAddress:    fmt.Sprintf(":%d", port),
 		UDPRTPAddress:  fmt.Sprintf(":%d", port),
 		UDPRTCPAddress: fmt.Sprintf(":%d", port+1),
+		WriteQueueSize: 4096,
 	}
 
 	s.server = srv
