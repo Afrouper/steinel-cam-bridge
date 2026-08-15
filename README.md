@@ -36,8 +36,9 @@ Die Kamera wird im lokalen Netzwerk als ONVIF Kamera zu verfügung gestellt. Dam
   - **Native Live-Snapshots**: NVRs und Clients (z. B. Scrypted Prebuffer, Home Assistant) generieren hochauflösende Live-Standbilder direkt aus dem H.264-Videostream ohne Dummy-Platzhalter.
 - **🔊 Volles 2-Way Audio (Gegensprechen)**:
   - **RTSP Audio Backchannel**: Durchleitung von HomeKit/Scrypted-Sprachdaten direkt an den Lautsprecher der Steinel-Leuchte (PCMU / G.711u 8000 Hz).
-- **🚨 Hardware-PIR Bewegungserkennung (ONVIF Events)**:
-  - Weitergabe als **ONVIF Motion Events** (`tns1:RuleEngine/CellMotionDetector/Motion`) an Scrypted/HKSV – **0 % Server-CPU-Last**.
+- **🚨 Bewegungserkennung & Apple HomeKit Secure Video (HKSV)**:
+  - **Hersteller-Architektur**: Die Steinel-Kamera übermittelt Bewegungsevents ab Werk ausschließlich an das Cloud-Push-Gateway des Herstellers (für Push-Nachrichten der Steinel App) und stellt lokal im P2P-Modus den reinen Live-Stream bereit.
+  - **100 % Lokale HKSV-Aufnahme**: In Scrypted wird über das offizielle Plugin **`OpenCV Motion Detector`** (`@scrypted/opencv`) eine latenzfreie Pixelanalyse des 1080p-RTSP-Streams durchgeführt. Bewegungen von Personen, Fahrzeugen oder Tieren lösen sofort lokale ONVIF-Events und iCloud-Aufnahmen in Apple Home aus.
 - **100 % Autarkes Single-Binary**: Kein Python, kein Node.js und kein separater MediaMTX-Server erforderlich.
 - **24/7 Resilienz & Watchdog**: RTP-Silence Watchdog, 30s Cooldown, mDNS-Wakeup.
 
@@ -110,8 +111,11 @@ Sobald `MQTT_BROKER` konfiguriert ist, verbindet sich die Bridge mit dem Broker.
 
 ### 2. Scrypted (Apple HomeKit / HKSV)
 1. Im Scrypted **ONVIF Plugin** auf *Add Camera* klicken (Host-IP, Port `8000`).
-2. Scrypted erkennt automatisch **1080p Video, Mikrofon, Gegensprechanlage und den Hardware-PIR-Bewegungssensor**.
-3. Im **HomeKit Plugin** die Kamera aktivieren ➔ Fertig!
+2. Scrypted erkennt automatisch **1080p Video, Mikrofon und Gegensprechanlage**.
+3. **Bewegungserkennung für HKSV aktivieren**:
+   - In Scrypted unter **Plugins** das Plugin **`OpenCV Motion Detector`** (`@scrypted/opencv`) installieren.
+   - Auf der Steinel-Kamera im Reiter **Extensions** das Plugin **OpenCV Motion Detector** aktivieren.
+4. Im **HomeKit Plugin** die Kamera aktivieren ➔ Aufnahmen in Apple Home laufen vollautomatisch!
 
 ---
 
