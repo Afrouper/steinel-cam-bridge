@@ -43,19 +43,14 @@ COPY . .
 # 3. Compile stripped static/CGo binary
 RUN CGO_ENABLED=1 go build -ldflags="-s -w" -o /app/steinel-bridge ./cmd/steinel-bridge
 
-# --- Stage 2: Minimal runtime image (< 35 MB) ---
-FROM debian:bookworm-slim
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+# --- Stage 2: Ultra-minimal Distroless runtime image (~35 MB uncompressed, ~15 MB download) ---
+FROM gcr.io/distroless/cc-debian12
 
 WORKDIR /app
 
 # Copy binary and runtime library
 COPY --from=builder /app/steinel-bridge /app/steinel-bridge
-COPY --from=builder /usr/lib/libnabto_client.so /usr/lib/libnabto_client.so
-RUN ldconfig
+COPY --from=builder /usr/lib/libnabto_client.so /lib/libnabto_client.so
 
 # Default configuration environment variables
 ENV CAMERA_IP="192.168.1.100"
@@ -65,6 +60,11 @@ ENV RESOLUTION="1080p"
 ENV RTSP_PORT="8554"
 ENV RTSP_PATH="steinel"
 ENV ONVIF_PORT="8000"
+ENV MQTT_BROKER=""
+ENV MQTT_USER=""
+ENV MQTT_PASSWORD=""
+ENV MQTT_TOPIC_PREFIX="steinel"
+ENV MQTT_DISCOVERY_PREFIX="homeassistant"
 
 VOLUME ["/data"]
 
