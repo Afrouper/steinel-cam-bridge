@@ -504,7 +504,9 @@ func (b *Bridge) handleDataChannelMessage(data []byte) {
 		if infoMap, ok := root["info"].(map[string]interface{}); ok {
 			if b64Data, ok := infoMap["data"].(string); ok {
 				cfg, err := mcu.ParseBase64Data(b64Data)
-				if err == nil && cfg != nil {
+				if err != nil {
+					log.Printf("[MCU] ⚠️ Failed to parse tran_report Base64 '%s': %v", b64Data, err)
+				} else if cfg != nil {
 					b.onMCUStatus(cfg)
 				}
 			}

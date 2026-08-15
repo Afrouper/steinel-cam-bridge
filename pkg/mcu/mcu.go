@@ -100,8 +100,8 @@ func BuildCommand(cmdPayloadHex string) (string, error) {
 
 // Helper commands
 const (
-	// CmdGetLightInfo: 5A 01 0F -> CS 6A -> "5A010F6A"
-	CmdGetLightInfo = "5A010F"
+	// CmdGetLightInfo: 5A 01 0F 6A -> CS D4 -> "5A010F6AD4"
+	CmdGetLightInfo = "5A010F6A"
 	// CmdLightOn: 5A 02 01 01 -> CS 5E
 	CmdLightOn = "5A020101"
 	// CmdLightOff: 5A 02 01 00 -> CS 5D

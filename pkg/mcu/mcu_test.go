@@ -25,13 +25,13 @@ func TestParseFrame(t *testing.T) {
 }
 
 func TestBuildCommand(t *testing.T) {
-	// CmdGetLightInfo: 5A010F -> Checksum is 6A -> Full 5A010F6A -> Base64 WgEPag==
+	// CmdGetLightInfo: 5A010F6A -> Checksum is D4 -> Full 5A010F6AD4 -> Base64 WgEPatQ=
 	b64, err := BuildCommand(CmdGetLightInfo)
 	if err != nil {
 		t.Fatalf("BuildCommand failed: %v", err)
 	}
-	if b64 != "WgEPag==" {
-		t.Errorf("Expected WgEPag==, got %s", b64)
+	if b64 != "WgEPatQ=" {
+		t.Errorf("Expected WgEPatQ=, got %s", b64)
 	}
 
 	// Test SetHighlight: 5A020764 (100%) -> CS = 5A+02+07+64 = C7 -> Base64 WgIHZMc=
