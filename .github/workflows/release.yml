@@ -41,10 +41,8 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-            type=ref,event=tag
+            type=raw,value=latest
             type=semver,pattern={{version}}
-            type=semver,pattern={{raw}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha,format=short
 
