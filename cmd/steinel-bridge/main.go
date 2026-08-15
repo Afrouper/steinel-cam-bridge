@@ -160,7 +160,7 @@ func (m *BridgeManager) SetSiren(on bool) error {
 
 func main() {
 	qrFlag := flag.String("qr", "", "Steinel camera QR code string (did=...,pid=...,sct=...,pairPwd=...)")
-	ipFlag := flag.String("ip", "", "Steinel camera local IP address (default: 192.168.1.100)")
+	ipFlag := flag.String("ip", "", "Steinel camera local IP address")
 	keyPath := flag.String("key", "data/client.key", "Path to client private key file")
 	resolution := flag.String("res", "1080p", "Video resolution (1080p, 720p, 360p)")
 	rtspPort := flag.Int("port", 8554, "RTSP server port")
@@ -169,7 +169,7 @@ func main() {
 	mqttBroker := flag.String("mqtt-broker", "", "MQTT broker URL (e.g. tcp://192.168.1.100:1883)")
 	mqttUser := flag.String("mqtt-user", "", "MQTT username")
 	mqttPass := flag.String("mqtt-pass", "", "MQTT password")
-	mqttTopic := flag.String("mqtt-topic", "", "MQTT topic prefix")
+	mqttTopic := flag.String("mqtt-topic", "steinel", "MQTT base topic prefix (default: steinel)")
 	mqttDisc := flag.String("mqtt-disc", "homeassistant", "MQTT Home Assistant Discovery Prefix")
 	flag.Parse()
 
@@ -178,14 +178,10 @@ func main() {
 	fmt.Println(" 100% Native Single Binary (Nabto + WebRTC + RTSP + ONVIF + MQTT)")
 	fmt.Println("═══════════════════════════════════════════════════════════════════")
 
-	// Default fallback config
+	// Default empty config
 	cfg := &nabto.Config{
-		CameraIP:  "192.168.1.100",
-		DeviceID:  "de-xxxxxxx",
-		ProductID: "pr-xxxxx",
-		SCT:       "xxxx",
-		PairPwd:   "xxxx",
-		KeyPath:   *keyPath,
+		CameraIP: "192.168.1.100",
+		KeyPath:  *keyPath,
 	}
 
 	// Override from CLI flags
@@ -242,6 +238,10 @@ func main() {
 		cfg.ProductID = pid
 	}
 
+	if cfg.DeviceID == "" && cfg.SCT == "" {
+		log.Printf("[!] Note: No QR code or credentials provided. Please supply -qr / QR_CODE or -ip.")
+	}
+
 	// Ensure key directory exists
 	if dir := filepath.Dir(cfg.KeyPath); dir != "." && dir != "" {
 		_ = os.MkdirAll(dir, 0755)
@@ -251,7 +251,7 @@ func main() {
 	log.Printf("[Config] Key:    %s", cfg.KeyPath)
 	log.Printf("[Config] Ports:  RTSP=%d, ONVIF=%d, WS-Discovery=3702/udp", *rtspPort, *onvifPort)
 	if *mqttBroker != "" {
-		log.Printf("[Config] MQTT:   Broker=%s, Discovery=%s", *mqttBroker, *mqttDisc)
+		log.Printf("[Config] MQTT:   Broker=%s, BaseTopic=%s, Discovery=%s", *mqttBroker, *mqttTopic, *mqttDisc)
 	}
 
 	// Context and signal trap for graceful shutdown
@@ -314,15 +314,15 @@ func main() {
 			Model:           "L 625 CAM SC",
 			BridgeHTTPURL:   fmt.Sprintf("http://%s:%d", cfg.CameraIP, *onvifPort),
 		}, mqtt.Callbacks{
-			SetLampMode:      bridgeMgr.SetLampState,
-			SetHighlight:     bridgeMgr.SetHighlight,
-			SetHighlightTime: bridgeMgr.SetHighlightTime,
-			SetLowlight:      bridgeMgr.SetLowlight,
-			SetLowlightTime:  bridgeMgr.SetLowlightTime,
+			SetLampMode:       bridgeMgr.SetLampState,
+			SetHighlight:      bridgeMgr.SetHighlight,
+			SetHighlightTime:  bridgeMgr.SetHighlightTime,
+			SetLowlight:       bridgeMgr.SetLowlight,
+			SetLowlightTime:   bridgeMgr.SetLowlightTime,
 			SetPIRSensitivity: bridgeMgr.SetPIRSensitivity,
-			SetLuxThreshold:  bridgeMgr.SetLuxThreshold,
-			SetSiren:         bridgeMgr.SetSiren,
-			SetResolution:    bridgeMgr.SetResolution,
+			SetLuxThreshold:   bridgeMgr.SetLuxThreshold,
+			SetSiren:          bridgeMgr.SetSiren,
+			SetResolution:     bridgeMgr.SetResolution,
 		})
 		defer mqttClient.Close()
 

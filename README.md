@@ -72,6 +72,7 @@ services:
       - MQTT_BROKER=tcp://192.168.1.50:1883
       - MQTT_USER=homeassistant
       - MQTT_PASSWORD=secretpassword
+      - MQTT_TOPIC_PREFIX=steinel
     volumes:
       - ./data:/data
 
@@ -114,7 +115,7 @@ Sobald `MQTT_BROKER` konfiguriert ist, verbindet sich die Bridge mit dem Broker.
 ./scripts/setup-sdk.sh
 
 # 2. Lokal bauen und starten (optional mit MQTT)
-./scripts/run-dev.sh -ip 192.168.1.100 -qr "did=de-...,pid=pr-...,sct=...,pairPwd=..." -mqtt-broker "tcp://192.168.1.50:1883"
+./scripts/run-dev.sh -ip 192.168.1.100 -qr "did=de-xxxxxxx,pid=pr-xxxxx,sct=xxxx,pairPwd=xxxx" -mqtt-broker "tcp://192.168.1.50:1883"
 ```
 
 ---

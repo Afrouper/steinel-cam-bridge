@@ -2,7 +2,7 @@ package nabto
 
 import "strings"
 
-// ParseQRCode extracts camera credentials from the Steinel app QR-code payload string
+// ParseQRCode extracts camera pairing parameters from the QR code string
 // e.g. "did=de-xxxxxxx,pid=pr-xxxxx,sct=xxxx,pairPwd=xxxx"
 func ParseQRCode(qr string, cfg *Config) {
 	if cfg == nil {

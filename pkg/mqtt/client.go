@@ -20,24 +20,24 @@ type Config struct {
 	Username        string
 	Password        string
 	ClientID        string
-	TopicPrefix     string
-	DiscoveryPrefix string
-	DeviceID        string
-	ProductID       string
-	Model           string
+	TopicPrefix     string // Base topic, default: "steinel"
+	DiscoveryPrefix string // Default: "homeassistant"
+	DeviceID        string // e.g. "de-xxxxxxx"
+	ProductID       string // e.g. "pr-xxxxx"
+	Model           string // e.g. "L 625 CAM SC"
 	BridgeHTTPURL   string
 }
 
 type Callbacks struct {
-	SetLampMode      func(mode string) error
-	SetHighlight     func(percent int) error
-	SetHighlightTime func(seconds int) error
-	SetLowlight      func(percent int) error
-	SetLowlightTime  func(timeVal int) error
+	SetLampMode       func(mode string) error
+	SetHighlight      func(percent int) error
+	SetHighlightTime  func(seconds int) error
+	SetLowlight       func(percent int) error
+	SetLowlightTime   func(timeVal int) error
 	SetPIRSensitivity func(percent int) error
-	SetLuxThreshold  func(lux int) error
-	SetSiren         func(on bool) error
-	SetResolution    func(res string) error
+	SetLuxThreshold   func(lux int) error
+	SetSiren          func(on bool) error
+	SetResolution     func(res string) error
 }
 
 type Client struct {
@@ -58,13 +58,19 @@ func NewClient(cfg Config, cb Callbacks) *Client {
 	}
 	cleanDID := strings.ReplaceAll(cfg.DeviceID, "-", "_")
 	if cleanDID == "" {
-		cleanDID = "m4yfowbr"
+		cleanDID = "camera"
 	}
 	nodeID := fmt.Sprintf("steinel_%s", cleanDID)
 
-	if cfg.TopicPrefix == "" {
-		cfg.TopicPrefix = fmt.Sprintf("steinel/%s", cfg.DeviceID)
+	basePrefix := strings.TrimSuffix(cfg.TopicPrefix, "/")
+	if basePrefix == "" {
+		basePrefix = "steinel"
 	}
+
+	// Always nest DeviceID under base prefix: <basePrefix>/<deviceID>
+	// This guarantees no conflicts when multiple Steinel cameras run on the same MQTT broker.
+	fullBaseTopic := fmt.Sprintf("%s/%s", basePrefix, cfg.DeviceID)
+
 	if cfg.ClientID == "" {
 		cfg.ClientID = fmt.Sprintf("steinel_bridge_%s", cleanDID)
 	}
@@ -73,7 +79,7 @@ func NewClient(cfg Config, cb Callbacks) *Client {
 		cfg:       cfg,
 		cb:        cb,
 		nodeID:    nodeID,
-		baseTopic: cfg.TopicPrefix,
+		baseTopic: fullBaseTopic,
 	}
 
 	return c
@@ -96,7 +102,7 @@ func (c *Client) Start(ctx context.Context) error {
 	opts.SetKeepAlive(30 * time.Second)
 
 	opts.OnConnect = func(client paho.Client) {
-		log.Printf("[MQTT] 🔌 Connected to MQTT broker: %s", c.cfg.Broker)
+		log.Printf("[MQTT] 🔌 Connected to MQTT broker: %s (Topic: %s)", c.cfg.Broker, c.baseTopic)
 		// 1. Publish Online Status
 		client.Publish(availTopic, 1, true, "online")
 
@@ -157,7 +163,7 @@ func (c *Client) publishDiscovery() {
 	availTopic := fmt.Sprintf("%s/availability", c.baseTopic)
 	devMap := map[string]interface{}{
 		"identifiers":  []string{c.nodeID},
-		"name":         fmt.Sprintf("Steinel %s", c.cfg.Model),
+		"name":         fmt.Sprintf("Steinel %s (%s)", c.cfg.Model, c.cfg.DeviceID),
 		"manufacturer": "STEINEL",
 		"model":        c.cfg.Model,
 		"sw_version":   "2.0.0",
@@ -288,7 +294,7 @@ func (c *Client) publishDiscovery() {
 		"command_topic": fmt.Sprintf("%s/resolution/set", c.baseTopic),
 	})
 
-	log.Printf("[MQTT] 📢 Published Home Assistant Auto-Discovery entities under %s", c.cfg.DiscoveryPrefix)
+	log.Printf("[MQTT] 📢 Published Home Assistant Auto-Discovery entities for %s under %s", c.nodeID, c.cfg.DiscoveryPrefix)
 }
 
 // --- State Publication ---

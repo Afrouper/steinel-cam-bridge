@@ -1,0 +1,26 @@
+services:
+  steinel-cam-bridge:
+    image: ghcr.io/afrouper/steinel-cam-bridge:latest
+    container_name: steinel-cam-bridge
+    restart: unless-stopped
+    network_mode: host # Empfohlen für WS-Discovery (UDP 3702) und Direktverbindung zur Kamera
+    environment:
+      # --- Kamera-Verbindung (Ersetzen Sie die Werte durch Ihre Kamera-Daten) ---
+      - CAMERA_IP=192.168.1.100                                         # IP-Adresse der Steinel-Kamera im lokalen Netz
+      - QR_CODE=did=de-xxxxxxx,pid=pr-xxxxx,sct=xxxx,pairPwd=xxxx       # QR-Code String aus der Steinel App ("Kamera teilen")
+      - RESOLUTION=1080p                                                # Standard-Auflösung: 1080p, 720p oder 360p
+      - KEY_PATH=/data/client.key                                       # Pfad zum persistenten Schlüssel
+
+      # --- Server-Ports ---
+      - RTSP_PORT=8554
+      - ONVIF_PORT=8000
+      - RTSP_PATH=steinel
+
+      # --- MQTT / Home Assistant Konfiguration (Optional) ---
+      - MQTT_BROKER=tcp://192.168.1.50:1883    # IP oder Hostname Ihres MQTT Brokers (z.B. Home Assistant Mosquitto)
+      - MQTT_USER=homeassistant                 # Optional: MQTT Benutzername
+      - MQTT_PASSWORD=secret_password           # Optional: MQTT Passwort
+      - MQTT_TOPIC_PREFIX=steinel               # Basis-Topic (Geräte-ID wird automatisch darunter gehängt: steinel/<deviceID>/...)
+      - MQTT_DISCOVERY_PREFIX=homeassistant     # Home Assistant Auto-Discovery Prefix
+    volumes:
+      - ./data:/data
