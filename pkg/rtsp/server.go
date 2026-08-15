@@ -139,9 +139,34 @@ func (s *Server) checkPath(p string) bool {
 
 // WriteVideoPacket forwards a raw H.264 RTP packet to all connected RTSP clients
 func (s *Server) WriteVideoPacket(pkt *rtp.Packet) {
-	s.mu.RLock()
+	s.mu.Lock()
 	st := s.stream
-	s.mu.RUnlock()
+	if len(pkt.Payload) > 0 && (s.videoFormat.SPS == nil || s.videoFormat.PPS == nil) {
+		nalType := pkt.Payload[0] & 0x1F
+		if nalType == 7 { // SPS
+			s.videoFormat.SPS = append([]byte(nil), pkt.Payload...)
+		} else if nalType == 8 { // PPS
+			s.videoFormat.PPS = append([]byte(nil), pkt.Payload...)
+		} else if nalType == 24 { // STAP-A
+			payload := pkt.Payload[1:]
+			for len(payload) >= 2 {
+				nalLen := int(payload[0])<<8 | int(payload[1])
+				payload = payload[2:]
+				if len(payload) < nalLen {
+					break
+				}
+				nal := payload[:nalLen]
+				payload = payload[nalLen:]
+				nType := nal[0] & 0x1F
+				if nType == 7 {
+					s.videoFormat.SPS = append([]byte(nil), nal...)
+				} else if nType == 8 {
+					s.videoFormat.PPS = append([]byte(nil), nal...)
+				}
+			}
+		}
+	}
+	s.mu.Unlock()
 
 	if st == nil {
 		return
