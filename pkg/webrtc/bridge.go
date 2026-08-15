@@ -516,9 +516,15 @@ func (b *Bridge) onMCUStatus(cfg *mcu.ConfigInfo) {
 	status.Resolution = b.resolution
 	events.GlobalBus.UpdateStatus(status)
 
-	// Motion Detection Handling
-	if cfg.MotionDetected {
-		log.Printf("[MCU] 🚨 Motion detected by Steinel Hardware PIR! (Lux: %d, Mode: %d)", cfg.Lux, cfg.Mode)
+	// Motion Detection Handling (Hardware PIR + Optical Camera Detection)
+	if cfg.MotionDetected || cfg.PhotosensitiveDetection {
+		motionType := "PIR Sensor"
+		if cfg.MotionDetected && cfg.PhotosensitiveDetection {
+			motionType = "PIR + Kamera-Bilderkennung"
+		} else if cfg.PhotosensitiveDetection {
+			motionType = "Kamera-Bilderkennung"
+		}
+		log.Printf("[MCU] 🚨 Bewegung erkannt (%s)! (Lux: %d, Mode: %d)", motionType, cfg.Lux, cfg.Mode)
 		events.GlobalBus.SetMotion(true)
 
 		b.mu.Lock()
@@ -534,7 +540,7 @@ func (b *Bridge) onMCUStatus(cfg *mcu.ConfigInfo) {
 }
 
 func (b *Bridge) runMCUPollingLoop(ctx context.Context) {
-	ticker := time.NewTicker(15 * time.Second)
+	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
 	// Immediate first query
