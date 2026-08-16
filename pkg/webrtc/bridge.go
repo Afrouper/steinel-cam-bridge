@@ -419,7 +419,7 @@ func (b *Bridge) SetResolution(resolution string) error {
 	}
 	data, _ := json.Marshal(cmd)
 	log.Printf("[DataChannel] 🎦 Requesting camera resolution: %s", resolution)
-	return dc.SendText(string(data))
+	return dc.Send(data)
 }
 
 // SendCommand sends an arbitrary JSON command over the DataChannel
@@ -439,7 +439,8 @@ func (b *Bridge) SendCommand(cmdName string, info map[string]interface{}) error 
 		"info":  info,
 	}
 	data, _ := json.Marshal(cmd)
-	return dc.SendText(string(data))
+	log.Printf("[DataChannel] 📤 Sending command '%s': %s", cmdName, string(data))
+	return dc.Send(data)
 }
 
 // SendMCUCommand sends a raw Hex command to the MCU via tran_ctl
@@ -511,7 +512,8 @@ func (b *Bridge) sendJSONCmd(cmdName string, info map[string]interface{}) error 
 		cmd["info"] = infoCopy
 	}
 	data, _ := json.Marshal(cmd)
-	return dc.SendText(string(data))
+	log.Printf("[DataChannel] 📤 Sending JSON command '%s': %s", cmdName, string(data))
+	return dc.Send(data)
 }
 
 func (b *Bridge) handleDataChannelMessage(data []byte) {
@@ -521,6 +523,7 @@ func (b *Bridge) handleDataChannelMessage(data []byte) {
 
 	// 1. Check if payload is a JSON control message
 	if data[0] == '{' {
+		log.Printf("[DataChannel] 📥 Received JSON message (%d bytes): %s", len(data), string(data))
 		var root map[string]interface{}
 		if err := json.Unmarshal(data, &root); err == nil {
 			// Check for SD Card JSON responses (get_event_list, get_snapshot, get_event_video)

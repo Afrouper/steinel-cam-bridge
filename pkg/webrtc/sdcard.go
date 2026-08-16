@@ -66,18 +66,15 @@ func NewSDCardManager(sendJSONCmd func(cmd string, info map[string]interface{}) 
 
 // GetEventList queries the list of recordings from the camera's SD card within a given time range
 func (m *SDCardManager) GetEventList(ctx context.Context, startTime, endTime int64, page, limit int) (*EventListResponse, error) {
-	if page <= 0 {
-		page = 1
-	}
 	if limit <= 0 {
-		limit = 50
+		limit = 1000
 	}
-	if startTime == 0 {
-		// Default to last 7 days
-		startTime = time.Now().Add(-7 * 24 * time.Hour).Unix()
+	if page < 0 {
+		page = 0
 	}
 	if endTime == 0 {
-		endTime = time.Now().Add(24 * time.Hour).Unix()
+		// Default to future to cover any camera clock skew
+		endTime = 2147483647
 	}
 
 	log.Printf("[SDCard] 🔍 Requesting event list (start: %d, end: %d, page: %d, limit: %d)", startTime, endTime, page, limit)
