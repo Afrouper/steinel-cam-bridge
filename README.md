@@ -161,7 +161,11 @@ docker run -d \
 ## 📱 Einbindung in Home Assistant & Scrypted
 
 ### 1. Home Assistant (MQTT)
-Sobald `MQTT_BROKER` konfiguriert ist, verbindet sich die Bridge mit dem Broker. In Home Assistant unter **Einstellungen ➔ Geräte & Dienste ➔ MQTT** erscheint automatisch das Gerät **"Steinel L 625 CAM SC"** mit allen Licht-, Sensor- und Steuerungsentitäten!
+Sobald `MQTT_BROKER` konfiguriert ist (oder automatisch über das Home Assistant Add-on per `mqtt:want`), verbindet sich die Bridge mit dem Broker. In Home Assistant unter **Einstellungen ➔ Geräte & Dienste ➔ MQTT** erscheint automatisch das Gerät **"Steinel L 625 CAM SC"** mit allen Licht-, Sensor- und Steuerungsentitäten:
+
+<p align="center">
+  <img src="docs/HomeAssistant%20Controles.png" alt="Home Assistant Steuerung und Sensoren" width="400">
+</p>
 
 ### 2. Scrypted (Home Assistant Add-on oder Standalone)
 Egal ob Scrypted als **Home Assistant Add-on** oder als eigenständige Instanz läuft:
@@ -172,6 +176,10 @@ Egal ob Scrypted als **Home Assistant Add-on** oder als eigenständige Instanz l
    - In Scrypted unter **Plugins** das Plugin **`OpenCV Motion Detector`** (`@scrypted/opencv`) installieren.
    - Auf der Steinel-Kamera im Reiter **Extensions** das Plugin **OpenCV Motion Detector** aktivieren.
 5. Im **HomeKit Plugin** die Kamera aktivieren ➔ Live-Streaming & HKSV-Aufnahmen in Apple Home laufen vollautomatisch!
+
+<p align="center">
+  <img src="docs/Scrypted%20Kamera.png" alt="Scrypted ONVIF Kamera Integration" width="800">
+</p>
 
 ---
 
