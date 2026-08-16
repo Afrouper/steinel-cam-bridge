@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -170,6 +171,81 @@ func (m *BridgeManager) RequestKeyframe() {
 
 var AppVersion = "dev"
 
+// loadHomeAssistantOptions attempts to parse /data/options.json if running as a Home Assistant Add-on
+func loadHomeAssistantOptions(cfg *nabto.Config, resolution, audioCodec, mqttBroker, mqttUser, mqttPass, mqttTopic, mqttDisc *string, rtspPort, onvifPort *int) {
+	loadHomeAssistantOptionsFromPath("/data/options.json", cfg, resolution, audioCodec, mqttBroker, mqttUser, mqttPass, mqttTopic, mqttDisc, rtspPort, onvifPort)
+}
+
+func loadHomeAssistantOptionsFromPath(path string, cfg *nabto.Config, resolution, audioCodec, mqttBroker, mqttUser, mqttPass, mqttTopic, mqttDisc *string, rtspPort, onvifPort *int) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+
+	var opts struct {
+		CameraIP            string `json:"camera_ip"`
+		QRCode              string `json:"qr_code"`
+		Resolution          string `json:"resolution"`
+		AudioCodec          string `json:"audio_codec"`
+		RTSPPort            int    `json:"rtsp_port"`
+		ONVIFPort           int    `json:"onvif_port"`
+		MQTTBroker          string `json:"mqtt_broker"`
+		MQTTHost            string `json:"mqtt_host"`
+		MQTTPort            int    `json:"mqtt_port"`
+		MQTTUser            string `json:"mqtt_user"`
+		MQTTPassword        string `json:"mqtt_password"`
+		MQTTTopicPrefix     string `json:"mqtt_topic_prefix"`
+		MQTTDiscoveryPrefix string `json:"mqtt_discovery_prefix"`
+	}
+
+	if err := json.Unmarshal(data, &opts); err != nil {
+		log.Printf("[HA Addon] ⚠️ Warning: Failed to parse /data/options.json: %v", err)
+		return
+	}
+
+	log.Printf("[HA Addon] 🏠 Loaded configuration from /data/options.json")
+
+	if opts.CameraIP != "" {
+		cfg.CameraIP = opts.CameraIP
+	}
+	if opts.QRCode != "" {
+		nabto.ParseQRCode(opts.QRCode, cfg)
+	}
+	if opts.Resolution != "" {
+		*resolution = opts.Resolution
+	}
+	if opts.AudioCodec != "" {
+		*audioCodec = opts.AudioCodec
+	}
+	if opts.RTSPPort > 0 {
+		*rtspPort = opts.RTSPPort
+	}
+	if opts.ONVIFPort > 0 {
+		*onvifPort = opts.ONVIFPort
+	}
+	if opts.MQTTBroker != "" {
+		*mqttBroker = opts.MQTTBroker
+	} else if opts.MQTTHost != "" {
+		port := 1883
+		if opts.MQTTPort > 0 {
+			port = opts.MQTTPort
+		}
+		*mqttBroker = fmt.Sprintf("tcp://%s:%d", opts.MQTTHost, port)
+	}
+	if opts.MQTTUser != "" {
+		*mqttUser = opts.MQTTUser
+	}
+	if opts.MQTTPassword != "" {
+		*mqttPass = opts.MQTTPassword
+	}
+	if opts.MQTTTopicPrefix != "" {
+		*mqttTopic = opts.MQTTTopicPrefix
+	}
+	if opts.MQTTDiscoveryPrefix != "" {
+		*mqttDisc = opts.MQTTDiscoveryPrefix
+	}
+}
+
 func main() {
 	qrFlag := flag.String("qr", "", "Steinel camera QR code string (did=...,pid=...,sct=...,pairPwd=...)")
 	ipFlag := flag.String("ip", "", "Steinel camera local IP address")
@@ -203,13 +279,8 @@ func main() {
 		KeyPath:  *keyPath,
 	}
 
-	// Override from CLI flags
-	if *ipFlag != "" {
-		cfg.CameraIP = *ipFlag
-	}
-	if *qrFlag != "" {
-		nabto.ParseQRCode(*qrFlag, cfg)
-	}
+	// 1. Auto-detect & load Home Assistant Add-on options (/data/options.json)
+	loadHomeAssistantOptions(cfg, resolution, audioCodec, mqttBroker, mqttUser, mqttPass, mqttTopic, mqttDisc, rtspPort, onvifPort)
 
 	// Override from Environment Variables
 	if envQR := os.Getenv("QR_CODE"); envQR != "" {
@@ -258,6 +329,14 @@ func main() {
 	}
 	if pid := os.Getenv("PRODUCT_ID"); pid != "" {
 		cfg.ProductID = pid
+	}
+
+	// Override from CLI flags (highest priority)
+	if *ipFlag != "" {
+		cfg.CameraIP = *ipFlag
+	}
+	if *qrFlag != "" {
+		nabto.ParseQRCode(*qrFlag, cfg)
 	}
 
 	if cfg.DeviceID == "" && cfg.SCT == "" {

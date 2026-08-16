@@ -46,11 +46,22 @@ Die Kamera wird im lokalen Netzwerk als ONVIF Kamera zu verfügung gestellt. Dam
 
 ---
 
-## 🐳 Bereitstellung (Docker & Docker Compose)
+## 🐳 Bereitstellung (Home Assistant Add-on & Docker)
 
-Die Steinel CAM Bridge läuft autark als einzelner Container bzw. Docker Compose Stack auf Ihrem Server oder NAS. 
+### Option A: Home Assistant Add-on (Empfohlen für Home Assistant Nutzer)
 
-### Option A: Standalone Docker Compose (Empfohlen mit Security Hardening)
+1. Navigieren Sie in Home Assistant zu **Einstellungen ➔ Add-ons ➔ Add-on Store**.
+2. Klicken Sie oben rechts auf das Drei-Punkte-Menü (⋮) ➔ **Repositories**.
+3. Fügen Sie folgende URL hinzu:
+   ```text
+   https://github.com/Afrouper/steinel-cam-bridge
+   ```
+4. Wählen Sie **"Steinel CAM Bridge"** aus und klicken Sie auf **Installieren**.
+5. Tragen Sie im Reiter **Konfiguration** Ihre `camera_ip` und den `qr_code` ein und klicken Sie auf **Starten**!
+
+---
+
+### Option B: Standalone Docker Compose (Empfohlen für Server / NAS mit Security Hardening)
 
 Eine fertige Vorlage finden Sie unter [`examples/docker-compose.yml`](examples/docker-compose.yml):
 
@@ -119,7 +130,7 @@ Starten mit:
 docker compose up -d
 ```
 
-### Option B: Standalone Docker Run (Gehärtet)
+### Option C: Standalone Docker Run (Gehärtet)
 
 ```bash
 docker run -d \

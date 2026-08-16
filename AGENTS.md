@@ -42,9 +42,19 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
 ## 2. Paketstruktur & Modul-Verantwortlichkeiten
 
 - **`cmd/steinel-bridge/main.go`**:
-  - CLI-Flags (`-ip`, `-qr`, `-key`, `-port`, `-path`, `-res`, `-onvif`, `-mqtt-broker`, `-mqtt-topic`) und Umgebungsvariablen (`CAMERA_IP`, `QR_CODE`, `KEY_PATH`, `MQTT_BROKER`, etc.).
+  - Konfigurations-Hierarchie (Precedence):
+    1. CLI-Flags (`-ip`, `-qr`, `-key`, `-port`, `-path`, `-res`, `-onvif`, `-mqtt-broker`, etc.)
+    2. Umgebungsvariablen (`CAMERA_IP`, `QR_CODE`, `KEY_PATH`, `MQTT_BROKER`, etc.)
+    3. Home Assistant Add-on Konfigurationsdatei (`/data/options.json`, falls vorhanden)
+    4. Standardwerte
   - Initialisiert Server (`rtsp.Server`, `onvif.Server`, `mqtt.Client`).
   - Beherbergt den **Supervisor-Loop**: Fängt Verbindungsabbrüche, Session-Beendigungen oder Watchdog-Resets ab und erzwingt einen sauberen **30-Sekunden-Cooldown**, damit neu startende Kameras stabil hochfahren können, ohne das Netzwerk zu fluten.
+
+- **`repository.yaml` & `steinel-cam-bridge/` (Home Assistant Add-on)**:
+  - `repository.yaml`: Ermöglicht das Hinzufügen dieses GitHub-Repositories als externe Add-on-Quelle in Home Assistant.
+  - `steinel-cam-bridge/config.yaml`: Manifest für Home Assistant (Schema für Einstellungs-Formular, `host_network: true`, `services: ["mqtt:want"]` für automatische Mosquitto-Verbindung).
+  - `steinel-cam-bridge/build.yaml`: Verknüpft das Add-on direkt mit dem pre-built Multi-Arch Image `ghcr.io/afrouper/steinel-cam-bridge:{arch}`.
+  - `steinel-cam-bridge/DOCS.md`: In-App Dokumentation für Home Assistant Benutzer.
 
 - **`pkg/nabto/`**:
   - `client.go`: CGo-Bindings für das Nabto Edge Client SDK (`nabto_client.h`).
@@ -121,7 +131,7 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
    - Dokumentationssprache ist deutsch, da Steinl Kameras zumeißt im DACH Raum verwendet werden
    - Passe die Dokumentation an neue Features oder Verhaltensweisen an
      - `README.md` Für die Haupt Dokumentation
-     - `ÀGENTS.md`  Für Anweisungen an Agenten wenn es neue Elemente gibt
+     - `AGENTS.md` Für Anweisungen an Agenten wenn es neue Elemente gibt
      - `THIRD_PARTY_LICENSES.md` Falls es Anpassungen an den Dependencies gibt.
 
 

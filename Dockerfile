@@ -84,6 +84,4 @@ VOLUME ["/data"]
 
 EXPOSE 8554 8554/udp 8000 3702/udp
 
-USER 1000:1000
-
 ENTRYPOINT ["/app/steinel-bridge"]
