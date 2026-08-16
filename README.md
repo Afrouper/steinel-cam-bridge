@@ -50,7 +50,7 @@ Die Kamera wird im lokalen Netzwerk als ONVIF Kamera zu verfügung gestellt. Dam
 
 Die Steinel CAM Bridge läuft autark als einzelner Container bzw. Docker Compose Stack auf Ihrem Server oder NAS. 
 
-### Option A: Standalone Docker Compose (Empfohlen)
+### Option A: Standalone Docker Compose (Empfohlen mit Security Hardening)
 
 Eine fertige Vorlage finden Sie unter [`examples/docker-compose.yml`](examples/docker-compose.yml):
 
@@ -61,6 +61,19 @@ services:
     container_name: steinel-cam-bridge
     restart: unless-stopped
     network_mode: host # Empfohlen für WS-Discovery (UDP 3702) und Direktverbindung zur Kamera
+
+    # --- Security Hardening ---
+    user: "1000:1000"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE # Erlaubt User 1000 das Binden von Standard-Ports < 1024 (falls gewünscht)
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64M
+
     environment:
       # --- Kamera-Verbindung (Ersetzen Sie die Werte durch Ihre Kamera-Daten) ---
       - CAMERA_IP=192.168.1.100                                         # IP-Adresse der Steinel-Kamera im lokalen Netz
@@ -80,8 +93,10 @@ services:
       - MQTT_PASSWORD=secretpassword            # Optional: MQTT Passwort
       - MQTT_TOPIC_PREFIX=steinel               # Basis-Topic (Geräte-ID wird automatisch darunter gehängt: steinel/<deviceID>/...)
       - MQTT_DISCOVERY_PREFIX=homeassistant     # Home Assistant Auto-Discovery Prefix
+
     volumes:
       - ./data:/data
+
     deploy:
       resources:
         limits:
@@ -91,6 +106,12 @@ services:
           cpus: '0.05'
           memory: 64M
     pids_limit: 100
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 ```
 
 Starten mit:
@@ -98,13 +119,19 @@ Starten mit:
 docker compose up -d
 ```
 
-### Option B: Standalone Docker Run
+### Option B: Standalone Docker Run (Gehärtet)
 
 ```bash
 docker run -d \
   --name steinel-cam-bridge \
   --restart unless-stopped \
   --net=host \
+  --user "1000:1000" \
+  --security-opt no-new-privileges:true \
+  --cap-drop ALL \
+  --cap-add NET_BIND_SERVICE \
+  --read-only \
+  --tmpfs /tmp:rw,noexec,nosuid,size=64M \
   --memory=256m \
   --cpus=0.5 \
   --pids-limit=100 \

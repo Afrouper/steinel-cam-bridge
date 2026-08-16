@@ -40,17 +40,19 @@ RUN go mod download
 
 COPY . .
 
-# 3. Compile stripped static/CGo binary
-RUN CGO_ENABLED=1 go build -ldflags="-s -w" -o /app/steinel-bridge ./cmd/steinel-bridge
+# 3. Compile stripped static/CGo binary & create data directory
+RUN CGO_ENABLED=1 go build -ldflags="-s -w" -o /app/steinel-bridge ./cmd/steinel-bridge && \
+    mkdir -p /data && chown -R 1000:1000 /data
 
 # --- Stage 2: Ultra-minimal Distroless runtime image (~35 MB uncompressed, ~15 MB download) ---
 FROM gcr.io/distroless/cc-debian12
 
 WORKDIR /app
 
-# Copy binary and runtime library
+# Copy binary, runtime library, and data directory
 COPY --from=builder /app/steinel-bridge /app/steinel-bridge
 COPY --from=builder /usr/lib/libnabto_client.so /lib/libnabto_client.so
+COPY --from=builder --chown=1000:1000 /data /data
 
 # OCI Image Labels
 LABEL org.opencontainers.image.title="steinel-cam-bridge" \
@@ -77,5 +79,7 @@ ENV CAMERA_IP="192.168.1.100" \
 VOLUME ["/data"]
 
 EXPOSE 8554 8554/udp 8000 3702/udp
+
+USER 1000:1000
 
 ENTRYPOINT ["/app/steinel-bridge"]
