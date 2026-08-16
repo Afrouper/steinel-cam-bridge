@@ -53,25 +53,25 @@ COPY --from=builder /app/steinel-bridge /app/steinel-bridge
 COPY --from=builder /usr/lib/libnabto_client.so /lib/libnabto_client.so
 
 # OCI Image Labels
-LABEL org.opencontainers.image.title="steinel-cam-bridge"
-LABEL org.opencontainers.image.description="Standalone ONVIF, 2-Way Audio & Home Assistant Bridge for Steinel L 625 CAM SC"
-LABEL org.opencontainers.image.authors="Afrouper"
-LABEL org.opencontainers.image.source="https://github.com/Afrouper/steinel-cam-bridge"
-LABEL org.opencontainers.image.licenses="MIT"
+LABEL org.opencontainers.image.title="steinel-cam-bridge" \
+      org.opencontainers.image.description="Standalone ONVIF, 2-Way Audio & Home Assistant Bridge for Steinel L 625 CAM SC" \
+      org.opencontainers.image.authors="Afrouper" \
+      org.opencontainers.image.source="https://github.com/Afrouper/steinel-cam-bridge" \
+      org.opencontainers.image.licenses="MIT"
 
 # Default configuration environment variables
-ENV CAMERA_IP="192.168.1.100"
-ENV QR_CODE=""
-ENV KEY_PATH="/data/client.key"
-ENV RESOLUTION="1080p"
-ENV RTSP_PORT="8554"
-ENV RTSP_PATH="steinel"
-ENV ONVIF_PORT="8000"
-ENV MQTT_BROKER=""
-ENV MQTT_USER=""
-ENV MQTT_PASSWORD=""
-ENV MQTT_TOPIC_PREFIX="steinel"
-ENV MQTT_DISCOVERY_PREFIX="homeassistant"
+ENV CAMERA_IP="192.168.1.100" \
+    QR_CODE="" \
+    KEY_PATH="/data/client.key" \
+    RESOLUTION="1080p" \
+    RTSP_PORT="8554" \
+    RTSP_PATH="steinel" \
+    ONVIF_PORT="8000" \
+    MQTT_BROKER="" \
+    MQTT_USER="" \
+    MQTT_PASSWORD="" \
+    MQTT_TOPIC_PREFIX="steinel" \
+    MQTT_DISCOVERY_PREFIX="homeassistant"
 
 VOLUME ["/data"]
 
