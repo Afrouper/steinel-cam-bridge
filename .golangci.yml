@@ -5,7 +5,6 @@ run:
 
 linters:
   enable:
-    - gofmt
     - govet
     - ineffassign
     - staticcheck
@@ -13,3 +12,7 @@ linters:
     - misspell
     - unconvert
     - revive
+
+formatters:
+  enable:
+    - gofmt
