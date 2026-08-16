@@ -7,6 +7,7 @@
 FROM golang:1.26-bookworm AS builder
 
 ARG TARGETARCH
+ARG APP_VERSION="dev"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
@@ -40,12 +41,14 @@ RUN go mod download
 
 COPY . .
 
-# 3. Compile stripped static/CGo binary & create data directory
-RUN CGO_ENABLED=1 go build -ldflags="-s -w" -o /app/steinel-bridge ./cmd/steinel-bridge && \
+# 3. Compile stripped static/CGo binary with version injection & create data directory
+RUN CGO_ENABLED=1 go build -ldflags="-s -w -X main.AppVersion=${APP_VERSION}" -o /app/steinel-bridge ./cmd/steinel-bridge && \
     mkdir -p /data && chown -R 1000:1000 /data
 
 # --- Stage 2: Ultra-minimal Distroless runtime image (~35 MB uncompressed, ~15 MB download) ---
 FROM gcr.io/distroless/cc-debian12
+
+ARG APP_VERSION="dev"
 
 WORKDIR /app
 
@@ -57,12 +60,14 @@ COPY --from=builder --chown=1000:1000 /data /data
 # OCI Image Labels
 LABEL org.opencontainers.image.title="steinel-cam-bridge" \
       org.opencontainers.image.description="Standalone ONVIF, 2-Way Audio & Home Assistant Bridge for Steinel L 625 CAM SC" \
+      org.opencontainers.image.version="${APP_VERSION}" \
       org.opencontainers.image.authors="Afrouper" \
       org.opencontainers.image.source="https://github.com/Afrouper/steinel-cam-bridge" \
       org.opencontainers.image.licenses="MIT"
 
 # Default configuration environment variables
-ENV CAMERA_IP="192.168.1.100" \
+ENV APP_VERSION="${APP_VERSION}" \
+    CAMERA_IP="192.168.1.100" \
     QR_CODE="" \
     KEY_PATH="/data/client.key" \
     RESOLUTION="1080p" \

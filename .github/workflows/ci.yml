@@ -49,6 +49,8 @@ jobs:
         with:
           context: .
           push: false
+          build-args: |
+            APP_VERSION=test
           tags: steinel-cam-bridge:test
           cache-from: type=gha
           cache-to: type=gha,mode=max

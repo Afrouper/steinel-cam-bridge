@@ -168,6 +168,8 @@ func (m *BridgeManager) RequestKeyframe() {
 	}
 }
 
+var AppVersion = "dev"
+
 func main() {
 	qrFlag := flag.String("qr", "", "Steinel camera QR code string (did=...,pid=...,sct=...,pairPwd=...)")
 	ipFlag := flag.String("ip", "", "Steinel camera local IP address")
@@ -184,8 +186,14 @@ func main() {
 	audioCodec := flag.String("audio-codec", "aac", "Audio codec for RTSP/ONVIF stream: 'aac' (transcoded, default) or 'pcmu' (raw passthrough)")
 	flag.Parse()
 
+	if envVer := os.Getenv("APP_VERSION"); envVer != "" {
+		AppVersion = envVer
+	} else if envVer := os.Getenv("VERSION"); envVer != "" {
+		AppVersion = envVer
+	}
+
 	fmt.Println("═══════════════════════════════════════════════════════════════════")
-	fmt.Println(" Steinel L 625 CAM SC — Standalone ONVIF & Home Assistant Bridge")
+	fmt.Printf(" Steinel L 625 CAM SC — Standalone Bridge (%s)\n", AppVersion)
 	fmt.Println(" 100% Native Single Binary (Nabto + WebRTC + RTSP + ONVIF + MQTT)")
 	fmt.Println("═══════════════════════════════════════════════════════════════════")
 
