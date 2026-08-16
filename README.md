@@ -130,10 +130,11 @@ Sobald `MQTT_BROKER` konfiguriert ist, verbindet sich die Bridge mit dem Broker.
 ### 2. Scrypted (Apple HomeKit / HKSV)
 1. Im Scrypted **ONVIF Plugin** auf *Add Camera* klicken (Host-IP, Port `8000`).
 2. Scrypted erkennt automatisch **1080p Video, Mikrofon und Gegensprechanlage**.
-3. **Bewegungserkennung für HKSV aktivieren**:
+3. **Natives Audio**: Die Bridge liefert ab Werk standardmäßig natives **AAC-Audio (16 kHz)**. In Scrypted ist **kein manuelles Audio-Transcoding im HomeKit-DEBUG-Reiter erforderlich**.
+4. **Bewegungserkennung für HKSV aktivieren**:
    - In Scrypted unter **Plugins** das Plugin **`OpenCV Motion Detector`** (`@scrypted/opencv`) installieren.
    - Auf der Steinel-Kamera im Reiter **Extensions** das Plugin **OpenCV Motion Detector** aktivieren.
-4. Im **HomeKit Plugin** die Kamera aktivieren ➔ Aufnahmen in Apple Home laufen vollautomatisch!
+5. Im **HomeKit Plugin** die Kamera aktivieren ➔ Live-Streaming & HKSV-Aufnahmen in Apple Home laufen vollautomatisch!
 
 ---
 

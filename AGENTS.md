@@ -51,17 +51,22 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
   - Verwaltet kryptografische ECC-Schlüssel (`client.key`), automatisches IAM-Pairing (`/iam/pairing/password-open`), CoAP-Signaling-Port-Erkennung (`/p2p/webrtc-info`) und Track-Aktivierung (`/webrtc/tracks`).
   - `qr.go`: Parst die Kamera-Zugangsdaten (`did`, `pid`, `sct`, `pairPwd`) aus dem QR-Code-String der Steinel App.
 
+- **`pkg/audio/`**:
+  - `g711.go`: Standard ITU-T G.711 $\mu$-law Decoder (8-Bit $\rightarrow$ 16-Bit Linear PCM).
+  - `resample.go`: Polyphase / Interpolations-Resampler von 8.000 Hz auf 16.000 Hz / 32.000 Hz.
+  - `transcoder.go`: Echtzeit-Audiotranscoder auf Basis des VisualOn AAC-Encoders (`github.com/gen2brain/aac-go`), erzeugt standardkonforme AAC-LC Access Units (AU) für gortsplib.
+
 - **`pkg/webrtc/`**:
   - `bridge.go`: Nutzt **Pion WebRTC v4** (`github.com/pion/webrtc/v4`) für DTLS/SRTP WebRTC-Sessions über den virtuellen Nabto-Stream.
   - Sendet initiales SDP-Offer mit `no_trickle: true` und Vanilla ICE Candidates.
-  - Hält den **RTCP-PLI Loop**: Periodische PLIs alle 3,0 Sekunden für minimale Live-Latenz (< 1s).
+  - Hält den **RTCP-PLI Loop**: Periodische PLIs alle 1,0 Sekunden für sofortige H.264-Sync-Frames (I-Frames) in Scrypted / Apple Home.
   - **RTP Silence Watchdog (`runWatchdogLoop`)**: Überwacht Video-Pakete. Bei Ausfall > 6s wird die Session abgebrochen und der 30s-Reconnect ausgelöst.
   - **2-Way Audio Uplink**: Eigener `TrackLocalStaticRTP` für `audio/PCMU` (8000 Hz, Payload Typ 0) im WebRTC SDP (`a=sendrecv`) für Gegensprechen.
   - **DataChannel 'test'**: Verarbeitet eingehende `tran_report` MCU-Statusframes und sendet `tran_ctl` Befehle.
 
 - **`pkg/rtsp/`**:
   - `server.go`: Integrierter RTSP-Server auf Basis von `github.com/bluenviron/gortsplib/v4`.
-  - H.264 Video (Main Feed), PCMU Audio (Mikrofon der Kamera) und **ONVIF Profile T Audio Backchannel** (`IsBackChannel: true`).
+  - H.264 Video (Main Feed), AAC-Audio (oder PCMU, konfigurierbar via `AUDIO_CODEC`) und **ONVIF Profile T Audio Backchannel** (`IsBackChannel: true`).
   - Leitet empfangene Rückkanal-RTP-Pakete von HomeKit/Scrypted verzögerungsfrei an `webrtc.Bridge.WriteAudioBackchannel` weiter.
 
 - **`pkg/onvif/`**:
