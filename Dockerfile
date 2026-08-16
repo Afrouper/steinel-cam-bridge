@@ -66,8 +66,7 @@ LABEL org.opencontainers.image.title="steinel-cam-bridge" \
       org.opencontainers.image.licenses="MIT"
 
 # Default configuration environment variables
-ENV APP_VERSION="${APP_VERSION}" \
-    CAMERA_IP="192.168.1.100" \
+ENV CAMERA_IP="192.168.1.100" \
     QR_CODE="" \
     KEY_PATH="/data/client.key" \
     RESOLUTION="1080p" \
