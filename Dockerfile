@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # ==============================================================================
 # Steinel L 625 CAM SC — Standalone Native Go Bridge Dockerfile
 # Supported Architectures: linux/amd64 (x86_64 NAS), linux/arm64 (Raspberry Pi / Apple Silicon)
@@ -7,7 +8,6 @@
 FROM golang:1.26-bookworm AS builder
 
 ARG TARGETARCH
-ARG APP_VERSION="dev"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
@@ -19,7 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# 1. Download official Nabto Edge Client SDK artifacts dynamically
+# 1. Download official Nabto Edge Client SDK artifacts dynamically (Cached)
 ENV NABTO_TAG="main"
 RUN curl -fsSL "https://github.com/nabto/nabto-client-sdk-releases/archive/refs/heads/${NABTO_TAG}.tar.gz" -o /tmp/nabto.tar.gz && \
     mkdir -p /tmp/nabto && \
@@ -35,14 +35,19 @@ RUN curl -fsSL "https://github.com/nabto/nabto-client-sdk-releases/archive/refs/
     ldconfig && \
     rm -rf /tmp/nabto /tmp/nabto.tar.gz
 
-# 2. Copy dependencies and source code
+# 2. Copy dependencies and download Go modules (Cached with BuildKit cache mount)
 COPY go.mod go.sum ./
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
 
+# 3. Copy source code
 COPY . .
 
-# 3. Compile stripped static/CGo binary with version injection & create data directory
-RUN CGO_ENABLED=1 go build -ldflags="-s -w -X main.AppVersion=${APP_VERSION}" -o /app/steinel-bridge ./cmd/steinel-bridge && \
+# 4. Compile stripped static/CGo binary with compiler cache & version injection
+ARG APP_VERSION="dev"
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=1 go build -ldflags="-s -w -X main.AppVersion=${APP_VERSION}" -o /app/steinel-bridge ./cmd/steinel-bridge && \
     mkdir -p /data && chown -R 1000:1000 /data
 
 # --- Stage 2: Ultra-minimal Distroless runtime image (~35 MB uncompressed, ~15 MB download) ---
