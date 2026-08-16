@@ -53,13 +53,16 @@ docker run -d \
   --name steinel-cam-bridge \
   --restart unless-stopped \
   --net=host \
+  --memory=256m \
+  --cpus=0.5 \
+  --pids-limit=100 \
   -e CAMERA_IP="192.168.1.100" \
   -e QR_CODE="did=de-xxxxxxx,pid=pr-xxxxx,sct=xxxx,pairPwd=xxxx" \
   -e MQTT_BROKER="tcp://192.168.1.50:1883" \
   -e MQTT_USER="homeassistant" \
   -e MQTT_PASSWORD="secretpassword" \
   -v ./data:/data \
-  ghcr.io/Afrouper/steinel-cam-bridge:latest
+  ghcr.io/afrouper/steinel-cam-bridge:latest
 ```
 
 ### Option B: Docker Compose (Komplettstack mit Scrypted für Apple HomeKit / HKSV)
@@ -67,7 +70,7 @@ docker run -d \
 ```yaml
 services:
   steinel-cam:
-    image: ghcr.io/OWNER/steinel-cam-bridge:latest
+    image: ghcr.io/afrouper/steinel-cam-bridge:latest
     container_name: steinel-cam-bridge
     restart: unless-stopped
     network_mode: host
@@ -83,6 +86,15 @@ services:
       - MQTT_TOPIC_PREFIX=steinel
     volumes:
       - ./data:/data
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 256M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+    pids_limit: 100
 
   scrypted:
     image: ghcr.io/koush/scrypted:latest
@@ -93,6 +105,10 @@ services:
       - SCRYPTED_WEB_CORSPROXY=true
     volumes:
       - ./scrypted-data:/server/volume
+    deploy:
+      resources:
+        limits:
+          memory: 2048M
     depends_on:
       - steinel-cam
 ```
