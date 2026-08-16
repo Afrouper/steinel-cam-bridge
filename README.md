@@ -183,6 +183,21 @@ Egal ob Scrypted als **Home Assistant Add-on** oder als eigenständige Instanz l
 
 ---
 
+## 🗄️ SD-Karten REST API (Ereignisse, Snapshots & Video-Download)
+
+Die Bridge stellt auf Port `8000` eine direkte 1:1 REST-API bereit, um Aufnahmen der internen SD-Karte abzufragen und ohne Umwege per HTTP-Stream herunterzuladen (Zero-Disk I/O):
+
+| Endpunkt | Methode | Beschreibung |
+|---|---|---|
+| `/api/sdcard/events` | `GET` | Liefert die JSON-Liste aller Video-Ereignisse (Query-Parameter: `start`, `end`, `page`, `limit`) |
+| `/api/sdcard/events/{timestamp}/snapshot.jpg` | `GET` | Liefert das JPEG-Vorschaubild der Aufnahme direkt aus dem Kameraspeicher |
+| `/api/sdcard/events/{timestamp}/video.mp4` | `GET` | Streamt die vollständige MP4-Aufnahme als Binärstream (inkl. Hardware-Überlastungsschutz) |
+
+> [!TIP]
+> **Eingebauter Hardware-Schutz (Concurrency = 1)**: Um die kleine Embedded-CPU der Steinel-Kamera vor Überlastung zu schützen, erlaubt die Bridge immer nur **genau einen aktiven Download gleichzeitig**. Parallele Abfragen werden mit `HTTP 429 Too Many Requests` beantwortet. Bricht ein Client den Download vorzeitig ab, stoppt die Bridge den Kamera-Transfer sofort.
+
+---
+
 ## 💻 Lokale Entwicklung
 
 ```bash

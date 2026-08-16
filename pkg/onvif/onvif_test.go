@@ -36,6 +36,7 @@ func TestONVIFServices(t *testing.T) {
 		nil,
 		setLamp,
 		nil,
+		nil,
 	)
 
 	// 1. Test GetDeviceInformation

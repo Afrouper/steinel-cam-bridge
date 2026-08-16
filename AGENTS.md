@@ -72,12 +72,25 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
   - Hält den **RTCP-PLI Loop**: Periodische PLIs alle 1,0 Sekunden für sofortige H.264-Sync-Frames (I-Frames) in Scrypted / Apple Home.
   - **RTP Silence Watchdog (`runWatchdogLoop`)**: Überwacht Video-Pakete. Bei Ausfall > 6s wird die Session abgebrochen und der 30s-Reconnect ausgelöst.
   - **2-Way Audio Uplink**: Eigener `TrackLocalStaticRTP` für `audio/PCMU` (8000 Hz, Payload Typ 0) im WebRTC SDP (`a=sendrecv`) für Gegensprechen.
-  - **DataChannel 'test'**: Verarbeitet eingehende `tran_report` MCU-Statusframes und sendet `tran_ctl` Befehle.
+  - **DataChannel 'test'**: Verarbeitet eingehende `tran_report` MCU-Statusframes, SD-Karten JSON-Responses und leitet Binär-Chunks asynchron an `SDCardManager` weiter.
+  - `sdcard.go`: Verwaltet das Auslesen der internen SD-Karte über den DataChannel `test`:
+    - `get_event_list`: Ruft Videoaufnahmen nach Zeitstempel ab.
+    - `get_snapshot`: Streamt JPEG-Vorschaubilder direkt per HTTP.
+    - `get_event_video`: Streamt MP4-Videodateien als Binärstrom (Zero-Disk I/O).
+    - **Protokoll-Regel**: Das Feld `"action"` (`"start"`, `"stop"`) muss immer auf der **obersten Ebene** des JSON-Payloads gesendet werden (`{"from":"Android","cmd":"...","action":"start","info":{...}}`).
+    - **Single-Flight Lock (`sync.Mutex`)**: Schützt die Kamera-CPU, indem niemals mehr als 1 Download gleichzeitig zugelassen wird (`HTTP 429`).
+    - **Client-Abbruch**: Überwacht `ctx.Done()` und sendet `"action": "stop"`, falls der HTTP-Client vorzeitig abbricht.
+    - **Watchdog**: 10s Inaktivitäts-Timeout verhindert Deadlocks bei Verbindungsabbrüchen.
+
+- **`pkg/audio/`**:
+  - `g711.go`: Standard ITU-T G.711 $\mu$-law Decoder (8-Bit $\rightarrow$ 16-Bit Linear PCM).
+  - `resample.go`: Polyphase / Interpolations-Resampler von 8.000 Hz auf 16.000 Hz / 32.000 Hz.
+  - `transcoder.go`: Echtzeit-Audiotranscoder auf Basis des VisualOn AAC-Encoders (`github.com/gen2brain/aac-go`), hält eine **persistente Encoder-Instanz** über die Stream-Laufzeit und erzeugt unterbrechungsfreie AAC-LC Access Units (AU) für gortsplib.
 
 - **`pkg/rtsp/`**:
   - `server.go`: Integrierter RTSP-Server auf Basis von `github.com/bluenviron/gortsplib/v4`.
   - H.264 Video (Main Feed), AAC-Audio (oder PCMU, konfigurierbar via `AUDIO_CODEC`) und **ONVIF Profile T Audio Backchannel** (`IsBackChannel: true`).
-  - Leitet empfangene Rückkanal-RTP-Pakete von HomeKit/Scrypted verzögerungsfrei an `webrtc.Bridge.WriteAudioBackchannel` weiter.
+  - **Dedizierter UDP-RTP Backchannel Receiver**: Da `gortsplib` im `PLAY`-Zustand eingehende UDP-RTP-Pakete standardmäßig verwirft, öffnet die Bridge einen eigenen Non-Blocking UDP-Socket auf Port `8554/udp`, fängt alle PCMU-Sprachdaten von Scrypted/HomeKit ab und leitet sie direkt an `webrtc.Bridge.WriteAudioBackchannel` weiter.
 
 - **`pkg/onvif/`**:
   - `discovery.go`: **WS-Discovery Server** auf UDP Multicast `239.255.255.250:3702` (reagiert auf `wsdd:Probe`).
@@ -85,7 +98,7 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
   - `media.go`: Media Service (`Profile_Main` 1080p, `Profile_Sub` 360p, `GetStreamUri`, `GetSnapshotUri`, `SetVideoEncoderConfiguration`).
   - `events.go`: Event Service (WS-BaseNotification PullPoint: `CreatePullPointSubscription`, `PullMessages` für `tns1:RuleEngine/CellMotionDetector/Motion`).
   - `deviceio.go`: DeviceIO / Relay / Auxiliary Service für Licht- und Sirenensteuerung.
-  - `server.go`: HTTP Server auf Port `8000` (SOAP Dispatcher + Snapshot Endpoint `/snapshot.jpg` + REST `/api/status`).
+  - `server.go`: HTTP Server auf Port `8000` (SOAP Dispatcher + Snapshot Endpoint `/snapshot.jpg` + REST `/api/status`, `/api/light` und SD-Karten REST-API `/api/sdcard/events`, `/api/sdcard/events/{timestamp}/snapshot.jpg`, `/api/sdcard/events/{timestamp}/video.mp4`).
 
 - **`pkg/mqtt/`**:
   - `client.go`: Home Assistant MQTT Auto-Discovery Client auf Basis von `paho.mqtt.golang`.
@@ -110,6 +123,7 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
 1. **Hardware-Schonung der Kamera**:
    - Die Steinel-Kamera hat eine schwache embedded CPU. **Niemals mehrere parallele WebRTC-Sessions aufbauen**.
    - Nach Verbindungsabbrüchen immer den **30-Sekunden-Cooldown** einhalten.
+   - **SD-Karten Zugriffe begrenzen**: Niemals mehr als 1 aktiven Download gleichzeitig zulassen (Single-Flight Mutex).
 2. **Zero Transcoding**:
    - Reiche H.264 NAL-Units und PCMU Audio-Pakete direkt weiter (< 0,3 % CPU-Last auf dem Host).
 3. **Keine Secrets oder reale IPs im Git**:
@@ -128,9 +142,9 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
    - Alle MQTT-Topics müssen immer unter `<baseTopic>/<deviceID>/...` liegen, um Mehrkamera-Setups zu unterstützen.
 5. **Dokumentation**:
    - Kommentiere den Sourcecode wo komplizierter Code geschrieben wird; ansonsten nicht.
-   - Dokumentationssprache ist deutsch, da Steinl Kameras zumeißt im DACH Raum verwendet werden
-   - Passe die Dokumentation an neue Features oder Verhaltensweisen an
-     - `README.md` Für die Haupt Dokumentation
+   - Dokumentationssprache ist deutsch, da Steinel Kameras zumeist im DACH Raum verwendet werden.
+   - Passe die Dokumentation an neue Features oder Verhaltensweisen an:
+     - `README.md` Für die Haupt-Dokumentation
      - `AGENTS.md` Für Anweisungen an Agenten wenn es neue Elemente gibt
      - `THIRD_PARTY_LICENSES.md` Falls es Anpassungen an den Dependencies gibt.
 
@@ -147,8 +161,11 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
 ./scripts/run-dev.sh -key data/client.key -ip 192.168.1.100 -qr "did=de-xxxxxxx,pid=pr-xxxxx,sct=xxxx,pairPwd=xxxx"
 
 # 3. Unit-Tests ausführen
-go test -v ./...
+DYLD_LIBRARY_PATH=$(pwd)/.sdk/lib go test -v ./...
 
-# 4. Multi-Arch Docker-Container lokal bauen
+# 4. Race-Condition-Detektor ausführen
+DYLD_LIBRARY_PATH=$(pwd)/.sdk/lib go test -race -v ./...
+
+# 5. Multi-Arch Docker-Container lokal bauen
 docker build -t steinel-cam-bridge .
 ```

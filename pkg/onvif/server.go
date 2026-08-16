@@ -3,28 +3,32 @@ package onvif
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"steinel-cam-bridge/pkg/events"
+	"steinel-cam-bridge/pkg/webrtc"
 
 	"github.com/google/uuid"
 )
 
 type Server struct {
-	port          int
-	httpServer    *http.Server
-	deviceHandler *DeviceHandler
-	mediaHandler  *MediaHandler
-	eventHandler  *EventHandler
-	deviceIO      *DeviceIOHandler
-	discovery     *DiscoveryServer
-	mu            sync.RWMutex
+	port           int
+	httpServer     *http.Server
+	deviceHandler  *DeviceHandler
+	mediaHandler   *MediaHandler
+	eventHandler   *EventHandler
+	deviceIO       *DeviceIOHandler
+	discovery      *DiscoveryServer
+	sdcardProvider func() *webrtc.SDCardManager
+	mu             sync.RWMutex
 }
 
 func NewServer(
@@ -38,6 +42,7 @@ func NewServer(
 	rebootFunc func() error,
 	setLampFunc func(mode string) error,
 	setSirenFunc func(on bool) error,
+	sdcardProvider func() *webrtc.SDCardManager,
 ) *Server {
 	if port == 0 {
 		port = 8000
@@ -50,12 +55,13 @@ func NewServer(
 	discServer := NewDiscoveryServer(port, deviceID)
 
 	s := &Server{
-		port:          port,
-		deviceHandler: devHandler,
-		mediaHandler:  medHandler,
-		eventHandler:  evtHandler,
-		deviceIO:      ioHandler,
-		discovery:     discServer,
+		port:           port,
+		deviceHandler:  devHandler,
+		mediaHandler:   medHandler,
+		eventHandler:   evtHandler,
+		deviceIO:       ioHandler,
+		discovery:      discServer,
+		sdcardProvider: sdcardProvider,
 	}
 
 	mux := http.NewServeMux()
@@ -65,6 +71,8 @@ func NewServer(
 	mux.HandleFunc("/onvif/deviceio_service", s.handleSOAP)
 	mux.HandleFunc("/api/status", s.handleAPIStatus)
 	mux.HandleFunc("/api/light", s.handleAPILight)
+	mux.HandleFunc("/api/sdcard/events", s.handleAPISDCardEvents)
+	mux.HandleFunc("/api/sdcard/events/", s.handleAPISDCardItem)
 
 	s.httpServer = &http.Server{
 		Addr:    fmt.Sprintf(":%d", port),
@@ -170,6 +178,102 @@ func (s *Server) handleAPILight(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(`{"status":"ok"}`))
+}
+
+func (s *Server) handleAPISDCardEvents(w http.ResponseWriter, r *http.Request) {
+	if s.sdcardProvider == nil {
+		http.Error(w, `{"error":"sdcard feature not configured"}`, http.StatusNotImplemented)
+		return
+	}
+	sdm := s.sdcardProvider()
+	if sdm == nil {
+		http.Error(w, `{"error":"camera offline"}`, http.StatusServiceUnavailable)
+		return
+	}
+
+	q := r.URL.Query()
+	start, _ := strconv.ParseInt(q.Get("start"), 10, 64)
+	end, _ := strconv.ParseInt(q.Get("end"), 10, 64)
+	page, _ := strconv.Atoi(q.Get("page"))
+	limit, _ := strconv.Atoi(q.Get("limit"))
+
+	resp, err := sdm.GetEventList(r.Context(), start, end, page, limit)
+	if err != nil {
+		if errors.Is(err, webrtc.ErrSDCardBusy) {
+			http.Error(w, `{"error":"sdcard busy"}`, http.StatusTooManyRequests)
+			return
+		}
+		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func (s *Server) handleAPISDCardItem(w http.ResponseWriter, r *http.Request) {
+	if s.sdcardProvider == nil {
+		http.Error(w, `{"error":"sdcard feature not configured"}`, http.StatusNotImplemented)
+		return
+	}
+	sdm := s.sdcardProvider()
+	if sdm == nil {
+		http.Error(w, `{"error":"camera offline"}`, http.StatusServiceUnavailable)
+		return
+	}
+
+	// Path format: /api/sdcard/events/<timestamp>/<action>
+	subPath := strings.TrimPrefix(r.URL.Path, "/api/sdcard/events/")
+	parts := strings.Split(subPath, "/")
+	if len(parts) < 2 {
+		http.Error(w, "Invalid path format. Expected /api/sdcard/events/<timestamp>/<action>", http.StatusBadRequest)
+		return
+	}
+
+	ts, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid timestamp", http.StatusBadRequest)
+		return
+	}
+
+	action := parts[1]
+	switch action {
+	case "snapshot.jpg", "thumbnail.jpg", "snapshot":
+		w.Header().Set("Content-Type", "image/jpeg")
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		if err := sdm.StreamSnapshot(r.Context(), ts, w); err != nil {
+			if errors.Is(err, webrtc.ErrSDCardBusy) {
+				http.Error(w, "SD card busy", http.StatusTooManyRequests)
+				return
+			}
+			log.Printf("[SDCard] Snapshot streaming error: %v", err)
+		}
+
+	case "video.mp4", "download.mp4", "video":
+		err := sdm.StreamVideo(r.Context(), ts, w, func(name string, size int64) {
+			if name == "" {
+				name = fmt.Sprintf("event_%d.mp4", ts)
+			}
+			w.Header().Set("Content-Type", "video/mp4")
+			w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", name))
+			if size > 0 {
+				w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+			}
+			w.WriteHeader(http.StatusOK)
+		})
+		if err != nil {
+			if errors.Is(err, webrtc.ErrSDCardBusy) {
+				http.Error(w, "SD card busy", http.StatusTooManyRequests)
+				return
+			}
+			if !errors.Is(err, webrtc.ErrTransferAborted) {
+				log.Printf("[SDCard] Video streaming error: %v", err)
+			}
+		}
+
+	default:
+		http.NotFound(w, r)
+	}
 }
 
 func wrapSOAPResponse(innerXML string) string {

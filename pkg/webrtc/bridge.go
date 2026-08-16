@@ -23,20 +23,21 @@ import (
 )
 
 type Bridge struct {
-	nabtoClient     *nabto.Client
-	stream          *nabto.Stream
-	rtspServer      *rtsp.Server
-	resolution      string
-	pliInterval     time.Duration
-	pc              *pion.PeerConnection
-	dc              *pion.DataChannel
-	audioSendTrack  *pion.TrackLocalStaticRTP
-	videoSSRC       uint32
-	audioSSRC       uint32
-	videoTrack      *pion.TrackRemote
-	lastVideoPacket atomic.Int64
+	nabtoClient      *nabto.Client
+	stream           *nabto.Stream
+	rtspServer       *rtsp.Server
+	resolution       string
+	pliInterval      time.Duration
+	pc               *pion.PeerConnection
+	dc               *pion.DataChannel
+	audioSendTrack   *pion.TrackLocalStaticRTP
+	videoSSRC        uint32
+	audioSSRC        uint32
+	videoTrack       *pion.TrackRemote
+	lastVideoPacket  atomic.Int64
 	motionResetTimer *time.Timer
-	mu              sync.Mutex
+	sdcardManager    *SDCardManager
+	mu               sync.Mutex
 }
 
 func NewBridge(client *nabto.Client, stream *nabto.Stream, rtspServer *rtsp.Server, resolution string, pliInterval time.Duration) *Bridge {
@@ -54,12 +55,21 @@ func NewBridge(client *nabto.Client, stream *nabto.Stream, rtspServer *rtsp.Serv
 		pliInterval: pliInterval,
 	}
 
+	// Initialize SD Card Manager using DataChannel JSON command dispatcher
+	b.sdcardManager = NewSDCardManager(b.sendJSONCmd)
+
 	// Register audio backchannel handler with RTSP server
 	if rtspServer != nil {
 		rtspServer.SetAudioBackchannelHandler(b.WriteAudioBackchannel)
 	}
 
 	return b
+}
+
+func (b *Bridge) GetSDCardManager() *SDCardManager {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.sdcardManager
 }
 
 func (b *Bridge) Run(ctx context.Context) error {
@@ -229,7 +239,16 @@ func (b *Bridge) Run(ctx context.Context) error {
 	b.mu.Unlock()
 
 	dc.OnMessage(func(msg pion.DataChannelMessage) {
-		b.handleDataChannelMessage(msg.Data)
+		if msg.IsString {
+			b.handleDataChannelMessage(msg.Data)
+		} else {
+			b.mu.Lock()
+			sdm := b.sdcardManager
+			b.mu.Unlock()
+			if sdm != nil {
+				sdm.HandleBinaryChunk(msg.Data)
+			}
+		}
 	})
 
 	dc.OnOpen(func() {
@@ -486,7 +505,17 @@ func (b *Bridge) sendJSONCmd(cmdName string, info map[string]interface{}) error 
 		"msgid": uuid.New().String(),
 	}
 	if info != nil {
-		cmd["info"] = info
+		infoCopy := make(map[string]interface{})
+		for k, v := range info {
+			if k == "action" || k == "_action" {
+				if actStr, ok := v.(string); ok {
+					cmd["action"] = actStr
+				}
+			} else {
+				infoCopy[k] = v
+			}
+		}
+		cmd["info"] = infoCopy
 	}
 	data, _ := json.Marshal(cmd)
 	return dc.SendText(string(data))
@@ -500,7 +529,15 @@ func (b *Bridge) handleDataChannelMessage(data []byte) {
 		return
 	}
 
-	// 1. Check for MCU tran_report
+	// 1. Check for SD Card JSON responses (get_event_list, get_snapshot, get_event_video)
+	b.mu.Lock()
+	sdm := b.sdcardManager
+	b.mu.Unlock()
+	if sdm != nil && sdm.HandleJSONMessage(root) {
+		return
+	}
+
+	// 2. Check for MCU tran_report
 	if strVal, ok := root["resp"].(string); ok && strVal == "tran_report" || strings.Contains(str, "tran_report") {
 		if infoMap, ok := root["info"].(map[string]interface{}); ok {
 			if b64Data, ok := infoMap["data"].(string); ok {

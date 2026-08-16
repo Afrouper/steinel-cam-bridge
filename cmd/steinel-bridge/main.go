@@ -169,6 +169,17 @@ func (m *BridgeManager) RequestKeyframe() {
 	}
 }
 
+func (m *BridgeManager) GetSDCardManager() *webrtc.SDCardManager {
+	m.mu.RLock()
+	b := m.currentBridge
+	m.mu.RUnlock()
+
+	if b == nil {
+		return nil
+	}
+	return b.GetSDCardManager()
+}
+
 var AppVersion = "dev"
 
 // loadHomeAssistantOptions attempts to parse /data/options.json if running as a Home Assistant Add-on
@@ -397,6 +408,7 @@ func main() {
 		},
 		bridgeMgr.SetLampState,
 		bridgeMgr.SetSiren,
+		bridgeMgr.GetSDCardManager,
 	)
 	defer onvifServer.Close()
 
