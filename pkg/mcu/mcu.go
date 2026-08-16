@@ -28,6 +28,10 @@ type ConfigInfo struct {
 func ParseFrame(hexStr string) (*ConfigInfo, error) {
 	hexStr = strings.ToLower(strings.TrimSpace(hexStr))
 	if len(hexStr) != 36 || !strings.HasPrefix(hexStr, "5a0f0f") {
+		if strings.HasPrefix(hexStr, "5a") && len(hexStr) < 36 {
+			// Command ACK/Echo frame from MCU (e.g. Light, Lux, Dimmer)
+			return nil, nil
+		}
 		return nil, fmt.Errorf("invalid MCU frame: %s", hexStr)
 	}
 
