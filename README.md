@@ -3,7 +3,7 @@
 [![Latest Release](https://img.shields.io/github/v/release/Afrouper/steinel-cam-bridge?logo=github)](https://github.com/Afrouper/steinel-cam-bridge/releases)
 [![CI Test & Build](https://github.com/Afrouper/steinel-cam-bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/Afrouper/steinel-cam-bridge/actions/workflows/ci.yml)
 [![CodeQL Analysis](https://github.com/Afrouper/steinel-cam-bridge/actions/workflows/codeql.yml/badge.svg)](https://github.com/Afrouper/steinel-cam-bridge/actions/workflows/codeql.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/Afrouper/steinel-cam-bridge)](https://goreportcard.com/report/github.com/Afrouper/steinel-cam-bridge)
+[![golangci-lint](https://img.shields.io/badge/golangci--lint-passing-brightgreen?logo=go)](https://golangci-lint.run/)
 [![Go Reference](https://pkg.go.dev/badge/github.com/Afrouper/steinel-cam-bridge.svg)](https://pkg.go.dev/github.com/Afrouper/steinel-cam-bridge)
 [![Home Assistant Add-on](https://img.shields.io/badge/Home%20Assistant-Add--on-41BDF5?logo=home-assistant&logoColor=white)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2FAfrouper%2Fsteinel-cam-bridge)
 [![Docker Image](https://img.shields.io/badge/Docker-GHCR-blue?logo=docker)](https://github.com/Afrouper/steinel-cam-bridge/pkgs/container/steinel-cam-bridge)

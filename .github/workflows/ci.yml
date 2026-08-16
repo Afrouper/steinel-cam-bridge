@@ -30,6 +30,17 @@ jobs:
       - name: Run Go Vet
         run: go vet ./...
 
+      - name: Run Unit Tests
+        run: |
+          export LD_LIBRARY_PATH=$(pwd)/.sdk/lib:$LD_LIBRARY_PATH
+          go test -v ./...
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          args: --timeout=5m
+
       - name: Compile Native Binary (Smoke Test)
         run: go build -v -o /dev/null ./cmd/steinel-bridge
 
