@@ -28,19 +28,40 @@ const (
 // Transcoder converts raw G.711u (PCMU 8000 Hz) bytes into AAC-LC Access Units (AUs) in real time.
 type Transcoder struct {
 	mu          sync.Mutex
+	encoder     *aac.Encoder
+	adtsBuf     *bytes.Buffer
 	pcmBuf      []byte
 	sampleCount uint64
 	sampleRate  int
 	onAACFrame  func(au []byte, pts time.Duration)
 }
 
-// NewTranscoder creates a new audio transcoder.
+// NewTranscoder creates a new persistent audio transcoder.
 // onAACFrame is called whenever a complete AAC frame is generated.
 func NewTranscoder(onAACFrame func(au []byte, pts time.Duration)) *Transcoder {
+	adtsBuf := &bytes.Buffer{}
+	enc, _ := aac.NewEncoder(adtsBuf, &aac.Options{
+		SampleRate:  AACSampleRate,
+		BitRate:     AACBitRate,
+		NumChannels: AACChannels,
+	})
+
 	return &Transcoder{
 		sampleRate: AACSampleRate,
+		encoder:    enc,
+		adtsBuf:    adtsBuf,
 		pcmBuf:     make([]byte, 0, AACFrameBytes*4),
 		onAACFrame: onAACFrame,
+	}
+}
+
+// Close releases any encoder resources
+func (t *Transcoder) Close() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.encoder != nil {
+		_ = t.encoder.Close()
+		t.encoder = nil
 	}
 }
 
@@ -52,6 +73,10 @@ func (t *Transcoder) ProcessPCMU(pcmuData []byte) error {
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
+
+	if t.encoder == nil {
+		return fmt.Errorf("transcoder is closed")
+	}
 
 	// 1. Decode G.711u -> 16-bit PCM (8000 Hz)
 	pcm8k := DecodePCMU(pcmuData)
@@ -75,24 +100,13 @@ func (t *Transcoder) ProcessPCMU(pcmuData []byte) error {
 		pts := time.Duration(t.sampleCount) * time.Second / time.Duration(t.sampleRate)
 		t.sampleCount += AACFrameSamples
 
-		// Encode 1024 PCM samples to AAC ADTS
-		var adtsBuf bytes.Buffer
-		enc, err := aac.NewEncoder(&adtsBuf, &aac.Options{
-			SampleRate:  t.sampleRate,
-			BitRate:     AACBitRate,
-			NumChannels: AACChannels,
-		})
-		if err != nil {
-			return fmt.Errorf("failed to create aac encoder: %w", err)
-		}
-
-		if err := enc.Encode(bytes.NewReader(chunk)); err != nil && err != io.EOF {
-			enc.Close()
+		// Encode 1024 PCM samples into continuous ADTS buffer
+		t.adtsBuf.Reset()
+		if err := t.encoder.Encode(bytes.NewReader(chunk)); err != nil && err != io.EOF {
 			return fmt.Errorf("failed to encode aac: %w", err)
 		}
-		enc.Close()
 
-		adtsData := adtsBuf.Bytes()
+		adtsData := t.adtsBuf.Bytes()
 		if len(adtsData) == 0 {
 			continue
 		}

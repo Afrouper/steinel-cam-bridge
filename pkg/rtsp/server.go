@@ -3,8 +3,10 @@ package rtsp
 import (
 	"fmt"
 	"log"
+	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/bluenviron/gortsplib/v4"
@@ -33,8 +35,10 @@ type Server struct {
 	backchannelMedia        *description.Media
 	pathName                string
 	port                    int
+	udpConn                 *net.UDPConn
 	audioBackchannelHandler AudioBackchannelHandler
 	onPlayHandler           OnPlayHandler
+	backchannelPacketCount  atomic.Uint64
 	mu                      sync.RWMutex
 }
 
@@ -131,8 +135,6 @@ func NewServer(port int, pathName string, audioCodec string) (*Server, error) {
 	srv := &gortsplib.Server{
 		Handler:        s,
 		RTSPAddress:    fmt.Sprintf(":%d", port),
-		UDPRTPAddress:  fmt.Sprintf(":%d", port),
-		UDPRTCPAddress: fmt.Sprintf(":%d", port+1),
 		WriteQueueSize: 4096,
 	}
 
@@ -161,6 +163,22 @@ func (s *Server) Start() error {
 	s.mu.Lock()
 	s.stream = gortsplib.NewServerStream(s.server, s.session)
 	s.mu.Unlock()
+
+	// Start dedicated UDP Backchannel Listener on port (e.g. 8554/udp)
+	udpAddr, err := net.ResolveUDPAddr("udp", fmt.Sprintf(":%d", s.port))
+	if err == nil {
+		conn, err := net.ListenUDP("udp", udpAddr)
+		if err == nil {
+			s.mu.Lock()
+			s.udpConn = conn
+			s.mu.Unlock()
+			go s.readUDPBackchannelLoop(conn)
+			log.Printf("[RTSP] 🎙️ UDP Audio Backchannel receiver listening on 0.0.0.0:%d/udp", s.port)
+		} else {
+			log.Printf("[RTSP] ⚠️ Failed to bind UDP backchannel receiver on port %d: %v", s.port, err)
+		}
+	}
+
 	return nil
 }
 
@@ -168,6 +186,10 @@ func (s *Server) Close() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if s.udpConn != nil {
+		_ = s.udpConn.Close()
+		s.udpConn = nil
+	}
 	if s.stream != nil {
 		s.stream.Close()
 		s.stream = nil
@@ -175,6 +197,37 @@ func (s *Server) Close() {
 	if s.server != nil {
 		s.server.Close()
 		s.server = nil
+	}
+}
+
+func (s *Server) readUDPBackchannelLoop(conn *net.UDPConn) {
+	buf := make([]byte, 2048)
+	for {
+		n, addr, err := conn.ReadFrom(buf)
+		if err != nil {
+			return
+		}
+		if n < 12 { // Minimum valid RTP header length
+			continue
+		}
+
+		pkt := &rtp.Packet{}
+		if err := pkt.Unmarshal(buf[:n]); err != nil {
+			continue
+		}
+
+		cnt := s.backchannelPacketCount.Add(1)
+		if cnt == 1 || cnt%100 == 0 {
+			log.Printf("[RTSP] 🎙️ Forwarding audio backchannel RTP packets (%d pkts received from %s, payload: %d bytes)", cnt, addr.String(), len(pkt.Payload))
+		}
+
+		s.mu.RLock()
+		handler := s.audioBackchannelHandler
+		s.mu.RUnlock()
+
+		if handler != nil {
+			_ = handler(pkt)
+		}
 	}
 }
 
