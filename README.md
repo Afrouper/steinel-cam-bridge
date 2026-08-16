@@ -1,7 +1,7 @@
 # Steinel L 625 CAM SC — Standalone ONVIF, 2-Way Audio & Home Assistant Bridge
 
 [![CI Test & Build](https://github.com/Afrouper/steinel-cam-bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/Afrouper/steinel-cam-bridge/actions/workflows/ci.yml)
-[![Docker Image](https://img.shields.io/badge/Docker-GHCR-blue?logo=docker)](https://github.com/OWNER/REPO/pkgs/container/steinel-cam-bridge)
+[![Docker Image](https://img.shields.io/badge/Docker-GHCR-blue?logo=docker)](https://github.com/Afrouper/steinel-cam-bridge/pkgs/container/steinel-cam-bridge)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Go Version](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go)](https://go.dev)
 
@@ -50,14 +50,14 @@ Die Kamera wird im lokalen Netzwerk als ONVIF Kamera zu verfügung gestellt. Dam
 
 ### Option A: Home Assistant Add-on (Empfohlen für Home Assistant Nutzer)
 
-1. Navigieren Sie in Home Assistant zu **Einstellungen ➔ Add-ons ➔ Add-on Store**.
-2. Klicken Sie oben rechts auf das Drei-Punkte-Menü (⋮) ➔ **Repositories**.
-3. Fügen Sie folgende URL hinzu:
+[![Open your Home Assistant instance and show the add-on store with a specific repository enabled.](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2FAfrouper%2Fsteinel-cam-bridge)
+
+1. Klicken Sie auf das **"Open in Home Assistant" Badge** oben oder fügen Sie in Home Assistant unter **Einstellungen ➔ Add-ons ➔ Add-on Store ➔ Repositories** (Drei-Punkte-Menü) folgende URL hinzu:
    ```text
    https://github.com/Afrouper/steinel-cam-bridge
    ```
-4. Wählen Sie **"Steinel CAM Bridge"** aus und klicken Sie auf **Installieren**.
-5. Tragen Sie im Reiter **Konfiguration** Ihre `camera_ip` und den `qr_code` ein und klicken Sie auf **Starten**!
+2. Wählen Sie **"Steinel CAM Bridge"** aus und klicken Sie auf **Installieren**.
+3. Tragen Sie im Reiter **Konfiguration** Ihre `camera_ip` und den `qr_code` ein und klicken Sie auf **Starten**!
 
 ---
 

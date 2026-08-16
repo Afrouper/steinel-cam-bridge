@@ -1,6 +1,6 @@
 # Home Assistant Add-on: Steinel CAM Bridge
 
-Standalone ONVIF, 2-Way Audio (Gegensprechen) & MQTT Bridge für die **Steinel L 625 CAM SC** Außenleuchte.
+Standalone ONVIF, 2-Way Audio (Gegensprechen) & MQTT Bridge für die **Steinel L 625 CAM SC** (oder ähnlich) Außenleuchte.
 
 ---
 
@@ -11,6 +11,8 @@ Standalone ONVIF, 2-Way Audio (Gegensprechen) & MQTT Bridge für die **Steinel L
    - Format: `did=de-xxxxxxx,pid=pr-xxxxx,sct=xxxx,pairPwd=xxxx`
 3. Auf **Speichern** und anschließend auf **Starten** klicken!
 
+Der QR Code wird initial für das Pairing benötigt. Danach muss er nicht mehr zwingend angegeben werden da das Schlüsselmaterial lokal gespeichert wird.
+
 ---
 
 ## ⚙️ Konfiguration
@@ -18,7 +20,7 @@ Standalone ONVIF, 2-Way Audio (Gegensprechen) & MQTT Bridge für die **Steinel L
 | Option | Typ | Standard | Beschreibung |
 |---|---|---|---|
 | `camera_ip` | String | `192.168.1.100` | Lokale IP-Adresse der Steinel-Kamera im Heimnetz |
-| `qr_code` | String | `""` | QR-Code Payload zum automatischen Pairing |
+| `qr_code` | String | `""` | QR-Code Payload zum automatischen Pairing (initial) |
 | `resolution` | Liste | `1080p` | Standardauflösung (`1080p`, `720p`, `360p`) |
 | `audio_codec` | Liste | `aac` | Audio-Codec des RTSP-Streams: `aac` (nativ transkodiert) oder `pcmu` |
 | `rtsp_port` | Port | `8554` | RTSP Server Port |
@@ -27,7 +29,7 @@ Standalone ONVIF, 2-Way Audio (Gegensprechen) & MQTT Bridge für die **Steinel L
 ---
 
 ## 🏠 Home Assistant MQTT Integration
-Wenn Sie das offizielle **Mosquitto MQTT Add-on** in Home Assistant installiert haben, verbindet sich dieses Add-on vollautomatisch ohne manuelle Passworteingabe (`mqtt:want`). Unter **Einstellungen ➔ Geräte & Dienste ➔ MQTT** erscheint automatisch die Steinel-Außenleuchte mit allen Licht- und Dimm-Entitäten!
+Wenn das offizielle **Mosquitto MQTT Add-on** in Home Assistant installiert ist, verbindet sich dieses Add-on vollautomatisch ohne manuelle Passworteingabe (`mqtt:want`). Unter **Einstellungen ➔ Geräte & Dienste ➔ MQTT** erscheint automatisch die Steinel-Außenleuchte mit allen Licht- und Dimm-Entitäten!
 
 ---
 
