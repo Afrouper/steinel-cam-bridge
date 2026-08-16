@@ -10,6 +10,10 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Go Version](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go)](https://go.dev)
 
+> [!WARNING]
+> Aktuell kein öffentliches Image verfügbar da erst noch Anpassungen erfolgen müssen im libnabto_client.so nicht zu inkludieren
+
+
 Die Anwendung ist als hochperformanter, 100 % autarker **Go-Daemon**.
 Es soll die **Steinel L 625 CAM SC** Außenleuchte in eine standardkonforme **ONVIF Profile S/T Kamera** mit **RTSP-Streaming**, **2-Wege-Audio (Gegensprechen)** und vollständiger **MQTT Home Assistant Auto-Discovery** verwandelt – zur nahtlosen Integration in **Home Assistant**, **Scrypted / Apple HomeKit Secure Video (HKSV)**, **Synology Surveillance Station** und **Frigate**.
 
