@@ -2,8 +2,7 @@ name: CI Test & Build
 
 on:
   push:
-    branches: [ "**" ]
-    tags-ignore: [ "v*" ]
+    branches: [ "main", "dev", "feature/**" ]
   pull_request:
     branches: [ "main" ]
 
