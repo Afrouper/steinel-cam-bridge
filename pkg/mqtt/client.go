@@ -85,7 +85,7 @@ func NewClient(cfg Config, cb Callbacks) *Client {
 	return c
 }
 
-func (c *Client) Start(ctx context.Context) error {
+func (c *Client) Start(_ context.Context) error {
 	opts := paho.NewClientOptions()
 	opts.AddBroker(c.cfg.Broker)
 	opts.SetClientID(c.cfg.ClientID)
@@ -123,7 +123,7 @@ func (c *Client) Start(ctx context.Context) error {
 		c.publishStatus(events.GlobalBus.GetStatus())
 	}
 
-	opts.OnConnectionLost = func(client paho.Client, err error) {
+	opts.OnConnectionLost = func(_ paho.Client, err error) {
 		log.Printf("[MQTT] ⚠️ Connection lost: %v", err)
 	}
 
@@ -380,7 +380,7 @@ func (c *Client) publishStatus(st events.DeviceStatus) {
 
 // --- Command Dispatching ---
 
-func (c *Client) handleCommand(client paho.Client, msg paho.Message) {
+func (c *Client) handleCommand(_ paho.Client, msg paho.Message) {
 	topic := msg.Topic()
 	payload := strings.TrimSpace(string(msg.Payload()))
 	log.Printf("[MQTT] 📩 Command received on %s: %s", topic, payload)

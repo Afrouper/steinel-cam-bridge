@@ -13,9 +13,9 @@ import (
 )
 
 type DiscoveryServer struct {
-	onvifPort int
+	onvifPort  int
 	deviceUUID string
-	localIP   string
+	localIP    string
 }
 
 func NewDiscoveryServer(onvifPort int, deviceUUID string) *DiscoveryServer {
@@ -44,7 +44,9 @@ func (d *DiscoveryServer) Start(ctx context.Context) error {
 			return nil
 		}
 	}
-	defer conn.Close()
+	defer func() {
+		_ = conn.Close()
+	}()
 
 	log.Printf("[WS-Discovery] 🛰️ Listening for ONVIF probes on 239.255.255.250:3702")
 
@@ -124,7 +126,9 @@ func getOutboundIP() string {
 	if err != nil {
 		return "127.0.0.1"
 	}
-	defer conn.Close()
+	defer func() {
+		_ = conn.Close()
+	}()
 
 	localAddr := conn.LocalAddr().(*net.UDPAddr)
 	return localAddr.IP.String()

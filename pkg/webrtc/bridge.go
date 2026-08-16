@@ -161,7 +161,7 @@ func (b *Bridge) Run(ctx context.Context) error {
 		"audioStream",
 	)
 	if err != nil {
-		pc.Close()
+		_ = pc.Close()
 		return fmt.Errorf("failed to create local audio send track: %w", err)
 	}
 
@@ -173,7 +173,9 @@ func (b *Bridge) Run(ctx context.Context) error {
 	b.pc = pc
 	b.audioSendTrack = audioSendTrack
 	b.mu.Unlock()
-	defer pc.Close()
+	defer func() {
+		_ = pc.Close()
+	}()
 
 	// Default Video SSRC for Steinel CAM is 1
 	atomic.StoreUint32(&b.videoSSRC, 1)
@@ -195,7 +197,7 @@ func (b *Bridge) Run(ctx context.Context) error {
 	})
 
 	// Track handlers
-	pc.OnTrack(func(track *pion.TrackRemote, receiver *pion.RTPReceiver) {
+	pc.OnTrack(func(track *pion.TrackRemote, _ *pion.RTPReceiver) {
 		if track.Kind() == pion.RTPCodecTypeVideo {
 			atomic.StoreUint32(&b.videoSSRC, uint32(track.SSRC()))
 			b.mu.Lock()
@@ -366,8 +368,8 @@ func (b *Bridge) Run(ctx context.Context) error {
 			var candWrap ICECandidateWrapper
 			if err := json.Unmarshal([]byte(msg.Data), &candWrap); err == nil && candWrap.Candidate != "" {
 				sdpMid := candWrap.SDPMid
-				var sdpMLineIndex uint16 = 0
-				pc.AddICECandidate(pion.ICECandidateInit{
+				var sdpMLineIndex uint16
+				_ = pc.AddICECandidate(pion.ICECandidateInit{
 					Candidate:     candWrap.Candidate,
 					SDPMid:        &sdpMid,
 					SDPMLineIndex: &sdpMLineIndex,
@@ -387,7 +389,7 @@ func (b *Bridge) WriteAudioBackchannel(pkt *rtp.Packet) error {
 		return fmt.Errorf("audio send track not active")
 	}
 
-	pkt.Header.PayloadType = 0 // PCMU
+	pkt.PayloadType = 0 // PCMU
 	return track.WriteRTP(pkt)
 }
 

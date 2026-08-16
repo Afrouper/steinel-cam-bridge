@@ -79,5 +79,5 @@ func (h *DeviceIOHandler) sendAuxiliaryCommand(reqXML string) string {
 		}
 	}
 
-	return fmt.Sprintf(`<tptz:SendAuxiliaryCommandResponse xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl"><tptz:AuxiliaryResponse>OK</tptz:AuxiliaryResponse></tptz:SendAuxiliaryCommandResponse>`)
+	return `<tptz:SendAuxiliaryCommandResponse xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl"><tptz:AuxiliaryResponse>OK</tptz:AuxiliaryResponse></tptz:SendAuxiliaryCommandResponse>`
 }

@@ -12,8 +12,8 @@ import (
 )
 
 var (
-	ErrSDCardBusy     = errors.New("sdcard is currently busy with another transfer")
-	ErrSDCardTimeout  = errors.New("sdcard transfer timed out waiting for camera response")
+	ErrSDCardBusy      = errors.New("sdcard is currently busy with another transfer")
+	ErrSDCardTimeout   = errors.New("sdcard transfer timed out waiting for camera response")
 	ErrTransferAborted = errors.New("transfer was aborted by client")
 )
 

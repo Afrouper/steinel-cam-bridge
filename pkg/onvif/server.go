@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"steinel-cam-bridge/pkg/events"
@@ -28,7 +27,6 @@ type Server struct {
 	deviceIO       *DeviceIOHandler
 	discovery      *DiscoveryServer
 	sdcardProvider func() *webrtc.SDCardManager
-	mu             sync.RWMutex
 }
 
 func NewServer(

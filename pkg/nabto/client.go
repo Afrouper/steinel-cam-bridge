@@ -327,7 +327,7 @@ func (c *Client) GetSignalingPort() (uint32, error) {
 		// Fallback search
 		if idx := strings.Index(respStr, "SignalingStreamPort"); idx >= 0 {
 			if colon := strings.Index(respStr[idx:], ":"); colon >= 0 {
-				fmt.Sscanf(respStr[idx+colon+1:], "%d", &port)
+				_, _ = fmt.Sscanf(respStr[idx+colon+1:], "%d", &port)
 				if port > 0 {
 					return port, nil
 				}

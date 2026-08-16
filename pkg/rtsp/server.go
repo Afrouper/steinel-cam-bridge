@@ -258,9 +258,10 @@ func (s *Server) WriteVideoPacket(pkt *rtp.Packet) {
 				nal := payload[:nalLen]
 				payload = payload[nalLen:]
 				nType := nal[0] & 0x1F
-				if nType == 7 {
+				switch nType {
+				case 7:
 					s.videoFormat.SPS = append([]byte(nil), nal...)
-				} else if nType == 8 {
+				case 8:
 					s.videoFormat.PPS = append([]byte(nil), nal...)
 				}
 			}
@@ -271,8 +272,8 @@ func (s *Server) WriteVideoPacket(pkt *rtp.Packet) {
 	if st == nil {
 		return
 	}
-	pkt.Header.PayloadType = s.videoFormat.PayloadTyp
-	st.WritePacketRTP(s.videoMedia, pkt)
+	pkt.PayloadType = s.videoFormat.PayloadTyp
+	_ = st.WritePacketRTP(s.videoMedia, pkt)
 }
 
 // GetAudioCodec returns the configured audio codec ("aac" or "pcmu")
@@ -299,8 +300,8 @@ func (s *Server) WriteAACFrame(au []byte, pts time.Duration) {
 	// 16000 Hz RTP clock rate for AAC
 	ts := uint32(pts.Seconds() * 16000)
 	for _, pkt := range pkts {
-		pkt.Header.Timestamp = ts
-		st.WritePacketRTP(s.audioMedia, pkt)
+		pkt.Timestamp = ts
+		_ = st.WritePacketRTP(s.audioMedia, pkt)
 	}
 }
 
@@ -313,8 +314,8 @@ func (s *Server) WriteAudioPacket(pkt *rtp.Packet) {
 	if st == nil {
 		return
 	}
-	pkt.Header.PayloadType = 0
-	st.WritePacketRTP(s.audioMedia, pkt)
+	pkt.PayloadType = 0
+	_ = st.WritePacketRTP(s.audioMedia, pkt)
 }
 
 // --- gortsplib Server Callbacks ---
@@ -372,6 +373,6 @@ func (s *Server) OnRecord(ctx *gortsplib.ServerHandlerOnRecordCtx) (*base.Respon
 	}, nil
 }
 
-func (s *Server) OnSessionClose(ctx *gortsplib.ServerHandlerOnSessionCloseCtx) {
+func (s *Server) OnSessionClose(_ *gortsplib.ServerHandlerOnSessionCloseCtx) {
 	log.Printf("[RTSP] ⏹️ Client disconnected")
 }

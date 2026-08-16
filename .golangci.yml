@@ -12,6 +12,15 @@ linters:
     - misspell
     - unconvert
     - revive
+  settings:
+    revive:
+      rules:
+        - name: exported
+          disabled: true
+        - name: package-comments
+          disabled: true
+        - name: var-naming
+          disabled: true
 
 formatters:
   enable:

@@ -5,22 +5,22 @@ import "encoding/xml"
 // SOAP 1.2 / ONVIF Envelopes
 
 type SOAPEnvelope struct {
-	XMLName xml.Name  `xml:"http://www.w3.org/2003/05/soap-envelope Envelope"`
+	XMLName xml.Name   `xml:"http://www.w3.org/2003/05/soap-envelope Envelope"`
 	Header  SOAPHeader `xml:"Header"`
 	Body    SOAPBody   `xml:"Body"`
 }
 
 type SOAPHeader struct {
-	Action    string `xml:"http://www.w3.org/2005/08/addressing Action,omitempty"`
-	MessageID string `xml:"http://www.w3.org/2005/08/addressing MessageID,omitempty"`
-	To        string `xml:"http://www.w3.org/2005/08/addressing To,omitempty"`
-	RelatesTo string `xml:"http://www.w3.org/2005/08/addressing RelatesTo,omitempty"`
+	Action    string    `xml:"http://www.w3.org/2005/08/addressing Action,omitempty"`
+	MessageID string    `xml:"http://www.w3.org/2005/08/addressing MessageID,omitempty"`
+	To        string    `xml:"http://www.w3.org/2005/08/addressing To,omitempty"`
+	RelatesTo string    `xml:"http://www.w3.org/2005/08/addressing RelatesTo,omitempty"`
 	AppSeq    *WSAppSeq `xml:"http://schemas.xmlsoap.org/ws/2005/04/discovery AppSequence,omitempty"`
 }
 
 type WSAppSeq struct {
-	InstanceId  uint64 `xml:"InstanceId,attr"`
-	MessageSeq  uint64 `xml:"MessageNumber,attr"`
+	InstanceId uint64 `xml:"InstanceId,attr"`
+	MessageSeq uint64 `xml:"MessageNumber,attr"`
 }
 
 type SOAPBody struct {

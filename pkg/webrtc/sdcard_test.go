@@ -86,7 +86,7 @@ func TestSDCardGetEventList(t *testing.T) {
 }
 
 func TestSDCardStreamVideo(t *testing.T) {
-	sdm := NewSDCardManager(func(cmd string, info map[string]interface{}) error {
+	sdm := NewSDCardManager(func(_ string, _ map[string]interface{}) error {
 		return nil
 	})
 
@@ -140,7 +140,7 @@ func TestSDCardStreamVideo(t *testing.T) {
 }
 
 func TestSDCardConcurrencyLock(t *testing.T) {
-	sdm := NewSDCardManager(func(cmd string, info map[string]interface{}) error {
+	sdm := NewSDCardManager(func(_ string, _ map[string]interface{}) error {
 		return nil
 	})
 
@@ -151,7 +151,7 @@ func TestSDCardConcurrencyLock(t *testing.T) {
 	transfer1Running := make(chan struct{})
 
 	go func() {
-		_ = sdm.StreamVideo(ctx, 1723812345, &buf1, func(name string, size int64) {
+		_ = sdm.StreamVideo(ctx, 1723812345, &buf1, func(_ string, _ int64) {
 			close(transfer1Running)
 		})
 	}()
