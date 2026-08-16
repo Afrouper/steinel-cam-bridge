@@ -116,6 +116,14 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
    - `extracts` Ordner ist niemals im git einzuchecken. Es können Informationen und Traces (z.B. Wireshark, Apps, ...) abgelegt werden
 4. **Hierarchische Scopes**:
    - Alle MQTT-Topics müssen immer unter `<baseTopic>/<deviceID>/...` liegen, um Mehrkamera-Setups zu unterstützen.
+5. **Dokumentation**:
+   - Kommentiere den Sourcecode wo komplizierter Code geschrieben wird; ansonsten nicht.
+   - Dokumentationssprache ist deutsch, da Steinl Kameras zumeißt im DACH Raum verwendet werden
+   - Passe die Dokumentation an neue Features oder Verhaltensweisen an
+     - `README.md` Für die Haupt Dokumentation
+     - `ÀGENTS.md`  Für Anweisungen an Agenten wenn es neue Elemente gibt
+     - `THIRD_PARTY_LICENSES.md` Falls es Anpassungen an den Dependencies gibt.
+
 
 ---
 
