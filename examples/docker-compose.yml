@@ -9,6 +9,7 @@ services:
       - CAMERA_IP=192.168.1.100                                         # IP-Adresse der Steinel-Kamera im lokalen Netz
       - QR_CODE=did=de-xxxxxxx,pid=pr-xxxxx,sct=xxxx,pairPwd=xxxx       # QR-Code String aus der Steinel App ("Kamera teilen")
       - RESOLUTION=1080p                                                # Standard-Auflösung: 1080p, 720p oder 360p
+      - AUDIO_CODEC=aac                                                 # Audio-Codec: aac (Standard, nativ transkodiert) oder pcmu (Raw Passthrough)
       - KEY_PATH=/data/client.key                                       # Pfad zum persistenten Schlüssel
 
       # --- Server-Ports ---
@@ -24,3 +25,12 @@ services:
       - MQTT_DISCOVERY_PREFIX=homeassistant     # Home Assistant Auto-Discovery Prefix
     volumes:
       - ./data:/data
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 256M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+    pids_limit: 100

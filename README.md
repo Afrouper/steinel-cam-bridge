@@ -48,44 +48,38 @@ Die Kamera wird im lokalen Netzwerk als ONVIF Kamera zu verfügung gestellt. Dam
 
 ## 🐳 Bereitstellung (Docker & Docker Compose)
 
-### Option A: Standalone Docker Run (mit MQTT & Home Assistant)
+Die Steinel CAM Bridge läuft autark als einzelner Container bzw. Docker Compose Stack auf Ihrem Server oder NAS. 
 
-```bash
-docker run -d \
-  --name steinel-cam-bridge \
-  --restart unless-stopped \
-  --net=host \
-  --memory=256m \
-  --cpus=0.5 \
-  --pids-limit=100 \
-  -e CAMERA_IP="192.168.1.100" \
-  -e QR_CODE="did=de-xxxxxxx,pid=pr-xxxxx,sct=xxxx,pairPwd=xxxx" \
-  -e MQTT_BROKER="tcp://192.168.1.50:1883" \
-  -e MQTT_USER="homeassistant" \
-  -e MQTT_PASSWORD="secretpassword" \
-  -v ./data:/data \
-  ghcr.io/afrouper/steinel-cam-bridge:latest
-```
+### Option A: Standalone Docker Compose (Empfohlen)
 
-### Option B: Docker Compose (Komplettstack mit Scrypted für Apple HomeKit / HKSV)
+Eine fertige Vorlage finden Sie unter [`examples/docker-compose.yml`](examples/docker-compose.yml):
 
 ```yaml
 services:
-  steinel-cam:
+  steinel-cam-bridge:
     image: ghcr.io/afrouper/steinel-cam-bridge:latest
     container_name: steinel-cam-bridge
     restart: unless-stopped
-    network_mode: host
+    network_mode: host # Empfohlen für WS-Discovery (UDP 3702) und Direktverbindung zur Kamera
     environment:
-      - CAMERA_IP=192.168.1.100
-      - QR_CODE=did=de-xxxxxxx,pid=pr-xxxxx,sct=xxxx,pairPwd=xxxx
-      - RESOLUTION=1080p
+      # --- Kamera-Verbindung (Ersetzen Sie die Werte durch Ihre Kamera-Daten) ---
+      - CAMERA_IP=192.168.1.100                                         # IP-Adresse der Steinel-Kamera im lokalen Netz
+      - QR_CODE=did=de-xxxxxxx,pid=pr-xxxxx,sct=xxxx,pairPwd=xxxx       # QR-Code String aus der Steinel App ("Kamera teilen")
+      - RESOLUTION=1080p                                                # Standard-Auflösung: 1080p, 720p oder 360p
+      - AUDIO_CODEC=aac                                                 # Audio-Codec: aac (Standard, nativ transkodiert) oder pcmu (Raw Passthrough)
+      - KEY_PATH=/data/client.key                                       # Pfad zum persistenten Schlüssel
+
+      # --- Server-Ports ---
       - RTSP_PORT=8554
       - ONVIF_PORT=8000
-      - MQTT_BROKER=tcp://192.168.1.50:1883
-      - MQTT_USER=homeassistant
-      - MQTT_PASSWORD=secretpassword
-      - MQTT_TOPIC_PREFIX=steinel
+      - RTSP_PATH=steinel
+
+      # --- MQTT / Home Assistant Konfiguration (Optional) ---
+      - MQTT_BROKER=tcp://192.168.1.50:1883    # IP oder Hostname Ihres MQTT Brokers (z.B. Home Assistant Mosquitto)
+      - MQTT_USER=homeassistant                 # Optional: MQTT Benutzername
+      - MQTT_PASSWORD=secretpassword            # Optional: MQTT Passwort
+      - MQTT_TOPIC_PREFIX=steinel               # Basis-Topic (Geräte-ID wird automatisch darunter gehängt: steinel/<deviceID>/...)
+      - MQTT_DISCOVERY_PREFIX=homeassistant     # Home Assistant Auto-Discovery Prefix
     volumes:
       - ./data:/data
     deploy:
@@ -97,27 +91,31 @@ services:
           cpus: '0.05'
           memory: 64M
     pids_limit: 100
-
-  scrypted:
-    image: ghcr.io/koush/scrypted:latest
-    container_name: scrypted
-    restart: unless-stopped
-    network_mode: host
-    environment:
-      - SCRYPTED_WEB_CORSPROXY=true
-    volumes:
-      - ./scrypted-data:/server/volume
-    deploy:
-      resources:
-        limits:
-          memory: 2048M
-    depends_on:
-      - steinel-cam
 ```
 
 Starten mit:
 ```bash
 docker compose up -d
+```
+
+### Option B: Standalone Docker Run
+
+```bash
+docker run -d \
+  --name steinel-cam-bridge \
+  --restart unless-stopped \
+  --net=host \
+  --memory=256m \
+  --cpus=0.5 \
+  --pids-limit=100 \
+  -e CAMERA_IP="192.168.1.100" \
+  -e QR_CODE="did=de-xxxxxxx,pid=pr-xxxxx,sct=xxxx,pairPwd=xxxx" \
+  -e AUDIO_CODEC="aac" \
+  -e MQTT_BROKER="tcp://192.168.1.50:1883" \
+  -e MQTT_USER="homeassistant" \
+  -e MQTT_PASSWORD="secretpassword" \
+  -v ./data:/data \
+  ghcr.io/afrouper/steinel-cam-bridge:latest
 ```
 
 ---
@@ -127,10 +125,11 @@ docker compose up -d
 ### 1. Home Assistant (MQTT)
 Sobald `MQTT_BROKER` konfiguriert ist, verbindet sich die Bridge mit dem Broker. In Home Assistant unter **Einstellungen ➔ Geräte & Dienste ➔ MQTT** erscheint automatisch das Gerät **"Steinel L 625 CAM SC"** mit allen Licht-, Sensor- und Steuerungsentitäten!
 
-### 2. Scrypted (Apple HomeKit / HKSV)
-1. Im Scrypted **ONVIF Plugin** auf *Add Camera* klicken (Host-IP, Port `8000`).
-2. Scrypted erkennt automatisch **1080p Video, Mikrofon und Gegensprechanlage**.
-3. **Natives Audio**: Die Bridge liefert ab Werk standardmäßig natives **AAC-Audio (16 kHz)**. In Scrypted ist **kein manuelles Audio-Transcoding im HomeKit-DEBUG-Reiter erforderlich**.
+### 2. Scrypted (Home Assistant Add-on oder Standalone)
+Egal ob Scrypted als **Home Assistant Add-on** oder als eigenständige Instanz läuft:
+1. Im Scrypted **ONVIF Plugin** auf *Add Camera* klicken (IP-Adresse des Bridge-Servers, Port `8000`).
+2. Scrypted erkennt automatisch **1080p Video, natives AAC-Mikrofon und Gegensprechanlage**.
+3. **Natives Audio**: Die Bridge liefert standardmäßig natives **AAC-Audio (16 kHz)**. In Scrypted ist **kein manuelles Audio-Transcoding im HomeKit-DEBUG-Reiter erforderlich**.
 4. **Bewegungserkennung für HKSV aktivieren**:
    - In Scrypted unter **Plugins** das Plugin **`OpenCV Motion Detector`** (`@scrypted/opencv`) installieren.
    - Auf der Steinel-Kamera im Reiter **Extensions** das Plugin **OpenCV Motion Detector** aktivieren.
