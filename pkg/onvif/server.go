@@ -31,6 +31,7 @@ func NewServer(
 	port int,
 	rtspPort int,
 	rtspPath string,
+	audioCodec string,
 	deviceID string,
 	productID string,
 	changeResFunc func(res string) error,
@@ -43,7 +44,7 @@ func NewServer(
 	}
 
 	devHandler := NewDeviceHandler(deviceID, productID, port, rtspPort, rebootFunc)
-	medHandler := NewMediaHandler(rtspPort, rtspPath, port, changeResFunc)
+	medHandler := NewMediaHandler(rtspPort, rtspPath, audioCodec, port, changeResFunc)
 	evtHandler := NewEventHandler(port)
 	ioHandler := NewDeviceIOHandler(setLampFunc, setSirenFunc)
 	discServer := NewDiscoveryServer(port, deviceID)

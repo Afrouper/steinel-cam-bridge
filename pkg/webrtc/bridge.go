@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"steinel-cam-bridge/pkg/audio"
 	"steinel-cam-bridge/pkg/events"
 	"steinel-cam-bridge/pkg/mcu"
 	"steinel-cam-bridge/pkg/nabto"
@@ -604,20 +605,42 @@ func (b *Bridge) readVideoLoop(ctx context.Context, track *pion.TrackRemote, can
 }
 
 func (b *Bridge) readAudioLoop(ctx context.Context, track *pion.TrackRemote) {
-	log.Printf("[Audio] 🔊 PCMU audio stream active (Microphone -> Clients)")
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
+	codec := b.rtspServer.GetAudioCodec()
+	if codec == "aac" {
+		log.Printf("[Audio] 🔊 Transcoding audio: G.711u (8kHz) -> AAC-LC (16kHz) (Microphone -> Clients)")
+		transcoder := audio.NewTranscoder(func(au []byte, pts time.Duration) {
+			b.rtspServer.WriteAACFrame(au, pts)
+		})
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
 
-		pkt, _, err := track.ReadRTP()
-		if err != nil {
-			return
-		}
+			pkt, _, err := track.ReadRTP()
+			if err != nil {
+				return
+			}
 
-		b.rtspServer.WriteAudioPacket(pkt)
+			_ = transcoder.ProcessPCMU(pkt.Payload)
+		}
+	} else {
+		log.Printf("[Audio] 🔊 PCMU audio stream active (Microphone -> Clients)")
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+
+			pkt, _, err := track.ReadRTP()
+			if err != nil {
+				return
+			}
+
+			b.rtspServer.WriteAudioPacket(pkt)
+		}
 	}
 }
 

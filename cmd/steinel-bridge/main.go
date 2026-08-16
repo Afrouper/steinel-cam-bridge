@@ -181,6 +181,7 @@ func main() {
 	mqttPass := flag.String("mqtt-pass", "", "MQTT password")
 	mqttTopic := flag.String("mqtt-topic", "steinel", "MQTT base topic prefix (default: steinel)")
 	mqttDisc := flag.String("mqtt-disc", "homeassistant", "MQTT Home Assistant Discovery Prefix")
+	audioCodec := flag.String("audio-codec", "aac", "Audio codec for RTSP/ONVIF stream: 'aac' (transcoded, default) or 'pcmu' (raw passthrough)")
 	flag.Parse()
 
 	fmt.Println("═══════════════════════════════════════════════════════════════════")
@@ -214,6 +215,9 @@ func main() {
 	}
 	if res := os.Getenv("RESOLUTION"); res != "" {
 		*resolution = res
+	}
+	if ac := os.Getenv("AUDIO_CODEC"); ac != "" {
+		*audioCodec = ac
 	}
 	if portStr := os.Getenv("ONVIF_PORT"); portStr != "" {
 		if p, err := strconv.Atoi(portStr); err == nil && p > 0 {
@@ -257,7 +261,7 @@ func main() {
 		_ = os.MkdirAll(dir, 0755)
 	}
 
-	log.Printf("[Config] Camera: %s (ID: %s, Res: %s)", cfg.CameraIP, cfg.DeviceID, *resolution)
+	log.Printf("[Config] Camera: %s (ID: %s, Res: %s, Audio: %s)", cfg.CameraIP, cfg.DeviceID, *resolution, *audioCodec)
 	log.Printf("[Config] Key:    %s", cfg.KeyPath)
 	log.Printf("[Config] Ports:  RTSP=%d, ONVIF=%d, WS-Discovery=3702/udp", *rtspPort, *onvifPort)
 	if *mqttBroker != "" {
@@ -279,7 +283,7 @@ func main() {
 	bridgeMgr := &BridgeManager{}
 
 	// 1. Start embedded RTSP Server (with Profile T 2-Way Audio Backchannel)
-	rtspServer, err := rtsp.NewServer(*rtspPort, *rtspPath)
+	rtspServer, err := rtsp.NewServer(*rtspPort, *rtspPath, *audioCodec)
 	if err != nil {
 		log.Fatalf("[!] Failed to initialize RTSP server: %v", err)
 	}
@@ -296,6 +300,7 @@ func main() {
 		*onvifPort,
 		*rtspPort,
 		*rtspPath,
+		*audioCodec,
 		cfg.DeviceID,
 		cfg.ProductID,
 		bridgeMgr.SetResolution,

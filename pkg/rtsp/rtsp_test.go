@@ -5,13 +5,26 @@ import (
 )
 
 func TestServerStartClose(t *testing.T) {
-	srv, err := NewServer(8556, "test")
+	// 1. Test AAC Server
+	srvAAC, err := NewServer(8556, "test", "aac")
 	if err != nil {
-		t.Fatalf("Failed to create server: %v", err)
+		t.Fatalf("Failed to create AAC server: %v", err)
 	}
-	defer srv.Close()
+	defer srvAAC.Close()
 
-	if err := srv.Start(); err != nil {
-		t.Fatalf("Failed to start server: %v", err)
+	if err := srvAAC.Start(); err != nil {
+		t.Fatalf("Failed to start AAC server: %v", err)
+	}
+	srvAAC.Close()
+
+	// 2. Test PCMU Server
+	srvPCMU, err := NewServer(8558, "test", "pcmu")
+	if err != nil {
+		t.Fatalf("Failed to create PCMU server: %v", err)
+	}
+	defer srvPCMU.Close()
+
+	if err := srvPCMU.Start(); err != nil {
+		t.Fatalf("Failed to start PCMU server: %v", err)
 	}
 }

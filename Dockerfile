@@ -64,6 +64,7 @@ ENV CAMERA_IP="192.168.1.100" \
     QR_CODE="" \
     KEY_PATH="/data/client.key" \
     RESOLUTION="1080p" \
+    AUDIO_CODEC="aac" \
     RTSP_PORT="8554" \
     RTSP_PATH="steinel" \
     ONVIF_PORT="8000" \

@@ -34,8 +34,10 @@ Die Kamera wird im lokalen Netzwerk als ONVIF Kamera zu verfügung gestellt. Dam
 - **Standardisierter ONVIF Profile S & Profile T Server**:
   - **WS-Discovery (UDP 3702)**: Automatische Erkennung im lokalen Netzwerk.
   - **Native Live-Snapshots**: NVRs und Clients (z. B. Scrypted Prebuffer, Home Assistant) generieren hochauflösende Live-Standbilder direkt aus dem H.264-Videostream ohne Dummy-Platzhalter.
-- **🔊 Volles 2-Way Audio (Gegensprechen)**:
+- **🔊 Volles 2-Way Audio (Gegensprechen) & Natives AAC-Audio**:
+  - **Natives AAC-Audio (Standard)**: Automatisches Realtime-Transcoding des Kamera-Mikrofons (G.711u 8 kHz $\rightarrow$ AAC-LC 16 kHz) direkt in Go. Null Konfigurationsaufwand und kein Transcoding in Scrypted, Apple Home oder Home Assistant nötig!
   - **RTSP Audio Backchannel**: Durchleitung von HomeKit/Scrypted-Sprachdaten direkt an den Lautsprecher der Steinel-Leuchte (PCMU / G.711u 8000 Hz).
+  - **Wahlweise umschaltbar**: `AUDIO_CODEC="aac"` (Standard) oder `AUDIO_CODEC="pcmu"` (Raw Passthrough).
 - **🚨 Bewegungserkennung & Apple HomeKit Secure Video (HKSV)**:
   - **Hersteller-Architektur**: Die Steinel-Kamera übermittelt Bewegungsevents ab Werk ausschließlich an das Cloud-Push-Gateway des Herstellers (für Push-Nachrichten der Steinel App) und stellt lokal im P2P-Modus den reinen Live-Stream bereit.
   - **100 % Lokale HKSV-Aufnahme**: In Scrypted wird über das offizielle Plugin **`OpenCV Motion Detector`** (`@scrypted/opencv`) eine latenzfreie Pixelanalyse des 1080p-RTSP-Streams durchgeführt. Bewegungen von Personen, Fahrzeugen oder Tieren lösen sofort lokale ONVIF-Events und iCloud-Aufnahmen in Apple Home aus.
@@ -155,6 +157,7 @@ Sobald `MQTT_BROKER` konfiguriert ist, verbindet sich die Bridge mit dem Broker.
 | `QR_CODE` | `-qr` | `""` | QR-Code Payload aus der Steinel App für automatisches Pairing |
 | `KEY_PATH` | `-key` | `data/client.key` | Speicherpfad für den persistenten ECC-Schlüssel |
 | `RESOLUTION` | `-res` | `1080p` | Videoauflösung (`1080p`, `720p`, `360p`) |
+| `AUDIO_CODEC` | `-audio-codec` | `aac` | Audio-Codec des RTSP/ONVIF Streams: `aac` (nativ transkodiert) oder `pcmu` (Raw Passthrough) |
 | `RTSP_PORT` | `-port` | `8554` | Port des integrierten RTSP-Servers |
 | `ONVIF_PORT` | `-onvif` | `8000` | Port des integrierten ONVIF HTTP-Servers |
 | `MQTT_BROKER` | `-mqtt-broker` | `""` | MQTT Broker URL (z. B. `tcp://192.168.1.100:1883`) |

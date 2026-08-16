@@ -11,14 +11,20 @@ import (
 type MediaHandler struct {
 	rtspPort      int
 	rtspPath      string
+	audioCodec    string
 	onvifPort     int
 	changeResFunc func(res string) error
 }
 
-func NewMediaHandler(rtspPort int, rtspPath string, onvifPort int, changeResFunc func(res string) error) *MediaHandler {
+func NewMediaHandler(rtspPort int, rtspPath string, audioCodec string, onvifPort int, changeResFunc func(res string) error) *MediaHandler {
+	audioCodec = strings.ToLower(strings.TrimSpace(audioCodec))
+	if audioCodec == "" {
+		audioCodec = "aac"
+	}
 	return &MediaHandler{
 		rtspPort:      rtspPort,
 		rtspPath:      rtspPath,
+		audioCodec:    audioCodec,
 		onvifPort:     onvifPort,
 		changeResFunc: changeResFunc,
 	}
@@ -52,11 +58,17 @@ func (h *MediaHandler) Handle(action string, reqXML string, host string) (string
 	if strings.Contains(action, "GetVideoSources") || strings.Contains(reqXML, "GetVideoSources") {
 		return h.getVideoSources(), nil
 	}
-
-	return "", fmt.Errorf("unhandled media action: %s", action)
+	return `<trt:UnknownActionResponse xmlns:trt="http://www.onvif.org/ver10/media/wsdl"/>`, nil
 }
 
 func (h *MediaHandler) getProfiles() string {
+	audioEncoding := "AAC"
+	sampleRate := 16
+	if h.audioCodec == "pcmu" {
+		audioEncoding = "G711"
+		sampleRate = 8
+	}
+
 	return fmt.Sprintf(`<trt:GetProfilesResponse xmlns:trt="%s" xmlns:tt="%s">
   <trt:Profiles token="Profile_Main" fixed="true">
     <tt:Name>MainStream 1080p</tt:Name>
@@ -100,9 +112,9 @@ func (h *MediaHandler) getProfiles() string {
     <tt:AudioEncoderConfiguration token="AudioEncoderConfig_1">
       <tt:Name>AudioEncoderConfig_1</tt:Name>
       <tt:UseCount>2</tt:UseCount>
-      <tt:Encoding>G711</tt:Encoding>
+      <tt:Encoding>%s</tt:Encoding>
       <tt:Bitrate>64</tt:Bitrate>
-      <tt:SampleRate>8</tt:SampleRate>
+      <tt:SampleRate>%d</tt:SampleRate>
       <tt:SessionTimeout>PT60S</tt:SessionTimeout>
     </tt:AudioEncoderConfiguration>
     <tt:AudioOutputConfiguration token="AudioOutputConfig_1">
@@ -155,13 +167,13 @@ func (h *MediaHandler) getProfiles() string {
     <tt:AudioEncoderConfiguration token="AudioEncoderConfig_1">
       <tt:Name>AudioEncoderConfig_1</tt:Name>
       <tt:UseCount>2</tt:UseCount>
-      <tt:Encoding>G711</tt:Encoding>
+      <tt:Encoding>%s</tt:Encoding>
       <tt:Bitrate>64</tt:Bitrate>
-      <tt:SampleRate>8</tt:SampleRate>
+      <tt:SampleRate>%d</tt:SampleRate>
       <tt:SessionTimeout>PT60S</tt:SessionTimeout>
     </tt:AudioEncoderConfiguration>
   </trt:Profiles>
-</trt:GetProfilesResponse>`, NS_TRT, NS_TT)
+</trt:GetProfilesResponse>`, NS_TRT, NS_TT, audioEncoding, sampleRate, audioEncoding, sampleRate)
 }
 
 func (h *MediaHandler) getProfile(reqXML string) string {
@@ -237,6 +249,11 @@ func (h *MediaHandler) getAudioOutputs() string {
 func (h *MediaHandler) getAudioEncoderConfigurationOptions() string {
 	return fmt.Sprintf(`<trt:GetAudioEncoderConfigurationOptionsResponse xmlns:trt="%s" xmlns:tt="%s">
   <trt:Options>
+    <tt:Options>
+      <tt:Encoding>AAC</tt:Encoding>
+      <tt:BitrateList><tt:Items>64</tt:Items></tt:BitrateList>
+      <tt:SampleRateList><tt:Items>16</tt:Items></tt:SampleRateList>
+    </tt:Options>
     <tt:Options>
       <tt:Encoding>G711</tt:Encoding>
       <tt:BitrateList><tt:Items>64</tt:Items></tt:BitrateList>

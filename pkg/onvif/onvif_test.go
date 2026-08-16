@@ -29,6 +29,7 @@ func TestONVIFServices(t *testing.T) {
 		8000,
 		8554,
 		"steinel",
+		"aac",
 		"de-xxxxxxx",
 		"pr-xxxxx",
 		changeRes,

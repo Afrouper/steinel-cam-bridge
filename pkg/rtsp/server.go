@@ -5,11 +5,14 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/bluenviron/gortsplib/v4"
 	"github.com/bluenviron/gortsplib/v4/pkg/base"
 	"github.com/bluenviron/gortsplib/v4/pkg/description"
 	"github.com/bluenviron/gortsplib/v4/pkg/format"
+	"github.com/bluenviron/gortsplib/v4/pkg/format/rtpmpeg4audio"
+	"github.com/bluenviron/mediacommon/pkg/codecs/mpeg4audio"
 	"github.com/pion/rtp"
 )
 
@@ -21,7 +24,9 @@ type Server struct {
 	stream                  *gortsplib.ServerStream
 	session                 *description.Session
 	videoFormat             *format.H264
-	audioFormat             *format.G711
+	audioCodec              string
+	audioFormat             format.Format
+	aacRTPEncoder           *rtpmpeg4audio.Encoder
 	backchannelFormat       *format.G711
 	videoMedia              *description.Media
 	audioMedia              *description.Media
@@ -33,13 +38,17 @@ type Server struct {
 	mu                      sync.RWMutex
 }
 
-func NewServer(port int, pathName string) (*Server, error) {
+func NewServer(port int, pathName string, audioCodec string) (*Server, error) {
 	if port == 0 {
 		port = 8554
 	}
 	pathName = strings.TrimPrefix(pathName, "/")
 	if pathName == "" {
 		pathName = "steinel"
+	}
+	audioCodec = strings.ToLower(strings.TrimSpace(audioCodec))
+	if audioCodec == "" {
+		audioCodec = "aac"
 	}
 
 	// 1. Setup H.264 video format (Main Live Feed)
@@ -52,12 +61,38 @@ func NewServer(port int, pathName string) (*Server, error) {
 		Formats: []format.Format{vFormat},
 	}
 
-	// 2. Setup PCMU (G.711u) audio format (Camera Microphone -> Clients)
-	aFormat := &format.G711{
-		MULaw:        true,
-		SampleRate:   8000,
-		ChannelCount: 1,
+	// 2. Setup Audio format (AAC or PCMU)
+	var aFormat format.Format
+	var aacEncoder *rtpmpeg4audio.Encoder
+
+	if audioCodec == "pcmu" {
+		aFormat = &format.G711{
+			MULaw:        true,
+			SampleRate:   8000,
+			ChannelCount: 1,
+		}
+	} else {
+		audioCodec = "aac"
+		aacConf := &mpeg4audio.Config{
+			Type:         mpeg4audio.ObjectTypeAACLC,
+			SampleRate:   16000,
+			ChannelCount: 1,
+		}
+		aacFmt := &format.MPEG4Audio{
+			PayloadTyp:       97,
+			Config:           aacConf,
+			SizeLength:       13,
+			IndexLength:      3,
+			IndexDeltaLength: 3,
+		}
+		var err error
+		aacEncoder, err = aacFmt.CreateEncoder()
+		if err != nil {
+			return nil, fmt.Errorf("failed to create aac rtp encoder: %w", err)
+		}
+		aFormat = aacFmt
 	}
+
 	aMedia := &description.Media{
 		Type:    description.MediaTypeAudio,
 		Formats: []format.Format{aFormat},
@@ -82,7 +117,9 @@ func NewServer(port int, pathName string) (*Server, error) {
 	s := &Server{
 		session:           meds,
 		videoFormat:       vFormat,
+		audioCodec:        audioCodec,
 		audioFormat:       aFormat,
+		aacRTPEncoder:     aacEncoder,
 		backchannelFormat: bcFormat,
 		videoMedia:        vMedia,
 		audioMedia:        aMedia,
@@ -183,6 +220,35 @@ func (s *Server) WriteVideoPacket(pkt *rtp.Packet) {
 	}
 	pkt.Header.PayloadType = s.videoFormat.PayloadTyp
 	st.WritePacketRTP(s.videoMedia, pkt)
+}
+
+// GetAudioCodec returns the configured audio codec ("aac" or "pcmu")
+func (s *Server) GetAudioCodec() string {
+	return s.audioCodec
+}
+
+// WriteAACFrame writes an encoded AAC Access Unit (AU) with Presentation Timestamp (PTS)
+func (s *Server) WriteAACFrame(au []byte, pts time.Duration) {
+	s.mu.Lock()
+	st := s.stream
+	enc := s.aacRTPEncoder
+	s.mu.Unlock()
+
+	if st == nil || enc == nil || len(au) == 0 {
+		return
+	}
+
+	pkts, err := enc.Encode([][]byte{au})
+	if err != nil {
+		return
+	}
+
+	// 16000 Hz RTP clock rate for AAC
+	ts := uint32(pts.Seconds() * 16000)
+	for _, pkt := range pkts {
+		pkt.Header.Timestamp = ts
+		st.WritePacketRTP(s.audioMedia, pkt)
+	}
 }
 
 // WriteAudioPacket forwards a PCMU RTP packet to all connected RTSP clients
