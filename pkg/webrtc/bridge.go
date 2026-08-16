@@ -239,16 +239,7 @@ func (b *Bridge) Run(ctx context.Context) error {
 	b.mu.Unlock()
 
 	dc.OnMessage(func(msg pion.DataChannelMessage) {
-		if msg.IsString {
-			b.handleDataChannelMessage(msg.Data)
-		} else {
-			b.mu.Lock()
-			sdm := b.sdcardManager
-			b.mu.Unlock()
-			if sdm != nil {
-				sdm.HandleBinaryChunk(msg.Data)
-			}
-		}
+		b.handleDataChannelMessage(msg.Data)
 	})
 
 	dc.OnOpen(func() {
@@ -522,45 +513,59 @@ func (b *Bridge) sendJSONCmd(cmdName string, info map[string]interface{}) error 
 }
 
 func (b *Bridge) handleDataChannelMessage(data []byte) {
-	str := string(data)
-
-	var root map[string]interface{}
-	if err := json.Unmarshal(data, &root); err != nil {
+	if len(data) == 0 {
 		return
 	}
 
-	// 1. Check for SD Card JSON responses (get_event_list, get_snapshot, get_event_video)
+	// 1. Check if payload is a JSON control message
+	if data[0] == '{' {
+		var root map[string]interface{}
+		if err := json.Unmarshal(data, &root); err == nil {
+			// Check for SD Card JSON responses (get_event_list, get_snapshot, get_event_video)
+			b.mu.Lock()
+			sdm := b.sdcardManager
+			b.mu.Unlock()
+			if sdm != nil && sdm.HandleJSONMessage(root) {
+				return
+			}
+
+			// Check for MCU tran_report
+			str := string(data)
+			if strVal, ok := root["resp"].(string); ok && strVal == "tran_report" || strings.Contains(str, "tran_report") {
+				if infoMap, ok := root["info"].(map[string]interface{}); ok {
+					if b64Data, ok := infoMap["data"].(string); ok {
+						cfg, err := mcu.ParseBase64Data(b64Data)
+						if err != nil {
+							log.Printf("[MCU] ⚠️ Failed to parse tran_report Base64 '%s': %v", b64Data, err)
+						} else if cfg != nil {
+							b.onMCUStatus(cfg)
+						}
+					}
+				}
+				return
+			}
+
+			// Check for get_device_info
+			if strVal, ok := root["resp"].(string); ok && strVal == "get_device_info" {
+				if infoMap, ok := root["info"].(map[string]interface{}); ok {
+					fw, _ := infoMap["FW_version"].(string)
+					status := events.GlobalBus.GetStatus()
+					status.FirmwareVer = fw
+					events.GlobalBus.UpdateStatus(status)
+				}
+				return
+			}
+
+			return
+		}
+	}
+
+	// 2. Binary chunks (e.g. video / snapshot streaming)
 	b.mu.Lock()
 	sdm := b.sdcardManager
 	b.mu.Unlock()
-	if sdm != nil && sdm.HandleJSONMessage(root) {
-		return
-	}
-
-	// 2. Check for MCU tran_report
-	if strVal, ok := root["resp"].(string); ok && strVal == "tran_report" || strings.Contains(str, "tran_report") {
-		if infoMap, ok := root["info"].(map[string]interface{}); ok {
-			if b64Data, ok := infoMap["data"].(string); ok {
-				cfg, err := mcu.ParseBase64Data(b64Data)
-				if err != nil {
-					log.Printf("[MCU] ⚠️ Failed to parse tran_report Base64 '%s': %v", b64Data, err)
-				} else if cfg != nil {
-					b.onMCUStatus(cfg)
-				}
-			}
-		}
-		return
-	}
-
-	// 2. Check for get_device_info
-	if strVal, ok := root["resp"].(string); ok && strVal == "get_device_info" {
-		if infoMap, ok := root["info"].(map[string]interface{}); ok {
-			fw, _ := infoMap["FW_version"].(string)
-			status := events.GlobalBus.GetStatus()
-			status.FirmwareVer = fw
-			events.GlobalBus.UpdateStatus(status)
-		}
-		return
+	if sdm != nil {
+		sdm.HandleBinaryChunk(data)
 	}
 }
 

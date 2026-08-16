@@ -73,12 +73,14 @@ func (m *SDCardManager) GetEventList(ctx context.Context, startTime, endTime int
 		limit = 50
 	}
 	if startTime == 0 {
-		// Default to last 24 hours
-		startTime = time.Now().Add(-24 * time.Hour).Unix()
+		// Default to last 7 days
+		startTime = time.Now().Add(-7 * 24 * time.Hour).Unix()
 	}
 	if endTime == 0 {
-		endTime = time.Now().Unix()
+		endTime = time.Now().Add(24 * time.Hour).Unix()
 	}
+
+	log.Printf("[SDCard] 🔍 Requesting event list (start: %d, end: %d, page: %d, limit: %d)", startTime, endTime, page, limit)
 
 	m.eventListMu.Lock()
 	respChan := make(chan *EventListResponse, 1)
@@ -106,12 +108,14 @@ func (m *SDCardManager) GetEventList(ctx context.Context, startTime, endTime int
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
-	case <-time.After(8 * time.Second):
+	case <-time.After(15 * time.Second):
+		log.Printf("[SDCard] ⚠️ Timed out waiting for get_event_list response from camera")
 		return nil, ErrSDCardTimeout
 	case resp := <-respChan:
 		if resp == nil {
 			return &EventListResponse{Count: 0, Total: 0, List: []EventItem{}}, nil
 		}
+		log.Printf("[SDCard] 📋 Received event list with %d items (Total: %d)", resp.Count, resp.Total)
 		return resp, nil
 	}
 }
