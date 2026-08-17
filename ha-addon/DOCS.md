@@ -25,6 +25,17 @@ Der QR Code wird initial für das Pairing benötigt. Danach muss er nicht mehr z
 | `audio_codec` | Liste | `aac` | Audio-Codec des RTSP-Streams: `aac` (nativ transkodiert) oder `pcmu` |
 | `rtsp_port` | Port | `8554` | RTSP Server Port |
 | `onvif_port` | Port | `8000` | ONVIF HTTP Service Port |
+| `reset_pairing` | Boolean | `false` | Setzen Sie diese Option auf `true`, um den gespeicherten Schlüssel zu löschen und ein erneutes Pairing mit dem angegebenen `qr_code` zu erzwingen |
+
+---
+
+## 🔄 Kamera neu pairen / Pairing-Reset
+Falls die Kamera zurückgesetzt wurde, das Pairing-Passwort geändert wurde oder Sie einen neuen QR-Code nutzen möchten:
+1. Fügen Sie den neuen `qr_code` in das Konfigurationsfeld ein.
+2. Setzen Sie den Schalter **`reset_pairing: true`**.
+3. Klicken Sie auf **Speichern** und starten Sie das Add-on neu.
+   - Das Add-on löscht automatisch den alten gespeicherten Schlüssel, erzeugt einen frischen Private Key und koppelt sich neu mit der Kamera.
+4. Nach erfolgreicher Kopplung können Sie `reset_pairing` wieder auf `false` zurückstellen.
 
 ---
 

@@ -232,6 +232,7 @@ Die Bridge stellt auf Port `8000` eine direkte 1:1 REST-API bereit, um Aufnahmen
 | `MQTT_PASSWORD` | `-mqtt-pass` | `""` | MQTT Passwort |
 | `MQTT_TOPIC_PREFIX` | `-mqtt-topic` | `steinel` | MQTT Basis-Topic (Geräte-ID wird automatisch angehängt) |
 | `MQTT_DISCOVERY_PREFIX` | `-mqtt-disc` | `homeassistant` | Home Assistant MQTT Auto-Discovery Prefix |
+| `RESET_PAIRING` | `-reset-pairing` | `false` | Löscht den gespeicherten Private Key und erzwingt ein erneutes Pairing mit dem angegebenen QR-Code |
 
 ---
 

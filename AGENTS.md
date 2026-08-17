@@ -50,11 +50,11 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
   - Initialisiert Server (`rtsp.Server`, `onvif.Server`, `mqtt.Client`).
   - Beherbergt den **Supervisor-Loop**: Fängt Verbindungsabbrüche, Session-Beendigungen oder Watchdog-Resets ab und erzwingt einen sauberen **30-Sekunden-Cooldown**, damit neu startende Kameras stabil hochfahren können, ohne das Netzwerk zu fluten.
 
-- **`repository.yaml` & `steinel-cam-bridge/` (Home Assistant Add-on)**:
+- **`repository.yaml` & `ha-addon/` (Home Assistant Add-on)**:
   - `repository.yaml`: Ermöglicht das Hinzufügen dieses GitHub-Repositories als externe Add-on-Quelle in Home Assistant.
-  - `steinel-cam-bridge/config.yaml`: Manifest für Home Assistant (Schema für Einstellungs-Formular, `host_network: true`, `services: ["mqtt:want"]` für automatische Mosquitto-Verbindung).
-  - `steinel-cam-bridge/build.yaml`: Verknüpft das Add-on direkt mit dem pre-built Multi-Arch Image `ghcr.io/afrouper/steinel-cam-bridge:{arch}`.
-  - `steinel-cam-bridge/DOCS.md`: In-App Dokumentation für Home Assistant Benutzer.
+  - `ha-addon/config.yaml`: Manifest für Home Assistant (Schema für Einstellungs-Formular, `host_network: true`, `services: ["mqtt:want"]`, `reset_pairing: bool`).
+  - `ha-addon/build.yaml`: Verknüpft das Add-on direkt mit dem pre-built Multi-Arch Image `ghcr.io/afrouper/steinel-cam-bridge:{arch}`.
+  - `ha-addon/DOCS.md`: In-App Dokumentation für Home Assistant Benutzer.
 
 - **`pkg/nabto/`**:
   - `client.go`: CGo-Bindings für das Nabto Edge Client SDK (`nabto_client.h`).

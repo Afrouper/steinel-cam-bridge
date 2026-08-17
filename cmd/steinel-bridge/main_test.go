@@ -21,6 +21,7 @@ func TestLoadHomeAssistantOptions(t *testing.T) {
 		"audio_codec": "pcmu",
 		"rtsp_port": 8555,
 		"onvif_port": 8001,
+		"reset_pairing": true,
 		"mqtt_broker": "tcp://192.168.88.10:1883",
 		"mqtt_user": "user_test",
 		"mqtt_password": "pwd_test",
@@ -44,8 +45,9 @@ func TestLoadHomeAssistantOptions(t *testing.T) {
 	mqttDisc := "homeassistant"
 	rtspPort := 8554
 	onvifPort := 8000
+	resetPairing := false
 
-	loadHomeAssistantOptionsFromPath(optsFile, cfg, &resolution, &audioCodec, &mqttBroker, &mqttUser, &mqttPass, &mqttTopic, &mqttDisc, &rtspPort, &onvifPort)
+	loadHomeAssistantOptionsFromPath(optsFile, cfg, &resolution, &audioCodec, &mqttBroker, &mqttUser, &mqttPass, &mqttTopic, &mqttDisc, &rtspPort, &onvifPort, &resetPairing)
 
 	assert.Equal(t, "192.168.88.40", cfg.CameraIP)
 	assert.Equal(t, "de-1234567", cfg.DeviceID)
@@ -54,6 +56,7 @@ func TestLoadHomeAssistantOptions(t *testing.T) {
 	assert.Equal(t, "pcmu", audioCodec)
 	assert.Equal(t, 8555, rtspPort)
 	assert.Equal(t, 8001, onvifPort)
+	assert.True(t, resetPairing)
 	assert.Equal(t, "tcp://192.168.88.10:1883", mqttBroker)
 	assert.Equal(t, "user_test", mqttUser)
 	assert.Equal(t, "pwd_test", mqttPass)

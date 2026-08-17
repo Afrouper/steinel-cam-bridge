@@ -1,6 +1,6 @@
 name: "Steinel CAM Bridge"
 description: "Standalone ONVIF, 2-Way Audio & MQTT Bridge für Steinel L 625 CAM SC"
-version: "0.9.6"
+version: "0.9.7"
 slug: "steinel_cam_bridge"
 url: "https://github.com/Afrouper/steinel-cam-bridge"
 arch:
@@ -17,6 +17,7 @@ options:
   audio_codec: "aac"
   rtsp_port: 8554
   onvif_port: 8000
+  reset_pairing: false
 schema:
   camera_ip: "str"
   qr_code: "str?"
@@ -24,6 +25,7 @@ schema:
   audio_codec: "list(aac|pcmu)"
   rtsp_port: "port"
   onvif_port: "port"
+  reset_pairing: "bool?"
   mqtt_broker: "str?"
   mqtt_user: "str?"
   mqtt_password: "password?"

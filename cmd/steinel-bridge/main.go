@@ -183,11 +183,11 @@ func (m *BridgeManager) GetSDCardManager() *webrtc.SDCardManager {
 var AppVersion = "dev"
 
 // loadHomeAssistantOptions attempts to parse /data/options.json if running as a Home Assistant Add-on
-func loadHomeAssistantOptions(cfg *nabto.Config, resolution, audioCodec, mqttBroker, mqttUser, mqttPass, mqttTopic, mqttDisc *string, rtspPort, onvifPort *int) {
-	loadHomeAssistantOptionsFromPath("/data/options.json", cfg, resolution, audioCodec, mqttBroker, mqttUser, mqttPass, mqttTopic, mqttDisc, rtspPort, onvifPort)
+func loadHomeAssistantOptions(cfg *nabto.Config, resolution, audioCodec, mqttBroker, mqttUser, mqttPass, mqttTopic, mqttDisc *string, rtspPort, onvifPort *int, resetPairing *bool) {
+	loadHomeAssistantOptionsFromPath("/data/options.json", cfg, resolution, audioCodec, mqttBroker, mqttUser, mqttPass, mqttTopic, mqttDisc, rtspPort, onvifPort, resetPairing)
 }
 
-func loadHomeAssistantOptionsFromPath(path string, cfg *nabto.Config, resolution, audioCodec, mqttBroker, mqttUser, mqttPass, mqttTopic, mqttDisc *string, rtspPort, onvifPort *int) {
+func loadHomeAssistantOptionsFromPath(path string, cfg *nabto.Config, resolution, audioCodec, mqttBroker, mqttUser, mqttPass, mqttTopic, mqttDisc *string, rtspPort, onvifPort *int, resetPairing *bool) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return
@@ -200,6 +200,7 @@ func loadHomeAssistantOptionsFromPath(path string, cfg *nabto.Config, resolution
 		AudioCodec          string `json:"audio_codec"`
 		RTSPPort            int    `json:"rtsp_port"`
 		ONVIFPort           int    `json:"onvif_port"`
+		ResetPairing        bool   `json:"reset_pairing"`
 		MQTTBroker          string `json:"mqtt_broker"`
 		MQTTHost            string `json:"mqtt_host"`
 		MQTTPort            int    `json:"mqtt_port"`
@@ -234,6 +235,9 @@ func loadHomeAssistantOptionsFromPath(path string, cfg *nabto.Config, resolution
 	if opts.ONVIFPort > 0 {
 		*onvifPort = opts.ONVIFPort
 	}
+	if opts.ResetPairing {
+		*resetPairing = true
+	}
 	if opts.MQTTBroker != "" {
 		*mqttBroker = opts.MQTTBroker
 	} else if opts.MQTTHost != "" {
@@ -265,6 +269,7 @@ func main() {
 	rtspPort := flag.Int("port", 8554, "RTSP server port")
 	rtspPath := flag.String("path", "steinel", "RTSP stream path (e.g. steinel -> rtsp://host:port/steinel)")
 	onvifPort := flag.Int("onvif", 8000, "ONVIF HTTP server port")
+	resetPairingFlag := flag.Bool("reset-pairing", false, "Reset local client key and force re-pairing with camera")
 	mqttBroker := flag.String("mqtt-broker", "", "MQTT broker URL (e.g. tcp://192.168.1.100:1883)")
 	mqttUser := flag.String("mqtt-user", "", "MQTT username")
 	mqttPass := flag.String("mqtt-pass", "", "MQTT password")
@@ -291,7 +296,7 @@ func main() {
 	}
 
 	// 1. Auto-detect & load Home Assistant Add-on options (/data/options.json)
-	loadHomeAssistantOptions(cfg, resolution, audioCodec, mqttBroker, mqttUser, mqttPass, mqttTopic, mqttDisc, rtspPort, onvifPort)
+	loadHomeAssistantOptions(cfg, resolution, audioCodec, mqttBroker, mqttUser, mqttPass, mqttTopic, mqttDisc, rtspPort, onvifPort, resetPairingFlag)
 
 	// Override from Environment Variables
 	if envQR := os.Getenv("QR_CODE"); envQR != "" {
@@ -308,6 +313,9 @@ func main() {
 	}
 	if ac := os.Getenv("AUDIO_CODEC"); ac != "" {
 		*audioCodec = ac
+	}
+	if envReset := os.Getenv("RESET_PAIRING"); envReset == "true" || envReset == "1" {
+		*resetPairingFlag = true
 	}
 	if portStr := os.Getenv("ONVIF_PORT"); portStr != "" {
 		if p, err := strconv.Atoi(portStr); err == nil && p > 0 {
@@ -348,6 +356,16 @@ func main() {
 	}
 	if *qrFlag != "" {
 		nabto.ParseQRCode(*qrFlag, cfg)
+	}
+
+	// Handle pairing reset
+	if *resetPairingFlag {
+		log.Printf("[Reset] 🔄 Pairing reset requested: Removing client key '%s' to force fresh EC key generation & re-pairing...", cfg.KeyPath)
+		if err := os.Remove(cfg.KeyPath); err != nil && !os.IsNotExist(err) {
+			log.Printf("[Reset] ⚠️ Warning: Could not delete '%s': %v", cfg.KeyPath, err)
+		} else {
+			log.Printf("[Reset] ✅ Existing key removed. Fresh pairing will be performed on connect.")
+		}
 	}
 
 	if cfg.DeviceID == "" && cfg.SCT == "" {
