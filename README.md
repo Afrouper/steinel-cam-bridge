@@ -10,9 +10,6 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Go Version](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go)](https://go.dev)
 
-> [!WARNING]
-> Aktuell kein öffentliches Image verfügbar da erst noch Anpassungen erfolgen müssen im libnabto_client.so nicht zu inkludieren
-
 
 Die Anwendung ist als hochperformanter, 100 % autarker **Go-Daemon**.
 Es soll die **Steinel L 625 CAM SC** Außenleuchte in eine standardkonforme **ONVIF Profile S/T Kamera** mit **RTSP-Streaming**, **2-Wege-Audio (Gegensprechen)** und vollständiger **MQTT Home Assistant Auto-Discovery** verwandelt – zur nahtlosen Integration in **Home Assistant**, **Scrypted / Apple HomeKit Secure Video (HKSV)**, **Synology Surveillance Station** und **Frigate**.
@@ -242,6 +239,11 @@ Die Bridge stellt auf Port `8000` eine direkte 1:1 REST-API bereit, um Aufnahmen
 
 - **Projektlizenz:** Dieses Projekt ist unter der [MIT License](LICENSE) lizenziert.
 - **Third-Party Lizenzen:** Siehe [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) für Hinweise zum Nabto Edge Client SDK und zu den Go-Bibliotheken.
+
+> [!NOTE]
+> Das bereitgestellte Docker-Image enthält keinerlei proprietäre Fremdbibliotheken. Da die Nabto Lizenz keine Distribution zulässt, wird beim allerersten Start
+> des Containers die benötigte `libnabto_client.so` vollautomatisch direkt von Nabtos offiziellem GitHub-Repository auf das System des Nutzers geladen
+> und persistent im Cache (`/data/lib/`) gespeichert.
 
 > [!NOTE]
 > Dies ist ein unabhängiges Open-Source-Community-Projekt. Es steht in keiner geschäftlichen Verbindung zur STEINEL GmbH, Nabto ApS oder Apple Inc. Alle Markennamen sind Eigentum der jeweiligen Rechteinhaber.

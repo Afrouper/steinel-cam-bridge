@@ -50,17 +50,26 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=1 go build -ldflags="-s -w -X main.AppVersion=${APP_VERSION}" -o /app/steinel-bridge ./cmd/steinel-bridge && \
     mkdir -p /data && chown -R 1000:1000 /data
 
-# --- Stage 2: Ultra-minimal Distroless runtime image (~35 MB uncompressed, ~15 MB download) ---
-FROM gcr.io/distroless/cc-debian12
+# --- Stage 2: Slim runtime image with dynamic SDK loader (0 Byte proprietary binaries) ---
+FROM debian:bookworm-slim
 
 ARG APP_VERSION="dev"
 
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    tar \
+    tzdata \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
-# Copy binary, runtime library, and data directory
+# Copy binary, entrypoint script, and data directory
 COPY --from=builder /app/steinel-bridge /app/steinel-bridge
-COPY --from=builder /usr/lib/libnabto_client.so /lib/libnabto_client.so
+COPY entrypoint.sh /app/entrypoint.sh
 COPY --from=builder --chown=1000:1000 /data /data
+
+RUN chmod +x /app/entrypoint.sh
 
 # OCI Image Labels
 LABEL org.opencontainers.image.title="steinel-cam-bridge" \
@@ -71,7 +80,8 @@ LABEL org.opencontainers.image.title="steinel-cam-bridge" \
       org.opencontainers.image.licenses="MIT"
 
 # Default configuration environment variables
-ENV CAMERA_IP="192.168.1.100" \
+ENV NABTO_SDK_VERSION="5.15.4" \
+    CAMERA_IP="192.168.1.100" \
     QR_CODE="" \
     KEY_PATH="/data/client.key" \
     RESOLUTION="1080p" \
@@ -89,4 +99,4 @@ VOLUME ["/data"]
 
 EXPOSE 8554 8554/udp 8000 3702/udp
 
-ENTRYPOINT ["/app/steinel-bridge"]
+ENTRYPOINT ["/app/entrypoint.sh"]
