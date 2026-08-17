@@ -182,12 +182,23 @@ func (m *BridgeManager) GetSDCardManager() *webrtc.SDCardManager {
 
 var AppVersion = "dev"
 
-// loadHomeAssistantOptions attempts to parse /data/options.json if running as a Home Assistant Add-on
-func loadHomeAssistantOptions(cfg *nabto.Config, resolution, audioCodec, mqttBroker, mqttUser, mqttPass, mqttTopic, mqttDisc *string, rtspPort, onvifPort *int, resetPairing *bool) {
-	loadHomeAssistantOptionsFromPath("/data/options.json", cfg, resolution, audioCodec, mqttBroker, mqttUser, mqttPass, mqttTopic, mqttDisc, rtspPort, onvifPort, resetPairing)
+// AppConfig encapsulates the complete resolved runtime configuration
+type AppConfig struct {
+	NabtoConfig   *nabto.Config
+	Resolution    string
+	AudioCodec    string
+	RTSPPort      int
+	RTSPPath      string
+	ONVIFPort     int
+	ResetPairing  bool
+	MQTTBroker    string
+	MQTTUser      string
+	MQTTPassword  string
+	MQTTTopic     string
+	MQTTDiscovery string
 }
 
-func loadHomeAssistantOptionsFromPath(path string, cfg *nabto.Config, resolution, audioCodec, mqttBroker, mqttUser, mqttPass, mqttTopic, mqttDisc *string, rtspPort, onvifPort *int, resetPairing *bool) {
+func loadHomeAssistantOptionsFromPath(path string, cfg *AppConfig) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return
@@ -211,71 +222,207 @@ func loadHomeAssistantOptionsFromPath(path string, cfg *nabto.Config, resolution
 	}
 
 	if err := json.Unmarshal(data, &opts); err != nil {
-		log.Printf("[HA Addon] ⚠️ Warning: Failed to parse /data/options.json: %v", err)
+		log.Printf("[HA Addon] ⚠️ Warning: Failed to parse %s: %v", path, err)
 		return
 	}
 
-	log.Printf("[HA Addon] 🏠 Loaded configuration from /data/options.json")
+	log.Printf("[HA Addon] 🏠 Loaded configuration from %s", path)
 
 	if opts.CameraIP != "" {
-		cfg.CameraIP = opts.CameraIP
+		cfg.NabtoConfig.CameraIP = opts.CameraIP
 	}
 	if opts.QRCode != "" {
-		nabto.ParseQRCode(opts.QRCode, cfg)
+		nabto.ParseQRCode(opts.QRCode, cfg.NabtoConfig)
 	}
 	if opts.Resolution != "" {
-		*resolution = opts.Resolution
+		cfg.Resolution = opts.Resolution
 	}
 	if opts.AudioCodec != "" {
-		*audioCodec = opts.AudioCodec
+		cfg.AudioCodec = opts.AudioCodec
 	}
 	if opts.RTSPPort > 0 {
-		*rtspPort = opts.RTSPPort
+		cfg.RTSPPort = opts.RTSPPort
 	}
 	if opts.ONVIFPort > 0 {
-		*onvifPort = opts.ONVIFPort
+		cfg.ONVIFPort = opts.ONVIFPort
 	}
 	if opts.ResetPairing {
-		*resetPairing = true
+		cfg.ResetPairing = true
 	}
 	if opts.MQTTBroker != "" {
-		*mqttBroker = opts.MQTTBroker
+		cfg.MQTTBroker = opts.MQTTBroker
 	} else if opts.MQTTHost != "" {
 		port := 1883
 		if opts.MQTTPort > 0 {
 			port = opts.MQTTPort
 		}
-		*mqttBroker = fmt.Sprintf("tcp://%s:%d", opts.MQTTHost, port)
+		cfg.MQTTBroker = fmt.Sprintf("tcp://%s:%d", opts.MQTTHost, port)
 	}
 	if opts.MQTTUser != "" {
-		*mqttUser = opts.MQTTUser
+		cfg.MQTTUser = opts.MQTTUser
 	}
 	if opts.MQTTPassword != "" {
-		*mqttPass = opts.MQTTPassword
+		cfg.MQTTPassword = opts.MQTTPassword
 	}
 	if opts.MQTTTopicPrefix != "" {
-		*mqttTopic = opts.MQTTTopicPrefix
+		cfg.MQTTTopic = opts.MQTTTopicPrefix
 	}
 	if opts.MQTTDiscoveryPrefix != "" {
-		*mqttDisc = opts.MQTTDiscoveryPrefix
+		cfg.MQTTDiscovery = opts.MQTTDiscoveryPrefix
 	}
 }
 
+// resolveConfig resolves configuration following the POSIX / 12-Factor App hierarchy:
+// 1. Code Defaults (Layer 1 - lowest)
+// 2. Config File e.g. /data/options.json (Layer 2)
+// 3. Explicit Environment Variables (Layer 3)
+// 4. Explicit CLI Flags (Layer 4 - highest)
+func resolveConfig(optionsPath string, fs *flag.FlagSet) *AppConfig {
+	// 1. Layer 1: Code Defaults
+	cfg := &AppConfig{
+		NabtoConfig: &nabto.Config{
+			CameraIP:   "192.168.1.100",
+			CameraPort: 5592,
+			KeyPath:    "data/client.key",
+		},
+		Resolution:    "1080p",
+		AudioCodec:    "aac",
+		RTSPPort:      8554,
+		RTSPPath:      "steinel",
+		ONVIFPort:     8000,
+		ResetPairing:  false,
+		MQTTBroker:    "",
+		MQTTUser:      "",
+		MQTTPassword:  "",
+		MQTTTopic:     "steinel",
+		MQTTDiscovery: "homeassistant",
+	}
+
+	// 2. Layer 2: Configuration File
+	if optionsPath != "" {
+		loadHomeAssistantOptionsFromPath(optionsPath, cfg)
+	}
+
+	// 3. Layer 3: Environment Variables (12-Factor App)
+	if envQR := os.Getenv("QR_CODE"); envQR != "" {
+		nabto.ParseQRCode(envQR, cfg.NabtoConfig)
+	}
+	if ip := os.Getenv("CAMERA_IP"); ip != "" {
+		cfg.NabtoConfig.CameraIP = ip
+	}
+	if key := os.Getenv("KEY_PATH"); key != "" {
+		cfg.NabtoConfig.KeyPath = key
+	}
+	if res := os.Getenv("RESOLUTION"); res != "" {
+		cfg.Resolution = res
+	}
+	if ac := os.Getenv("AUDIO_CODEC"); ac != "" {
+		cfg.AudioCodec = ac
+	}
+	if envReset := os.Getenv("RESET_PAIRING"); envReset == "true" || envReset == "1" {
+		cfg.ResetPairing = true
+	}
+	if portStr := os.Getenv("RTSP_PORT"); portStr != "" {
+		if p, err := strconv.Atoi(portStr); err == nil && p > 0 {
+			cfg.RTSPPort = p
+		}
+	}
+	if pathStr := os.Getenv("RTSP_PATH"); pathStr != "" {
+		cfg.RTSPPath = pathStr
+	}
+	if portStr := os.Getenv("ONVIF_PORT"); portStr != "" {
+		if p, err := strconv.Atoi(portStr); err == nil && p > 0 {
+			cfg.ONVIFPort = p
+		}
+	}
+	if mb := os.Getenv("MQTT_BROKER"); mb != "" {
+		cfg.MQTTBroker = mb
+	}
+	if mu := os.Getenv("MQTT_USER"); mu != "" {
+		cfg.MQTTUser = mu
+	}
+	if mp := os.Getenv("MQTT_PASSWORD"); mp != "" {
+		cfg.MQTTPassword = mp
+	}
+	if mt := os.Getenv("MQTT_TOPIC_PREFIX"); mt != "" {
+		cfg.MQTTTopic = mt
+	}
+	if md := os.Getenv("MQTT_DISCOVERY_PREFIX"); md != "" {
+		cfg.MQTTDiscovery = md
+	}
+	if sct := os.Getenv("SCT"); sct != "" {
+		cfg.NabtoConfig.SCT = sct
+	}
+	if pwd := os.Getenv("PAIR_PWD"); pwd != "" {
+		cfg.NabtoConfig.PairPwd = pwd
+	}
+	if did := os.Getenv("DEVICE_ID"); did != "" {
+		cfg.NabtoConfig.DeviceID = did
+	}
+	if pid := os.Getenv("PRODUCT_ID"); pid != "" {
+		cfg.NabtoConfig.ProductID = pid
+	}
+
+	// 4. Layer 4: Explicit CLI Flags (POSIX)
+	if fs != nil {
+		fs.Visit(func(f *flag.Flag) {
+			switch f.Name {
+			case "ip":
+				cfg.NabtoConfig.CameraIP = f.Value.String()
+			case "qr":
+				nabto.ParseQRCode(f.Value.String(), cfg.NabtoConfig)
+			case "key":
+				cfg.NabtoConfig.KeyPath = f.Value.String()
+			case "res":
+				cfg.Resolution = f.Value.String()
+			case "port":
+				if p, err := strconv.Atoi(f.Value.String()); err == nil && p > 0 {
+					cfg.RTSPPort = p
+				}
+			case "path":
+				cfg.RTSPPath = f.Value.String()
+			case "onvif":
+				if p, err := strconv.Atoi(f.Value.String()); err == nil && p > 0 {
+					cfg.ONVIFPort = p
+				}
+			case "reset-pairing":
+				if b, err := strconv.ParseBool(f.Value.String()); err == nil {
+					cfg.ResetPairing = b
+				}
+			case "mqtt-broker":
+				cfg.MQTTBroker = f.Value.String()
+			case "mqtt-user":
+				cfg.MQTTUser = f.Value.String()
+			case "mqtt-pass":
+				cfg.MQTTPassword = f.Value.String()
+			case "mqtt-topic":
+				cfg.MQTTTopic = f.Value.String()
+			case "mqtt-disc":
+				cfg.MQTTDiscovery = f.Value.String()
+			case "audio-codec":
+				cfg.AudioCodec = f.Value.String()
+			}
+		})
+	}
+
+	return cfg
+}
+
 func main() {
-	qrFlag := flag.String("qr", "", "Steinel camera QR code string (did=...,pid=...,sct=...,pairPwd=...)")
-	ipFlag := flag.String("ip", "", "Steinel camera local IP address")
-	keyPath := flag.String("key", "data/client.key", "Path to client private key file")
-	resolution := flag.String("res", "1080p", "Video resolution (1080p, 720p, 360p)")
-	rtspPort := flag.Int("port", 8554, "RTSP server port")
-	rtspPath := flag.String("path", "steinel", "RTSP stream path (e.g. steinel -> rtsp://host:port/steinel)")
-	onvifPort := flag.Int("onvif", 8000, "ONVIF HTTP server port")
-	resetPairingFlag := flag.Bool("reset-pairing", false, "Reset local client key and force re-pairing with camera")
-	mqttBroker := flag.String("mqtt-broker", "", "MQTT broker URL (e.g. tcp://192.168.1.100:1883)")
-	mqttUser := flag.String("mqtt-user", "", "MQTT username")
-	mqttPass := flag.String("mqtt-pass", "", "MQTT password")
-	mqttTopic := flag.String("mqtt-topic", "steinel", "MQTT base topic prefix (default: steinel)")
-	mqttDisc := flag.String("mqtt-disc", "homeassistant", "MQTT Home Assistant Discovery Prefix")
-	audioCodec := flag.String("audio-codec", "aac", "Audio codec for RTSP/ONVIF stream: 'aac' (transcoded, default) or 'pcmu' (raw passthrough)")
+	flag.String("qr", "", "Steinel camera QR code string (did=...,pid=...,sct=...,pairPwd=...)")
+	flag.String("ip", "", "Steinel camera local IP address")
+	flag.String("key", "", "Path to client private key file")
+	flag.String("res", "", "Video resolution (1080p, 720p, 360p)")
+	flag.Int("port", 0, "RTSP server port")
+	flag.String("path", "", "RTSP stream path (e.g. steinel -> rtsp://host:port/steinel)")
+	flag.Int("onvif", 0, "ONVIF HTTP server port")
+	flag.Bool("reset-pairing", false, "Reset local client key and force re-pairing with camera")
+	flag.String("mqtt-broker", "", "MQTT broker URL (e.g. tcp://192.168.1.100:1883)")
+	flag.String("mqtt-user", "", "MQTT username")
+	flag.String("mqtt-pass", "", "MQTT password")
+	flag.String("mqtt-topic", "", "MQTT base topic prefix (default: steinel)")
+	flag.String("mqtt-disc", "", "MQTT Home Assistant Discovery Prefix")
+	flag.String("audio-codec", "", "Audio codec for RTSP/ONVIF stream: 'aac' (transcoded, default) or 'pcmu' (raw passthrough)")
 	flag.Parse()
 
 	if envVer := os.Getenv("APP_VERSION"); envVer != "" {
@@ -289,77 +436,12 @@ func main() {
 	fmt.Println(" 100% Native Single Binary (Nabto + WebRTC + RTSP + ONVIF + MQTT)")
 	fmt.Println("═══════════════════════════════════════════════════════════════════")
 
-	// Default empty config
-	cfg := &nabto.Config{
-		CameraIP: "192.168.1.100",
-		KeyPath:  *keyPath,
-	}
-
-	// 1. Auto-detect & load Home Assistant Add-on options (/data/options.json)
-	loadHomeAssistantOptions(cfg, resolution, audioCodec, mqttBroker, mqttUser, mqttPass, mqttTopic, mqttDisc, rtspPort, onvifPort, resetPairingFlag)
-
-	// Override from Environment Variables
-	if envQR := os.Getenv("QR_CODE"); envQR != "" {
-		nabto.ParseQRCode(envQR, cfg)
-	}
-	if ip := os.Getenv("CAMERA_IP"); ip != "" {
-		cfg.CameraIP = ip
-	}
-	if key := os.Getenv("KEY_PATH"); key != "" {
-		cfg.KeyPath = key
-	}
-	if res := os.Getenv("RESOLUTION"); res != "" {
-		*resolution = res
-	}
-	if ac := os.Getenv("AUDIO_CODEC"); ac != "" {
-		*audioCodec = ac
-	}
-	if envReset := os.Getenv("RESET_PAIRING"); envReset == "true" || envReset == "1" {
-		*resetPairingFlag = true
-	}
-	if portStr := os.Getenv("ONVIF_PORT"); portStr != "" {
-		if p, err := strconv.Atoi(portStr); err == nil && p > 0 {
-			*onvifPort = p
-		}
-	}
-	if mb := os.Getenv("MQTT_BROKER"); mb != "" {
-		*mqttBroker = mb
-	}
-	if mu := os.Getenv("MQTT_USER"); mu != "" {
-		*mqttUser = mu
-	}
-	if mp := os.Getenv("MQTT_PASSWORD"); mp != "" {
-		*mqttPass = mp
-	}
-	if mt := os.Getenv("MQTT_TOPIC_PREFIX"); mt != "" {
-		*mqttTopic = mt
-	}
-	if md := os.Getenv("MQTT_DISCOVERY_PREFIX"); md != "" {
-		*mqttDisc = md
-	}
-	if sct := os.Getenv("SCT"); sct != "" {
-		cfg.SCT = sct
-	}
-	if pwd := os.Getenv("PAIR_PWD"); pwd != "" {
-		cfg.PairPwd = pwd
-	}
-	if did := os.Getenv("DEVICE_ID"); did != "" {
-		cfg.DeviceID = did
-	}
-	if pid := os.Getenv("PRODUCT_ID"); pid != "" {
-		cfg.ProductID = pid
-	}
-
-	// Override from CLI flags (highest priority)
-	if *ipFlag != "" {
-		cfg.CameraIP = *ipFlag
-	}
-	if *qrFlag != "" {
-		nabto.ParseQRCode(*qrFlag, cfg)
-	}
+	// Resolve configuration according to POSIX & 12-Factor App hierarchy
+	appCfg := resolveConfig("/data/options.json", flag.CommandLine)
+	cfg := appCfg.NabtoConfig
 
 	// Handle pairing reset
-	if *resetPairingFlag {
+	if appCfg.ResetPairing {
 		log.Printf("[Reset] 🔄 Pairing reset requested: Removing client key '%s' to force fresh EC key generation & re-pairing...", cfg.KeyPath)
 		if err := os.Remove(cfg.KeyPath); err != nil && !os.IsNotExist(err) {
 			log.Printf("[Reset] ⚠️ Warning: Could not delete '%s': %v", cfg.KeyPath, err)
@@ -377,11 +459,11 @@ func main() {
 		_ = os.MkdirAll(dir, 0755)
 	}
 
-	log.Printf("[Config] Camera: %s (ID: %s, Res: %s, Audio: %s)", cfg.CameraIP, cfg.DeviceID, *resolution, *audioCodec)
+	log.Printf("[Config] Camera: %s (ID: %s, Res: %s, Audio: %s)", cfg.CameraIP, cfg.DeviceID, appCfg.Resolution, appCfg.AudioCodec)
 	log.Printf("[Config] Key:    %s", cfg.KeyPath)
-	log.Printf("[Config] Ports:  RTSP=%d, ONVIF=%d, WS-Discovery=3702/udp", *rtspPort, *onvifPort)
-	if *mqttBroker != "" {
-		log.Printf("[Config] MQTT:   Broker=%s, BaseTopic=%s, Discovery=%s", *mqttBroker, *mqttTopic, *mqttDisc)
+	log.Printf("[Config] Ports:  RTSP=%d, ONVIF=%d, WS-Discovery=3702/udp", appCfg.RTSPPort, appCfg.ONVIFPort)
+	if appCfg.MQTTBroker != "" {
+		log.Printf("[Config] MQTT:   Broker=%s, BaseTopic=%s, Discovery=%s", appCfg.MQTTBroker, appCfg.MQTTTopic, appCfg.MQTTDiscovery)
 	}
 
 	// Context and signal trap for graceful shutdown
@@ -399,7 +481,7 @@ func main() {
 	bridgeMgr := &BridgeManager{}
 
 	// 1. Start embedded RTSP Server (with Profile T 2-Way Audio Backchannel)
-	rtspServer, err := rtsp.NewServer(*rtspPort, *rtspPath, *audioCodec)
+	rtspServer, err := rtsp.NewServer(appCfg.RTSPPort, appCfg.RTSPPath, appCfg.AudioCodec)
 	if err != nil {
 		log.Fatalf("[!] Failed to initialize RTSP server: %v", err)
 	}
@@ -413,10 +495,10 @@ func main() {
 
 	// 2. Start embedded ONVIF Profile S/T Server (WS-Discovery + Media + Events + DeviceIO)
 	onvifServer := onvif.NewServer(
-		*onvifPort,
-		*rtspPort,
-		*rtspPath,
-		*audioCodec,
+		appCfg.ONVIFPort,
+		appCfg.RTSPPort,
+		appCfg.RTSPPath,
+		appCfg.AudioCodec,
 		cfg.DeviceID,
 		cfg.ProductID,
 		bridgeMgr.SetResolution,
@@ -435,17 +517,17 @@ func main() {
 	}
 
 	// 3. Start MQTT Client (Optional)
-	if *mqttBroker != "" {
+	if appCfg.MQTTBroker != "" {
 		mqttClient := mqtt.NewClient(mqtt.Config{
-			Broker:          *mqttBroker,
-			Username:        *mqttUser,
-			Password:        *mqttPass,
-			TopicPrefix:     *mqttTopic,
-			DiscoveryPrefix: *mqttDisc,
+			Broker:          appCfg.MQTTBroker,
+			Username:        appCfg.MQTTUser,
+			Password:        appCfg.MQTTPassword,
+			TopicPrefix:     appCfg.MQTTTopic,
+			DiscoveryPrefix: appCfg.MQTTDiscovery,
 			DeviceID:        cfg.DeviceID,
 			ProductID:       cfg.ProductID,
 			Model:           "L 625 CAM SC",
-			BridgeHTTPURL:   fmt.Sprintf("http://%s:%d", cfg.CameraIP, *onvifPort),
+			BridgeHTTPURL:   fmt.Sprintf("http://%s:%d", cfg.CameraIP, appCfg.ONVIFPort),
 		}, mqtt.Callbacks{
 			SetLampMode:       bridgeMgr.SetLampState,
 			SetHighlight:      bridgeMgr.SetHighlight,
@@ -525,10 +607,10 @@ func main() {
 			continue
 		}
 
-		log.Printf("[Bridge] 🚀 [ONLINE] Stream ready at rtsp://0.0.0.0:%d/%s", *rtspPort, *rtspPath)
-		log.Printf("[Bridge] 🛰️ [ONVIF] Endpoints active at http://0.0.0.0:%d/onvif/device_service", *onvifPort)
+		log.Printf("[Bridge] 🚀 [ONLINE] Stream ready at rtsp://0.0.0.0:%d/%s", appCfg.RTSPPort, appCfg.RTSPPath)
+		log.Printf("[Bridge] 🛰️ [ONVIF] Endpoints active at http://0.0.0.0:%d/onvif/device_service", appCfg.ONVIFPort)
 
-		bridge := webrtc.NewBridge(client, stream, rtspServer, *resolution, 1*time.Second)
+		bridge := webrtc.NewBridge(client, stream, rtspServer, appCfg.Resolution, 1*time.Second)
 		bridgeMgr.SetBridge(bridge)
 
 		_ = bridge.Run(ctx)

@@ -81,19 +81,7 @@ LABEL org.opencontainers.image.title="steinel-cam-bridge" \
 
 # Default configuration environment variables
 ENV NABTO_SDK_VERSION="5.15.4" \
-    CAMERA_IP="192.168.1.100" \
-    QR_CODE="" \
-    KEY_PATH="/data/client.key" \
-    RESOLUTION="1080p" \
-    AUDIO_CODEC="aac" \
-    RTSP_PORT="8554" \
-    RTSP_PATH="steinel" \
-    ONVIF_PORT="8000" \
-    MQTT_BROKER="" \
-    MQTT_USER="" \
-    MQTT_PASSWORD="" \
-    MQTT_TOPIC_PREFIX="steinel" \
-    MQTT_DISCOVERY_PREFIX="homeassistant"
+    KEY_PATH="/data/client.key"
 
 VOLUME ["/data"]
 
