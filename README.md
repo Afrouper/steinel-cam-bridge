@@ -1,4 +1,4 @@
-# Steinel L 625 CAM SC — Standalone ONVIF, 2-Way Audio & Home Assistant Bridge
+# Bridge für Steinel L 625 CAM SC auf ONVIF, 2-Way Audio & Home Assistant
 
 [![Latest Release](https://img.shields.io/github/v/release/Afrouper/steinel-cam-bridge?logo=github)](https://github.com/Afrouper/steinel-cam-bridge/releases)
 [![CI Test & Build](https://github.com/Afrouper/steinel-cam-bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/Afrouper/steinel-cam-bridge/actions/workflows/ci.yml)
