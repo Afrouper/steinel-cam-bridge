@@ -29,4 +29,4 @@ schema:
   mqtt_password: "password?"
   mqtt_topic_prefix: "str?"
   mqtt_discovery_prefix: "str?"
-image: "ghcr.io/afrouper/steinel-cam-bridge:{arch}"
+image: "ghcr.io/afrouper/steinel-cam-bridge"
