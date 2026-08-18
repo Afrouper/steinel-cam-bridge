@@ -43,33 +43,25 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # 3. Copy source code
 COPY . .
 
-# 4. Compile stripped static/CGo binary with compiler cache & version injection
+# 4. Compile pure Go launcher (statically linked, CGO_ENABLED=0) and CGo bridge binary
 ARG APP_VERSION="dev"
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 go build -ldflags="-s -w" -o /app/launcher ./cmd/launcher && \
     CGO_ENABLED=1 go build -ldflags="-s -w -X main.AppVersion=${APP_VERSION}" -o /app/steinel-bridge ./cmd/steinel-bridge && \
     mkdir -p /data && chown -R 1000:1000 /data
 
-# --- Stage 2: Slim runtime image with dynamic SDK loader (0 Byte proprietary binaries) ---
-FROM debian:bookworm-slim
+# --- Stage 2: Ultra-minimal Distroless runtime (~25 MB Image, 0 Byte proprietary binaries) ---
+FROM gcr.io/distroless/cc-debian12:latest
 
 ARG APP_VERSION="dev"
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    curl \
-    tar \
-    tzdata \
-    && rm -rf /var/lib/apt/lists/*
-
 WORKDIR /app
 
-# Copy binary, entrypoint script, and data directory
+# Copy pure Go bootstrap launcher, CGo bridge binary, and data directory
+COPY --from=builder /app/launcher /app/launcher
 COPY --from=builder /app/steinel-bridge /app/steinel-bridge
-COPY entrypoint.sh /app/entrypoint.sh
 COPY --from=builder --chown=1000:1000 /data /data
-
-RUN chmod +x /app/entrypoint.sh
 
 # OCI Image Labels
 LABEL org.opencontainers.image.title="steinel-cam-bridge" \
@@ -87,4 +79,6 @@ VOLUME ["/data"]
 
 EXPOSE 8554 8554/udp 8000 3702/udp
 
-ENTRYPOINT ["/app/entrypoint.sh"]
+USER 1000:1000
+
+ENTRYPOINT ["/app/launcher"]
