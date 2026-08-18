@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -272,9 +273,88 @@ func loadHomeAssistantOptionsFromPath(path string, cfg *AppConfig) {
 	}
 }
 
+type supervisorMQTTResponse struct {
+	Result string `json:"result"`
+	Data   struct {
+		Host     string `json:"host"`
+		Port     int    `json:"port"`
+		SSL      bool   `json:"ssl"`
+		Username string `json:"username"`
+		Password string `json:"password"`
+	} `json:"data"`
+}
+
+// fetchSupervisorMQTTOptions queries Home Assistant's Supervisor API for the official MQTT broker addon credentials
+func fetchSupervisorMQTTOptions() (broker, user, pass string, err error) {
+	token := os.Getenv("SUPERVISOR_TOKEN")
+	if token == "" {
+		token = os.Getenv("HASSIO_TOKEN")
+	}
+	if token == "" {
+		return "", "", "", fmt.Errorf("no supervisor token available")
+	}
+
+	client := &http.Client{
+		Timeout: 3 * time.Second,
+	}
+
+	urls := []string{
+		"http://supervisor/services/mqtt",
+		"http://hassio/services/mqtt",
+	}
+
+	var lastErr error
+	for _, u := range urls {
+		req, reqErr := http.NewRequest("GET", u, nil)
+		if reqErr != nil {
+			lastErr = reqErr
+			continue
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, doErr := client.Do(req)
+		if doErr != nil {
+			lastErr = doErr
+			continue
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			_ = resp.Body.Close()
+			lastErr = fmt.Errorf("supervisor API returned HTTP %d", resp.StatusCode)
+			continue
+		}
+
+		var sResp supervisorMQTTResponse
+		decErr := json.NewDecoder(resp.Body).Decode(&sResp)
+		_ = resp.Body.Close()
+		if decErr != nil {
+			lastErr = decErr
+			continue
+		}
+
+		if sResp.Result == "ok" && sResp.Data.Host != "" {
+			port := sResp.Data.Port
+			if port <= 0 {
+				port = 1883
+			}
+			scheme := "tcp"
+			if sResp.Data.SSL {
+				scheme = "ssl"
+			}
+			broker = fmt.Sprintf("%s://%s:%d", scheme, sResp.Data.Host, port)
+			user = sResp.Data.Username
+			pass = sResp.Data.Password
+			return broker, user, pass, nil
+		}
+	}
+
+	return "", "", "", lastErr
+}
+
 // resolveConfig resolves configuration following the POSIX / 12-Factor App hierarchy:
 // 1. Code Defaults (Layer 1 - lowest)
-// 2. Config File e.g. /data/options.json (Layer 2)
+// 2. Config File e.g. /data/options.json & Supervisor Auto-Discovery (Layer 2)
 // 3. Explicit Environment Variables (Layer 3)
 // 4. Explicit CLI Flags (Layer 4 - highest)
 func resolveConfig(optionsPath string, fs *flag.FlagSet) *AppConfig {
@@ -301,6 +381,16 @@ func resolveConfig(optionsPath string, fs *flag.FlagSet) *AppConfig {
 	// 2. Layer 2: Configuration File
 	if optionsPath != "" {
 		loadHomeAssistantOptionsFromPath(optionsPath, cfg)
+	}
+
+	// 2.1 Auto-discover Home Assistant MQTT service via Supervisor API if no broker was manually configured
+	if cfg.MQTTBroker == "" {
+		if broker, user, pass, err := fetchSupervisorMQTTOptions(); err == nil && broker != "" {
+			cfg.MQTTBroker = broker
+			cfg.MQTTUser = user
+			cfg.MQTTPassword = pass
+			log.Printf("[HA Addon] 📡 Auto-discovered Home Assistant MQTT service: %s (User: %s)", broker, user)
+		}
 	}
 
 	// 3. Layer 3: Environment Variables (12-Factor App)

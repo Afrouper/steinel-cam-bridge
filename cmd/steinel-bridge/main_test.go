@@ -1,7 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -65,6 +68,45 @@ func TestLayer2_ConfigFileOverridesDefaults(t *testing.T) {
 	assert.Equal(t, "pwd_test", cfg.MQTTPassword)
 	assert.Equal(t, "steinel_test", cfg.MQTTTopic)
 	assert.Equal(t, "ha_test", cfg.MQTTDiscovery)
+}
+
+// TestSupervisorMQTTAutoDiscovery verifies that MQTT credentials are automatically fetched when available
+func TestSupervisorMQTTAutoDiscovery(t *testing.T) {
+	// Mock Home Assistant Supervisor API
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "Bearer test-supervisor-token", r.Header.Get("Authorization"))
+		resp := supervisorMQTTResponse{
+			Result: "ok",
+		}
+		resp.Data.Host = "core-mqtt"
+		resp.Data.Port = 1883
+		resp.Data.Username = "homeassistant_user"
+		resp.Data.Password = "secret_pass"
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	t.Setenv("SUPERVISOR_TOKEN", "test-supervisor-token")
+
+	// Custom client to hit our test server
+	req, err := http.NewRequest("GET", server.URL, nil)
+	assert.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+os.Getenv("SUPERVISOR_TOKEN"))
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	assert.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+
+	var sResp supervisorMQTTResponse
+	err = json.NewDecoder(resp.Body).Decode(&sResp)
+	assert.NoError(t, err)
+
+	assert.Equal(t, "ok", sResp.Result)
+	assert.Equal(t, "core-mqtt", sResp.Data.Host)
+	assert.Equal(t, 1883, sResp.Data.Port)
+	assert.Equal(t, "homeassistant_user", sResp.Data.Username)
+	assert.Equal(t, "secret_pass", sResp.Data.Password)
 }
 
 // TestLayer3_EnvironmentOverridesConfigFile verifies 12-Factor App principle (Env vars override config files)

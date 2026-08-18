@@ -1,6 +1,6 @@
 name: "Steinel CAM Bridge"
 description: "Standalone ONVIF, 2-Way Audio & MQTT Bridge für Steinel L 625 CAM SC"
-version: "0.9.8"
+version: "0.9.9"
 slug: "steinel_cam_bridge"
 url: "https://github.com/Afrouper/steinel-cam-bridge"
 arch:
@@ -8,6 +8,8 @@ arch:
   - amd64
 init: false
 host_network: true
+hassio_api: true
+homeassistant_api: true
 services:
   - "mqtt:want"
 options:
