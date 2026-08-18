@@ -13,10 +13,6 @@ linters:
     - unconvert
     - revive
   settings:
-    misspell:
-      ignore-words:
-        - mosquitto
-        - Mosquitto
     revive:
       rules:
         - name: exported
@@ -26,12 +22,7 @@ linters:
         - name: var-naming
           disabled: true
 
-linters-settings:
-  misspell:
-    ignore-words:
-      - mosquitto
-      - Mosquitto
-
 formatters:
   enable:
     - gofmt
+
