@@ -16,8 +16,8 @@ Es soll die **Steinel L 625 CAM SC** Außenleuchte in eine standardkonforme **ON
 Das Schwestermodell **XLED CAM2 SC** konnte nicht verprobt werden, könnte aber ebenfalls funktionieren. Über Rückmeldungen würde ich mich freuen.
 
 > [!WARNING]
-> Trotz sorgfältiger Entwicklung und Verwendung der Schnittstellen die das SDK und die Kamera zu Verfügung stellen kann nicht garantiert werden das es zu
-> komplikationen mit der Hardware der Kamera/Leuchte kommt. Das Projekt oder meine Personen übernehmen keine Gewährleistung für eventuell eintretende Schäden an der Hardware.
+> Trotz sorgfältiger Entwicklung und Verwendung der Schnittstellen des SDKs und der Kamera kann nicht garantiert werden das es zu
+> keinen Komplikationen mit der Hardware der Kamera/Leuchte kommt. Das Projekt oder meine Personen übernehmen keine Gewährleistung für eventuell eintretende Schäden an der Hardware.
 
 ---
 
