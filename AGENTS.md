@@ -140,7 +140,7 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
    - `extracts` Ordner ist niemals im git einzuchecken. Es können Informationen und Traces (z.B. Wireshark, Apps, ...) abgelegt werden
 4. **Urheberrecht & Keine proprietären Binaries im Container/Git**:
    - Die `libnabto_client.so` ist proprietäres geistiges Eigentum der Nabto ApS und darf **nicht** im Git-Repository oder in vorgefertigten Docker-Images auf `ghcr.io` distributiert werden.
-   - Der Container nutzt ein dynamisches `entrypoint.sh`, welches beim Erststart die in `$NABTO_SDK_VERSION` gepinnte Version direkt von Nabtos offiziellem GitHub-Repository auf den Client herunterlädt und in `/data/lib/` versioniert cacht.
+   - Der gehärtete Distroless-Container nutzt einen autarken Go-Bootstrap-Launcher (`cmd/launcher`, `CGO_ENABLED=0`), welcher beim Erststart die in `$NABTO_SDK_VERSION` gepinnte Version direkt von Nabtos offiziellem GitHub-Repository im RAM-Stream (0 Byte Disk-Usage in `/tmp`) herunterlädt, in `/data/lib/` versioniert cacht und den Prozess nahtlos via `syscall.Exec` an `steinel-bridge` übergibt.
 5. **Hierarchische Scopes**:
    - Alle MQTT-Topics müssen immer unter `<baseTopic>/<deviceID>/...` liegen, um Mehrkamera-Setups zu unterstützen.
 6. **Dokumentation**:

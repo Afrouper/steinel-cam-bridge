@@ -40,8 +40,10 @@ jobs:
           version: latest
           args: --timeout=5m
 
-      - name: Compile Native Binary (Smoke Test)
-        run: go build -v -o /dev/null ./cmd/steinel-bridge
+      - name: Compile Native Binaries (Smoke Test)
+        run: |
+          CGO_ENABLED=0 go build -v -o /dev/null ./cmd/launcher
+          go build -v -o /dev/null ./cmd/steinel-bridge
 
   docker-build-test:
     name: Docker Build Test
