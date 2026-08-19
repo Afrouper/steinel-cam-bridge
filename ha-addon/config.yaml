@@ -3,6 +3,7 @@ description: "Standalone ONVIF, 2-Way Audio & MQTT Bridge für Steinel L 625 CAM
 version: "0.10.1"
 slug: "steinel_cam_bridge"
 url: "https://github.com/Afrouper/steinel-cam-bridge"
+panel_icon: "mdi:cctv"
 arch:
   - aarch64
   - amd64
