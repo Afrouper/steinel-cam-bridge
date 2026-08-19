@@ -199,15 +199,17 @@ func (c *Client) publishDiscovery(client paho.Client) {
 		client.Publish(discTopic, 1, true, payload)
 	}
 
-	// 1. Light (Hauptlicht mit Dimmung)
-	publishEntity("light", "main_light", map[string]interface{}{
-		"name":                     "Hauptlicht",
-		"state_topic":              fmt.Sprintf("%s/light/state", c.baseTopic),
-		"command_topic":            fmt.Sprintf("%s/light/set", c.baseTopic),
-		"brightness_state_topic":   fmt.Sprintf("%s/light/brightness/state", c.baseTopic),
-		"brightness_command_topic": fmt.Sprintf("%s/light/brightness/set", c.baseTopic),
-		"brightness_scale":         100,
-		"icon":                     "mdi:outdoor-lamp",
+	// 1. Number (Hauptlicht Helligkeit: 10 - 100%)
+	publishEntity("number", "highlight", map[string]interface{}{
+		"name":                "Hauptlicht Helligkeit",
+		"min":                 10,
+		"max":                 100,
+		"step":                5,
+		"unit_of_measurement": "%",
+		"icon":                "mdi:brightness-percent",
+		"entity_category":     "config",
+		"state_topic":         fmt.Sprintf("%s/highlight/state", c.baseTopic),
+		"command_topic":       fmt.Sprintf("%s/highlight/set", c.baseTopic),
 	})
 
 	// 2. Select (Betriebsmodus: Sensor, Dauerlicht, Aus)
@@ -357,6 +359,7 @@ func (c *Client) publishStatus(st events.DeviceStatus) {
 
 	// 2. Brightness & Dimm values
 	if st.Highlight > 0 {
+		pub("highlight/state", strconv.Itoa(st.Highlight))
 		pub("light/brightness/state", strconv.Itoa(st.Highlight))
 	}
 	pub("duration/state", strconv.Itoa(st.HighlightTime))
@@ -386,6 +389,13 @@ func (c *Client) handleCommand(_ paho.Client, msg paho.Message) {
 	log.Printf("[MQTT] 📩 Command received on %s: %s", topic, payload)
 
 	switch {
+	case strings.HasSuffix(topic, "/highlight/set"), strings.HasSuffix(topic, "/light/brightness/set"):
+		if val, err := strconv.Atoi(payload); err == nil {
+			if c.cb.SetHighlight != nil {
+				_ = c.cb.SetHighlight(val)
+			}
+		}
+
 	case strings.HasSuffix(topic, "/light/set"):
 		if strings.EqualFold(payload, "ON") {
 			if c.cb.SetLampMode != nil {
@@ -394,13 +404,6 @@ func (c *Client) handleCommand(_ paho.Client, msg paho.Message) {
 		} else {
 			if c.cb.SetLampMode != nil {
 				_ = c.cb.SetLampMode("off")
-			}
-		}
-
-	case strings.HasSuffix(topic, "/light/brightness/set"):
-		if val, err := strconv.Atoi(payload); err == nil {
-			if c.cb.SetHighlight != nil {
-				_ = c.cb.SetHighlight(val)
 			}
 		}
 
