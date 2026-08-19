@@ -364,7 +364,7 @@ func resolveConfig(optionsPath string, fs *flag.FlagSet) *AppConfig {
 	// 1. Layer 1: Code Defaults
 	cfg := &AppConfig{
 		NabtoConfig: &nabto.Config{
-			CameraIP:   "192.168.1.100",
+			CameraIP:   "",
 			CameraPort: 5592,
 			KeyPath:    "data/client.key",
 		},
@@ -543,8 +543,12 @@ func main() {
 		}
 	}
 
+	if cfg.CameraIP == "" {
+		log.Fatalf("[Config] ❌ Error: Camera IP address is mandatory! Please configure 'camera_ip' in Home Assistant or supply -ip / CAMERA_IP.")
+	}
+
 	if cfg.DeviceID == "" && cfg.SCT == "" {
-		log.Printf("[!] Note: No QR code or credentials provided. Please supply -qr / QR_CODE or -ip.")
+		log.Printf("[!] Note: No QR code provided. Local direct connection mode will be used for %s.", cfg.CameraIP)
 	}
 
 	// Ensure key directory exists

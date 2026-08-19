@@ -16,7 +16,7 @@ import (
 func TestLayer1_CodeDefaults(t *testing.T) {
 	cfg := resolveConfig("", nil)
 
-	assert.Equal(t, "192.168.1.100", cfg.NabtoConfig.CameraIP)
+	assert.Equal(t, "", cfg.NabtoConfig.CameraIP)
 	assert.Equal(t, "data/client.key", cfg.NabtoConfig.KeyPath)
 	assert.Equal(t, "1080p", cfg.Resolution)
 	assert.Equal(t, "aac", cfg.AudioCodec)

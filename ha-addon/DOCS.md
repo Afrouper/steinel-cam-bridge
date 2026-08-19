@@ -19,7 +19,7 @@ Der QR Code wird initial für das Pairing benötigt. Danach muss er nicht mehr z
 
 | Option | Typ | Standard | Beschreibung |
 |---|---|---|---|
-| `camera_ip` | String | `192.168.1.100` | Lokale IP-Adresse der Steinel-Kamera im Heimnetz |
+| `camera_ip` | String | *(Pflichtfeld)* | Lokale IP-Adresse der Steinel-Kamera im Heimnetz (z. B. `192.168.1.100`) |
 | `qr_code` | String | `""` | QR-Code Payload zum automatischen Pairing (initial) |
 | `resolution` | Liste | `1080p` | Standardauflösung (`1080p`, `720p`, `360p`) |
 | `audio_codec` | Liste | `aac` | Audio-Codec des RTSP-Streams: `aac` (nativ transkodiert) oder `pcmu` |

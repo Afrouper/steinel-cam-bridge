@@ -13,7 +13,7 @@ homeassistant_api: true
 services:
   - "mqtt:want"
 options:
-  camera_ip: "192.168.1.100"
+  camera_ip: ""
   qr_code: ""
   resolution: "1080p"
   audio_codec: "aac"
