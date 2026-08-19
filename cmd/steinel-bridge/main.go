@@ -202,6 +202,9 @@ type AppConfig struct {
 func loadHomeAssistantOptionsFromPath(path string, cfg *AppConfig) {
 	data, err := os.ReadFile(path)
 	if err != nil {
+		if !os.IsNotExist(err) {
+			log.Printf("[HA Addon] ⚠️ Warning: Failed to read %s: %v", path, err)
+		}
 		return
 	}
 

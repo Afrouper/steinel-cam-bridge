@@ -142,6 +142,9 @@ func (c *Client) Connect() error {
 	keyBytes, err := os.ReadFile(c.cfg.KeyPath)
 	isNewKey := false
 	if err != nil {
+		if !os.IsNotExist(err) {
+			log.Printf("[Nabto] ⚠️ Warning: Could not read key file '%s': %v", c.cfg.KeyPath, err)
+		}
 		log.Printf("[Nabto] Key file not found at %s. Generating new EC private key...", c.cfg.KeyPath)
 		var cKey *C.char
 		errCode := C.nabto_client_create_private_key(c.ctx, &cKey)
