@@ -21,6 +21,7 @@ options:
   rtsp_port: 8554
   onvif_port: 8000
   reset_pairing: false
+  debug: false
 schema:
   camera_ip: "str"
   qr_code: "str?"
@@ -29,6 +30,7 @@ schema:
   rtsp_port: "port"
   onvif_port: "port"
   reset_pairing: "bool?"
+  debug: "bool?"
   mqtt_broker: "str?"
   mqtt_user: "str?"
   mqtt_password: "password?"

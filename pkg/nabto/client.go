@@ -119,15 +119,19 @@ func (c *Client) Close() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.ctx != nil {
-		C.nabto_client_stop(c.ctx)
-	}
-
-	if c.conn != nil {
+	if c.conn != nil && c.ctx != nil {
+		fut := C.nabto_client_future_new(c.ctx)
+		if fut != nil {
+			C.nabto_client_connection_close(c.conn, fut)
+			C.nabto_client_future_wait(fut)
+			C.nabto_client_future_free(fut)
+		}
 		C.nabto_client_connection_free(c.conn)
 		c.conn = nil
 	}
+
 	if c.ctx != nil {
+		C.nabto_client_stop(c.ctx)
 		C.nabto_client_free(c.ctx)
 		c.ctx = nil
 	}

@@ -39,10 +39,14 @@ type Server struct {
 	audioBackchannelHandler AudioBackchannelHandler
 	onPlayHandler           OnPlayHandler
 	backchannelPacketCount  atomic.Uint64
+	activeClients           atomic.Int64
+	lastIdleLogTime         time.Time
+	debug                   bool
+	started                 bool
 	mu                      sync.RWMutex
 }
 
-func NewServer(port int, pathName string, audioCodec string) (*Server, error) {
+func NewServer(port int, pathName string, audioCodec string, debug ...bool) (*Server, error) {
 	if port == 0 {
 		port = 8554
 	}
@@ -53,6 +57,11 @@ func NewServer(port int, pathName string, audioCodec string) (*Server, error) {
 	audioCodec = strings.ToLower(strings.TrimSpace(audioCodec))
 	if audioCodec == "" {
 		audioCodec = "aac"
+	}
+
+	var isDebug bool
+	if len(debug) > 0 {
+		isDebug = debug[0]
 	}
 
 	// 1. Setup H.264 video format (Main Live Feed)
@@ -130,6 +139,7 @@ func NewServer(port int, pathName string, audioCodec string) (*Server, error) {
 		backchannelMedia:  bcMedia,
 		pathName:          pathName,
 		port:              port,
+		debug:             isDebug,
 	}
 
 	srv := &gortsplib.Server{
@@ -161,6 +171,7 @@ func (s *Server) Start() error {
 	}
 
 	s.mu.Lock()
+	s.started = true
 	s.stream = gortsplib.NewServerStream(s.server, s.session)
 	s.mu.Unlock()
 
@@ -194,31 +205,18 @@ func (s *Server) Close() {
 		s.stream.Close()
 		s.stream = nil
 	}
-	if s.server != nil {
+	if s.server != nil && s.started {
 		s.server.Close()
 		s.server = nil
+		s.started = false
 	}
 }
 
-func (s *Server) readUDPBackchannelLoop(conn *net.UDPConn) {
-	buf := make([]byte, 2048)
-	for {
-		n, addr, err := conn.ReadFrom(buf)
-		if err != nil {
-			return
-		}
-		if n < 12 { // Minimum valid RTP header length
-			continue
-		}
-
-		pkt := &rtp.Packet{}
-		if err := pkt.Unmarshal(buf[:n]); err != nil {
-			continue
-		}
-
+func (s *Server) handleBackchannelPacket(medi *description.Media, pkt *rtp.Packet, source string) {
+	if medi == nil || medi == s.backchannelMedia || medi.IsBackChannel {
 		cnt := s.backchannelPacketCount.Add(1)
 		if cnt == 1 || cnt%100 == 0 {
-			log.Printf("[RTSP] 🎙️ Forwarding audio backchannel RTP packets (%d pkts received from %s, payload: %d bytes)", cnt, addr.String(), len(pkt.Payload))
+			log.Printf("[RTSP] 🎙️ Forwarding audio backchannel (%s) RTP packets (%d pkts, payload: %d bytes)", source, cnt, len(pkt.Payload))
 		}
 
 		s.mu.RLock()
@@ -231,6 +229,26 @@ func (s *Server) readUDPBackchannelLoop(conn *net.UDPConn) {
 	}
 }
 
+func (s *Server) readUDPBackchannelLoop(conn *net.UDPConn) {
+	buf := make([]byte, 2048)
+	for {
+		n, _, err := conn.ReadFrom(buf)
+		if err != nil {
+			return
+		}
+		if n < 12 { // Minimum valid RTP header length
+			continue
+		}
+
+		pkt := &rtp.Packet{}
+		if err := pkt.Unmarshal(buf[:n]); err != nil {
+			continue
+		}
+
+		s.handleBackchannelPacket(s.backchannelMedia, pkt, "UDP")
+	}
+}
+
 func (s *Server) checkPath(p string) bool {
 	p = strings.TrimPrefix(p, "/")
 	cleanPath := strings.TrimPrefix(s.pathName, "/")
@@ -239,40 +257,14 @@ func (s *Server) checkPath(p string) bool {
 
 // WriteVideoPacket forwards a raw H.264 RTP packet to all connected RTSP clients
 func (s *Server) WriteVideoPacket(pkt *rtp.Packet) {
-	s.mu.Lock()
+	s.mu.RLock()
 	st := s.stream
-	if len(pkt.Payload) > 0 && (s.videoFormat.SPS == nil || s.videoFormat.PPS == nil) {
-		nalType := pkt.Payload[0] & 0x1F
-		if nalType == 7 { // SPS
-			s.videoFormat.SPS = append([]byte(nil), pkt.Payload...)
-		} else if nalType == 8 { // PPS
-			s.videoFormat.PPS = append([]byte(nil), pkt.Payload...)
-		} else if nalType == 24 { // STAP-A
-			payload := pkt.Payload[1:]
-			for len(payload) >= 2 {
-				nalLen := int(payload[0])<<8 | int(payload[1])
-				payload = payload[2:]
-				if len(payload) < nalLen {
-					break
-				}
-				nal := payload[:nalLen]
-				payload = payload[nalLen:]
-				nType := nal[0] & 0x1F
-				switch nType {
-				case 7:
-					s.videoFormat.SPS = append([]byte(nil), nal...)
-				case 8:
-					s.videoFormat.PPS = append([]byte(nil), nal...)
-				}
-			}
-		}
-	}
-	s.mu.Unlock()
+	s.mu.RUnlock()
 
 	if st == nil {
 		return
 	}
-	pkt.PayloadType = s.videoFormat.PayloadTyp
+	pkt.PayloadType = 96
 	_ = st.WritePacketRTP(s.videoMedia, pkt)
 }
 
@@ -343,6 +335,12 @@ func (s *Server) OnSetup(ctx *gortsplib.ServerHandlerOnSetupCtx) (*base.Response
 		}, nil, nil
 	}
 
+	if ctx.Session != nil {
+		ctx.Session.OnPacketRTPAny(func(medi *description.Media, _ format.Format, pkt *rtp.Packet) {
+			s.handleBackchannelPacket(medi, pkt, "TCP/Interleaved")
+		})
+	}
+
 	s.mu.RLock()
 	st := s.stream
 	s.mu.RUnlock()
@@ -353,7 +351,12 @@ func (s *Server) OnSetup(ctx *gortsplib.ServerHandlerOnSetupCtx) (*base.Response
 }
 
 func (s *Server) OnPlay(ctx *gortsplib.ServerHandlerOnPlayCtx) (*base.Response, error) {
-	log.Printf("[RTSP] ▶️ Client connected and playing stream (%s)", ctx.Path)
+	count := s.activeClients.Add(1)
+	if s.debug {
+		log.Printf("[RTSP] ▶️ Client connected and playing stream (%s, active clients: %d)", ctx.Path, count)
+	} else if count == 1 {
+		log.Printf("[RTSP] ▶️ Stream active (client connected: %s)", ctx.Path)
+	}
 
 	s.mu.RLock()
 	handler := s.onPlayHandler
@@ -367,12 +370,35 @@ func (s *Server) OnPlay(ctx *gortsplib.ServerHandlerOnPlayCtx) (*base.Response, 
 }
 
 func (s *Server) OnRecord(ctx *gortsplib.ServerHandlerOnRecordCtx) (*base.Response, error) {
-	log.Printf("[RTSP] 🎙️ OnRecord called on %s", ctx.Path)
+	if s.debug {
+		log.Printf("[RTSP] 🎙️ OnRecord called on %s", ctx.Path)
+	}
+	if ctx.Session != nil {
+		ctx.Session.OnPacketRTPAny(func(medi *description.Media, _ format.Format, pkt *rtp.Packet) {
+			s.handleBackchannelPacket(medi, pkt, "RECORD")
+		})
+	}
 	return &base.Response{
 		StatusCode: base.StatusOK,
 	}, nil
 }
 
 func (s *Server) OnSessionClose(_ *gortsplib.ServerHandlerOnSessionCloseCtx) {
-	log.Printf("[RTSP] ⏹️ Client disconnected")
+	count := s.activeClients.Add(-1)
+	if count < 0 {
+		s.activeClients.Store(0)
+		count = 0
+	}
+
+	if s.debug {
+		log.Printf("[RTSP] ⏹️ Client disconnected (active clients: %d)", count)
+	} else if count == 0 {
+		s.mu.Lock()
+		now := time.Now()
+		if now.Sub(s.lastIdleLogTime) > 30*time.Second {
+			s.lastIdleLogTime = now
+			log.Printf("[RTSP] ⏹️ Stream idle (all clients disconnected)")
+		}
+		s.mu.Unlock()
+	}
 }

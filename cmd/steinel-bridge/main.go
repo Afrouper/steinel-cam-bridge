@@ -197,6 +197,7 @@ type AppConfig struct {
 	MQTTPassword  string
 	MQTTTopic     string
 	MQTTDiscovery string
+	Debug         bool
 }
 
 func loadHomeAssistantOptionsFromPath(path string, cfg *AppConfig) {
@@ -223,6 +224,7 @@ func loadHomeAssistantOptionsFromPath(path string, cfg *AppConfig) {
 		MQTTPassword        string `json:"mqtt_password"`
 		MQTTTopicPrefix     string `json:"mqtt_topic_prefix"`
 		MQTTDiscoveryPrefix string `json:"mqtt_discovery_prefix"`
+		Debug               bool   `json:"debug"`
 	}
 
 	if err := json.Unmarshal(data, &opts); err != nil {
@@ -273,6 +275,9 @@ func loadHomeAssistantOptionsFromPath(path string, cfg *AppConfig) {
 	}
 	if opts.MQTTDiscoveryPrefix != "" {
 		cfg.MQTTDiscovery = opts.MQTTDiscoveryPrefix
+	}
+	if opts.Debug {
+		cfg.Debug = true
 	}
 }
 
@@ -455,6 +460,9 @@ func resolveConfig(optionsPath string, fs *flag.FlagSet) *AppConfig {
 	if pid := os.Getenv("PRODUCT_ID"); pid != "" {
 		cfg.NabtoConfig.ProductID = pid
 	}
+	if envDebug := os.Getenv("DEBUG"); envDebug == "true" || envDebug == "1" {
+		cfg.Debug = true
+	}
 
 	// 4. Layer 4: Explicit CLI Flags (POSIX)
 	if fs != nil {
@@ -494,6 +502,10 @@ func resolveConfig(optionsPath string, fs *flag.FlagSet) *AppConfig {
 				cfg.MQTTDiscovery = f.Value.String()
 			case "audio-codec":
 				cfg.AudioCodec = f.Value.String()
+			case "debug":
+				if b, err := strconv.ParseBool(f.Value.String()); err == nil {
+					cfg.Debug = b
+				}
 			}
 		})
 	}
@@ -516,6 +528,7 @@ func main() {
 	flag.String("mqtt-topic", "", "MQTT base topic prefix (default: steinel)")
 	flag.String("mqtt-disc", "", "MQTT Home Assistant Discovery Prefix")
 	flag.String("audio-codec", "", "Audio codec for RTSP/ONVIF stream: 'aac' (transcoded, default) or 'pcmu' (raw passthrough)")
+	flag.Bool("debug", false, "Enable verbose debug logging")
 	flag.Parse()
 
 	if envVer := os.Getenv("APP_VERSION"); envVer != "" {
@@ -556,7 +569,7 @@ func main() {
 		_ = os.MkdirAll(dir, 0755)
 	}
 
-	log.Printf("[Config] Camera: %s (ID: %s, Res: %s, Audio: %s)", cfg.CameraIP, cfg.DeviceID, appCfg.Resolution, appCfg.AudioCodec)
+	log.Printf("[Config] Camera: %s (ID: %s, Res: %s, Audio: %s, Debug: %v)", cfg.CameraIP, cfg.DeviceID, appCfg.Resolution, appCfg.AudioCodec, appCfg.Debug)
 	log.Printf("[Config] Key:    %s", cfg.KeyPath)
 	log.Printf("[Config] Ports:  RTSP=%d, ONVIF=%d, WS-Discovery=3702/udp", appCfg.RTSPPort, appCfg.ONVIFPort)
 	if appCfg.MQTTBroker != "" {
@@ -578,7 +591,7 @@ func main() {
 	bridgeMgr := &BridgeManager{}
 
 	// 1. Start embedded RTSP Server (with Profile T 2-Way Audio Backchannel)
-	rtspServer, err := rtsp.NewServer(appCfg.RTSPPort, appCfg.RTSPPath, appCfg.AudioCodec)
+	rtspServer, err := rtsp.NewServer(appCfg.RTSPPort, appCfg.RTSPPath, appCfg.AudioCodec, appCfg.Debug)
 	if err != nil {
 		log.Fatalf("[!] Failed to initialize RTSP server: %v", err)
 	}
