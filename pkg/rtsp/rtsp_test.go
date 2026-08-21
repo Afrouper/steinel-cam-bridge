@@ -2,7 +2,10 @@ package rtsp
 
 import (
 	"testing"
+	"time"
 
+	"github.com/bluenviron/gortsplib/v4"
+	"github.com/bluenviron/gortsplib/v4/pkg/base"
 	"github.com/pion/rtp"
 	"github.com/stretchr/testify/assert"
 )
@@ -59,4 +62,36 @@ func TestServerBackchannelPacketHandling(t *testing.T) {
 	assert.Equal(t, uint16(1234), receivedPkt.SequenceNumber)
 	assert.Equal(t, uint32(5678), receivedPkt.Timestamp)
 	assert.Equal(t, []byte{0x01, 0x02, 0x03, 0x04}, receivedPkt.Payload)
+}
+
+func TestClientConnectSetupPlay(t *testing.T) {
+	srv, err := NewServer(8562, "test", "aac")
+	assert.NoError(t, err)
+	defer srv.Close()
+
+	err = srv.Start()
+	assert.NoError(t, err)
+
+	// Connect as real RTSP client
+	c := gortsplib.Client{}
+	u, err := base.ParseURL("rtsp://127.0.0.1:8562/test")
+	assert.NoError(t, err)
+
+	err = c.Start(u.Scheme, u.Host)
+	assert.NoError(t, err)
+	defer c.Close()
+
+	desc, _, err := c.Describe(u)
+	assert.NoError(t, err)
+	assert.NotNil(t, desc)
+
+	// Setup media
+	err = c.SetupAll(desc.BaseURL, desc.Medias)
+	assert.NoError(t, err)
+
+	// Play stream
+	_, err = c.Play(nil)
+	assert.NoError(t, err)
+
+	time.Sleep(50 * time.Millisecond)
 }

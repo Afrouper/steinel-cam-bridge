@@ -195,20 +195,24 @@ func (s *Server) Start() error {
 
 func (s *Server) Close() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	udpConn := s.udpConn
+	s.udpConn = nil
+	stream := s.stream
+	s.stream = nil
+	srv := s.server
+	s.server = nil
+	started := s.started
+	s.started = false
+	s.mu.Unlock()
 
-	if s.udpConn != nil {
-		_ = s.udpConn.Close()
-		s.udpConn = nil
+	if udpConn != nil {
+		_ = udpConn.Close()
 	}
-	if s.stream != nil {
-		s.stream.Close()
-		s.stream = nil
+	if stream != nil {
+		stream.Close()
 	}
-	if s.server != nil && s.started {
-		s.server.Close()
-		s.server = nil
-		s.started = false
+	if srv != nil && started {
+		srv.Close()
 	}
 }
 
@@ -335,12 +339,6 @@ func (s *Server) OnSetup(ctx *gortsplib.ServerHandlerOnSetupCtx) (*base.Response
 		}, nil, nil
 	}
 
-	if ctx.Session != nil {
-		ctx.Session.OnPacketRTPAny(func(medi *description.Media, _ format.Format, pkt *rtp.Packet) {
-			s.handleBackchannelPacket(medi, pkt, "TCP/Interleaved")
-		})
-	}
-
 	s.mu.RLock()
 	st := s.stream
 	s.mu.RUnlock()
@@ -374,9 +372,14 @@ func (s *Server) OnRecord(ctx *gortsplib.ServerHandlerOnRecordCtx) (*base.Respon
 		log.Printf("[RTSP] 🎙️ OnRecord called on %s", ctx.Path)
 	}
 	if ctx.Session != nil {
-		ctx.Session.OnPacketRTPAny(func(medi *description.Media, _ format.Format, pkt *rtp.Packet) {
-			s.handleBackchannelPacket(medi, pkt, "RECORD")
-		})
+		for _, medi := range ctx.Session.SetuppedMedias() {
+			cmedia := medi
+			for _, forma := range medi.Formats {
+				ctx.Session.OnPacketRTP(medi, forma, func(pkt *rtp.Packet) {
+					s.handleBackchannelPacket(cmedia, pkt, "RECORD")
+				})
+			}
+		}
 	}
 	return &base.Response{
 		StatusCode: base.StatusOK,
