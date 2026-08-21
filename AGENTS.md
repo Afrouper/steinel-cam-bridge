@@ -150,7 +150,9 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
      - `README.md` Für die Haupt-Dokumentation
      - `AGENTS.md` Für Anweisungen an Agenten wenn es neue Elemente gibt
      - `THIRD_PARTY_LICENSES.md` Falls es Anpassungen an den Dependencies gibt.
-
+7. **Release**:
+  - Releases werden erzeugt in dem ein neues git-Tag nach Semantic Versioning angelegt wird. Ein Push triggert den Build auf GitHub
+    - Das Format lautet wie folgt: "v<MAJOR>.<MINOR>.<PATCH>" z.B. v1.0.0
 
 ---
 
