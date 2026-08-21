@@ -24,6 +24,7 @@ func TestLayer1_CodeDefaults(t *testing.T) {
 	assert.Equal(t, "steinel", cfg.RTSPPath)
 	assert.Equal(t, 8000, cfg.ONVIFPort)
 	assert.False(t, cfg.ResetPairing)
+	assert.False(t, cfg.Debug)
 	assert.Equal(t, "", cfg.MQTTBroker)
 	assert.Equal(t, "steinel", cfg.MQTTTopic)
 	assert.Equal(t, "homeassistant", cfg.MQTTDiscovery)
@@ -42,6 +43,7 @@ func TestLayer2_ConfigFileOverridesDefaults(t *testing.T) {
 		"rtsp_port": 8555,
 		"onvif_port": 8001,
 		"reset_pairing": true,
+		"debug": true,
 		"mqtt_broker": "tcp://192.168.88.10:1883",
 		"mqtt_user": "user_test",
 		"mqtt_password": "pwd_test",
@@ -63,6 +65,7 @@ func TestLayer2_ConfigFileOverridesDefaults(t *testing.T) {
 	assert.Equal(t, 8555, cfg.RTSPPort)
 	assert.Equal(t, 8001, cfg.ONVIFPort)
 	assert.True(t, cfg.ResetPairing)
+	assert.True(t, cfg.Debug)
 	assert.Equal(t, "tcp://192.168.88.10:1883", cfg.MQTTBroker)
 	assert.Equal(t, "user_test", cfg.MQTTUser)
 	assert.Equal(t, "pwd_test", cfg.MQTTPassword)

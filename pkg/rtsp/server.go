@@ -39,11 +39,14 @@ type Server struct {
 	audioBackchannelHandler AudioBackchannelHandler
 	onPlayHandler           OnPlayHandler
 	backchannelPacketCount  atomic.Uint64
+	activeClients           atomic.Int64
+	lastIdleLogTime         time.Time
+	debug                   bool
 	started                 bool
 	mu                      sync.RWMutex
 }
 
-func NewServer(port int, pathName string, audioCodec string) (*Server, error) {
+func NewServer(port int, pathName string, audioCodec string, debug ...bool) (*Server, error) {
 	if port == 0 {
 		port = 8554
 	}
@@ -54,6 +57,11 @@ func NewServer(port int, pathName string, audioCodec string) (*Server, error) {
 	audioCodec = strings.ToLower(strings.TrimSpace(audioCodec))
 	if audioCodec == "" {
 		audioCodec = "aac"
+	}
+
+	var isDebug bool
+	if len(debug) > 0 {
+		isDebug = debug[0]
 	}
 
 	// 1. Setup H.264 video format (Main Live Feed)
@@ -131,6 +139,7 @@ func NewServer(port int, pathName string, audioCodec string) (*Server, error) {
 		backchannelMedia:  bcMedia,
 		pathName:          pathName,
 		port:              port,
+		debug:             isDebug,
 	}
 
 	srv := &gortsplib.Server{
@@ -342,7 +351,12 @@ func (s *Server) OnSetup(ctx *gortsplib.ServerHandlerOnSetupCtx) (*base.Response
 }
 
 func (s *Server) OnPlay(ctx *gortsplib.ServerHandlerOnPlayCtx) (*base.Response, error) {
-	log.Printf("[RTSP] ▶️ Client connected and playing stream (%s)", ctx.Path)
+	count := s.activeClients.Add(1)
+	if s.debug {
+		log.Printf("[RTSP] ▶️ Client connected and playing stream (%s, active clients: %d)", ctx.Path, count)
+	} else if count == 1 {
+		log.Printf("[RTSP] ▶️ Stream active (client connected: %s)", ctx.Path)
+	}
 
 	s.mu.RLock()
 	handler := s.onPlayHandler
@@ -356,7 +370,9 @@ func (s *Server) OnPlay(ctx *gortsplib.ServerHandlerOnPlayCtx) (*base.Response, 
 }
 
 func (s *Server) OnRecord(ctx *gortsplib.ServerHandlerOnRecordCtx) (*base.Response, error) {
-	log.Printf("[RTSP] 🎙️ OnRecord called on %s", ctx.Path)
+	if s.debug {
+		log.Printf("[RTSP] 🎙️ OnRecord called on %s", ctx.Path)
+	}
 	if ctx.Session != nil {
 		ctx.Session.OnPacketRTPAny(func(medi *description.Media, _ format.Format, pkt *rtp.Packet) {
 			s.handleBackchannelPacket(medi, pkt, "RECORD")
@@ -368,5 +384,21 @@ func (s *Server) OnRecord(ctx *gortsplib.ServerHandlerOnRecordCtx) (*base.Respon
 }
 
 func (s *Server) OnSessionClose(_ *gortsplib.ServerHandlerOnSessionCloseCtx) {
-	log.Printf("[RTSP] ⏹️ Client disconnected")
+	count := s.activeClients.Add(-1)
+	if count < 0 {
+		s.activeClients.Store(0)
+		count = 0
+	}
+
+	if s.debug {
+		log.Printf("[RTSP] ⏹️ Client disconnected (active clients: %d)", count)
+	} else if count == 0 {
+		s.mu.Lock()
+		now := time.Now()
+		if now.Sub(s.lastIdleLogTime) > 30*time.Second {
+			s.lastIdleLogTime = now
+			log.Printf("[RTSP] ⏹️ Stream idle (all clients disconnected)")
+		}
+		s.mu.Unlock()
+	}
 }
