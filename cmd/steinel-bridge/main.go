@@ -543,6 +543,7 @@ func main() {
 	flag.String("mqtt-disc", "", "MQTT Home Assistant Discovery Prefix")
 	flag.String("audio-codec", "", "Audio codec for RTSP/ONVIF stream: 'aac' (transcoded, default) or 'pcmu' (raw passthrough)")
 	flag.Bool("debug", false, "Enable verbose debug logging")
+	betaFlag := flag.Bool("beta", false, "Identify as beta instance for IAM registration")
 	flag.Parse()
 
 	if envVer := os.Getenv("APP_VERSION"); envVer != "" {
@@ -559,7 +560,11 @@ func main() {
 	// Resolve configuration according to POSIX & 12-Factor App hierarchy
 	appCfg := resolveConfig("/data/options.json", flag.CommandLine)
 	cfg := appCfg.NabtoConfig
-	cfg.IsBeta = strings.Contains(strings.ToLower(AppVersion), "beta")
+	cfg.IsBeta = *betaFlag ||
+		strings.Contains(strings.ToLower(AppVersion), "beta") ||
+		os.Getenv("IS_BETA") == "true" ||
+		os.Getenv("IS_BETA") == "1" ||
+		os.Getenv("BETA") == "true"
 
 	// Handle pairing reset
 	if appCfg.ResetPairing {

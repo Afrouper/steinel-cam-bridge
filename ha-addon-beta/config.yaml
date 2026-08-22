@@ -13,6 +13,8 @@ hassio_api: true
 homeassistant_api: true
 services:
   - "mqtt:want"
+environment:
+  IS_BETA: "true"
 options:
   camera_ip: ""
   qr_code: ""
