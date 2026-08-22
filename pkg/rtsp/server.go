@@ -146,10 +146,22 @@ func NewServer(port int, pathName string, audioCodec string, debug ...bool) (*Se
 		Handler:        s,
 		RTSPAddress:    fmt.Sprintf(":%d", port),
 		WriteQueueSize: 4096,
+		Listen:         s.listenInterceptor,
 	}
 
 	s.server = srv
 	return s, nil
+}
+
+func (s *Server) listenInterceptor(network, address string) (net.Listener, error) {
+	l, err := net.Listen(network, address)
+	if err != nil {
+		return nil, err
+	}
+	return &interceptingListener{
+		Listener: l,
+		server:   s,
+	}, nil
 }
 
 func (s *Server) SetAudioBackchannelHandler(handler AudioBackchannelHandler) {
@@ -354,19 +366,6 @@ func (s *Server) OnPlay(ctx *gortsplib.ServerHandlerOnPlayCtx) (*base.Response, 
 		log.Printf("[RTSP] ▶️ Client connected and playing stream (%s, active clients: %d)", ctx.Path, count)
 	} else if count == 1 {
 		log.Printf("[RTSP] ▶️ Stream active (client connected: %s)", ctx.Path)
-	}
-
-	if ctx.Session != nil {
-		for _, medi := range ctx.Session.SetuppedMedias() {
-			if medi == s.backchannelMedia || (medi != nil && medi.IsBackChannel) {
-				cmedia := medi
-				for _, forma := range medi.Formats {
-					ctx.Session.OnPacketRTP(medi, forma, func(pkt *rtp.Packet) {
-						s.handleBackchannelPacket(cmedia, pkt, "TCP/Interleaved")
-					})
-				}
-			}
-		}
 	}
 
 	s.mu.RLock()
