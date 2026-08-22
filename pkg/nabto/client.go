@@ -420,6 +420,10 @@ func (c *Client) RequestTracks() (uint16, error) {
 	if errCode == C.NABTO_CLIENT_EC_OK {
 		C.nabto_client_coap_get_response_status_code(coap, &statusCode)
 		log.Printf("[CoAP] /webrtc/tracks response status=%d", statusCode)
+		if statusCode == 401 {
+			log.Printf("[CoAP] ❌ /webrtc/tracks returned 401 Unauthorized: Stored key '%s' is not authorized by camera IAM. Auto-removing invalid key file for fresh pairing...", c.cfg.KeyPath)
+			_ = os.Remove(c.cfg.KeyPath)
+		}
 		return uint16(statusCode), nil
 	}
 
