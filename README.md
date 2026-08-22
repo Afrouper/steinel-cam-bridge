@@ -11,26 +11,20 @@
 [![Go Version](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go)](https://go.dev)
 
 Die Anwendung ist als hochperformanter, 100 % autarker **Go-Daemon**.
-Es soll die **Steinel L 625 CAM SC** Außenleuchte in eine standardkonforme **ONVIF Profile S/T Kamera** mit **RTSP-Streaming**, **2-Wege-Audio (Gegensprechen)** und vollständiger **MQTT Home Assistant Auto-Discovery** verwandelt – zur nahtlosen Integration in **Home Assistant**, **Scrypted / Apple HomeKit Secure Video (HKSV)**, **Synology Surveillance Station** und **Frigate**.
+Es soll die **Steinel L 625 CAM SC** Außenleuchte (und ggf. baugleiche Modelle) in eine standardkonforme **ONVIF Profile S/T Kamera** mit **RTSP-Streaming**, **2-Wege-Audio (Gegensprechen)** und vollständiger **MQTT Home Assistant Auto-Discovery** verwandelt – zur nahtlosen Integration in **Home Assistant**, **Scrypted / Apple HomeKit Secure Video (HKSV)** und weitere.
 
 Das Schwestermodell **XLED CAM2 SC** konnte nicht verprobt werden, könnte aber ebenfalls funktionieren. Über Rückmeldungen würde ich mich freuen.
+Die Vorgängermodelle **Steinel L 620 CAM** scheinen auch das Nabto [SDK/Protokoll zu verwenden](https://www.nabto.com/cases/steinel-partner/), konnten aber ebenfalls nicht verprobt werden. Auch hier würde ich mich über Rückmeldungen freuen.
 
 > [!WARNING]
-> Trotz sorgfältiger Entwicklung und Verwendung der Schnittstellen des SDKs und der Kamera kann nicht garantiert werden das es zu
-> keinen Komplikationen mit der Hardware der Kamera/Leuchte kommt. Das Projekt oder meine Personen übernehmen keine Gewährleistung für eventuell eintretende Schäden an der Hardware.
-
----
-
-## Disclamer
-Versuch die Steinl L 625 CAM SC in Smart Home Apps nutzbar zu machen. Dabei soll die Firmware von der Kamera nicht angetastet werden. Die Kommunikation erfolgt über die Standard Protokolle. Eine Nutzung über die offizelle Steinl App ist nach wie vor möglich und nicht beeinträchtigt.
-Die Kamera wird im lokalen Netzwerk als ONVIF Kamera zu verfügung gestellt. Damit kann das Videosignal in z.B. Home Assistant eingebunden werden oder über scrypted weiter verarbeitet werden - z.B. in Apple HomeKit Secure Video.
+> Trotz sorgfältiger Entwicklung und Verwendung der Schnittstellen des offiziellen Nabto SDKs und APIs die von der Kamera bereitgestellt werden kann nicht garantiert werden das es zu keinen Komplikationen mit der Hardware der Kamera/Leuchte kommt. Das Projekt oder meine Personen übernehmen keine Gewährleistung oder Sachmängelhaftung für eventuell eintretende Schäden an der Hardware.
 
 ---
 
 ## ✨ Features
 
-- **🏠 Volle Home Assistant MQTT Auto-Discovery**:
-  - **Hauptlicht (`light`)**: An/Aus und Dimmung (`10`–`100 %`).
+- **🏠 Home Assistant MQTT Auto-Discovery**:
+  - **Hauptlicht (`number`)**: Maximale Helligkeit des Hauptlichts (`10`–`100 %`).
   - **Betriebsmodus (`select`)**: Umschalten zwischen `Sensor (Automatik)`, `Dauerlicht` und `Aus`.
   - **Helligkeitssensor (`sensor`)**: Live-Dämmerungswert in Lux (`lx`).
   - **Bewegungsmelder (`binary_sensor`)**: Hardware-PIR Bewegungserkennung (`motion`).
@@ -46,13 +40,13 @@ Die Kamera wird im lokalen Netzwerk als ONVIF Kamera zu verfügung gestellt. Dam
   - **WS-Discovery (UDP 3702)**: Automatische Erkennung im lokalen Netzwerk.
   - **Native Live-Snapshots**: NVRs und Clients (z. B. Scrypted Prebuffer, Home Assistant) generieren hochauflösende Live-Standbilder direkt aus dem H.264-Videostream ohne Dummy-Platzhalter.
 - **🔊 Volles 2-Way Audio (Gegensprechen) & Natives AAC-Audio**:
-  - **Natives AAC-Audio (Standard)**: Automatisches Realtime-Transcoding des Kamera-Mikrofons (G.711u 8 kHz $\rightarrow$ AAC-LC 16 kHz) direkt in Go. Null Konfigurationsaufwand und kein Transcoding in Scrypted, Apple Home oder Home Assistant nötig!
+  - **Natives AAC-Audio (Standard)**: Automatisches Realtime-Transcoding des Kamera-Mikrofons (G.711u 8 kHz $\rightarrow$ AAC-LC 16 kHz). Keine extra extra Konfiguration für transcoding des Audiosignals. Wahlweise umschaltbar: `AUDIO_CODEC="aac"` (Standard) oder `AUDIO_CODEC="pcmu"` (Raw Passthrough).
   - **RTSP Audio Backchannel**: Durchleitung von HomeKit/Scrypted-Sprachdaten direkt an den Lautsprecher der Steinel-Leuchte (PCMU / G.711u 8000 Hz).
-  - **Wahlweise umschaltbar**: `AUDIO_CODEC="aac"` (Standard) oder `AUDIO_CODEC="pcmu"` (Raw Passthrough).
-- **🚨 Bewegungserkennung & Apple HomeKit Secure Video (HKSV)**:
+- **Bewegungserkennung & Apple HomeKit Secure Video (HKSV)**:
   - **Hersteller-Architektur**: Die Steinel-Kamera übermittelt Bewegungsevents ab Werk ausschließlich an das Cloud-Push-Gateway des Herstellers (für Push-Nachrichten der Steinel App) und stellt lokal im P2P-Modus den reinen Live-Stream bereit.
-  - **100 % Lokale HKSV-Aufnahme**: In Scrypted wird über das offizielle Plugin **`OpenCV Motion Detector`** (`@scrypted/opencv`) eine latenzfreie Pixelanalyse des 1080p-RTSP-Streams durchgeführt. Bewegungen von Personen, Fahrzeugen oder Tieren lösen sofort lokale ONVIF-Events und iCloud-Aufnahmen in Apple Home aus.
-- **100 % Autarkes Single-Binary**: Kein Python, kein Node.js und kein separater MediaMTX-Server erforderlich.
+  - **Lokale HKSV-Aufnahme**: In Scrypted wird über das offizielle Plugin **`OpenCV Motion Detector`** (`@scrypted/opencv`) eine latenzfreie Pixelanalyse des 1080p-RTSP-Streams durchgeführt. Bewegungen von Personen, Fahrzeugen oder Tieren lösen entsprechende Events aus.
+- **Autarkes Single-Binary**: Kein Python, kein Node.js und kein separater MediaMTX-Server erforderlich.
+  - Im Betrieb als HomeAssistant AddOn Image mit minimalsten Abhängigkeiten.
 - **24/7 Resilienz & Watchdog**: RTP-Silence Watchdog, 30s Cooldown, mDNS-Wakeup.
 
 ---
@@ -74,68 +68,7 @@ Die Kamera wird im lokalen Netzwerk als ONVIF Kamera zu verfügung gestellt. Dam
 
 ### Option B: Standalone Docker Compose (Empfohlen für Server / NAS mit Security Hardening)
 
-Eine fertige Vorlage finden Sie unter [`examples/docker-compose.yml`](examples/docker-compose.yml):
-
-```yaml
-services:
-  steinel-cam-bridge:
-    image: ghcr.io/afrouper/steinel-cam-bridge:latest
-    container_name: steinel-cam-bridge
-    restart: unless-stopped
-    network_mode: host # Empfohlen für WS-Discovery (UDP 3702) und Direktverbindung zur Kamera
-
-    # --- Security Hardening ---
-    user: "1000:1000"
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    cap_add:
-      - NET_BIND_SERVICE # Erlaubt User 1000 das Binden von Standard-Ports < 1024 (falls gewünscht)
-    read_only: true
-    tmpfs:
-      - /tmp:rw,noexec,nosuid,size=64M
-
-    environment:
-      # --- Kamera-Verbindung (Ersetzen Sie die Werte durch Ihre Kamera-Daten) ---
-      - CAMERA_IP=192.168.1.100                                         # IP-Adresse der Steinel-Kamera im lokalen Netz
-      - QR_CODE=did=de-xxxxxxx,pid=pr-xxxxx,sct=xxxx,pairPwd=xxxx       # QR-Code String aus der Steinel App ("Kamera teilen")
-      - RESOLUTION=1080p                                                # Standard-Auflösung: 1080p, 720p oder 360p
-      - AUDIO_CODEC=aac                                                 # Audio-Codec: aac (Standard, nativ transkodiert) oder pcmu (Raw Passthrough)
-      - KEY_PATH=/data/client.key                                       # Pfad zum persistenten Schlüssel
-
-      # --- Server-Ports ---
-      - RTSP_PORT=8554
-      - ONVIF_PORT=8000
-      - RTSP_PATH=steinel
-
-      # --- MQTT / Home Assistant Konfiguration (Optional) ---
-      - MQTT_BROKER=tcp://192.168.1.50:1883    # IP oder Hostname Ihres MQTT Brokers (z.B. Home Assistant Mosquitto)
-      - MQTT_USER=homeassistant                 # Optional: MQTT Benutzername
-      - MQTT_PASSWORD=secretpassword            # Optional: MQTT Passwort
-      - MQTT_TOPIC_PREFIX=steinel               # Basis-Topic (Geräte-ID wird automatisch darunter gehängt: steinel/<deviceID>/...)
-      - MQTT_DISCOVERY_PREFIX=homeassistant     # Home Assistant Auto-Discovery Prefix
-
-    volumes:
-      - ./data:/data
-
-    deploy:
-      resources:
-        limits:
-          cpus: '0.50'
-          memory: 256M
-        reservations:
-          cpus: '0.05'
-          memory: 64M
-    pids_limit: 100
-
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-```
-
+Eine fertige Vorlage finden Sie unter [`examples/docker-compose.yml`](examples/docker-compose.yml).
 Starten mit:
 ```bash
 docker compose up -d
@@ -172,7 +105,7 @@ docker run -d \
 ## 📱 Einbindung in Home Assistant & Scrypted
 
 ### 1. Home Assistant (MQTT)
-Sobald `MQTT_BROKER` konfiguriert ist (oder automatisch über das Home Assistant Add-on per `mqtt:want`), verbindet sich die Bridge mit dem Broker. In Home Assistant unter **Einstellungen ➔ Geräte & Dienste ➔ MQTT** erscheint automatisch das Gerät **"Steinel L 625 CAM SC"** mit allen Licht-, Sensor- und Steuerungsentitäten:
+Wird kein separater MQTT Broker konfiguriert wird automatisch der in HomeAssistant integrierte [Standard Broker]()https://github.com/home-assistant/addons/tree/master/mosquitto verwendet. In Home Assistant unter **Einstellungen ➔ Geräte & Dienste ➔ MQTT** erscheint automatisch das Gerät **"Steinel L 625 CAM SC"** mit allen Licht-, Sensor- und Steuerungsentitäten:
 
 <p align="center">
   <img src="docs/HomeAssistant%20Controles.png" alt="Home Assistant Steuerung und Sensoren" width="400">
@@ -196,7 +129,7 @@ Egal ob Scrypted als **Home Assistant Add-on** oder als eigenständige Instanz l
 
 ## 🗄️ SD-Karten REST API (Ereignisse, Snapshots & Video-Download)
 
-Die Bridge stellt auf Port `8000` eine direkte 1:1 REST-API bereit, um Aufnahmen der internen SD-Karte abzufragen und ohne Umwege per HTTP-Stream herunterzuladen (Zero-Disk I/O):
+Die Bridge stellt auf Port `8000` eine direkte 1:1 REST-API bereit, um Aufnahmen der internen SD-Karte abzufragen und ohne Umwege per HTTP-Stream herunterzuladen (Zero-Disk I/O).
 
 | Endpunkt | Methode | Beschreibung |
 |---|---|---|
@@ -216,7 +149,7 @@ Die Bridge stellt auf Port `8000` eine direkte 1:1 REST-API bereit, um Aufnahmen
 ./scripts/setup-sdk.sh
 
 # 2. Lokal bauen und starten (optional mit MQTT)
-./scripts/run-dev.sh -ip 192.168.1.100 -qr "did=de-xxxxxxx,pid=pr-xxxxx,sct=xxxx,pairPwd=xxxx" -mqtt-broker "tcp://192.168.1.50:1883"
+./scripts/run-dev.sh -ip 192.168.1.100 -qr "did=de-xxxxxxx,pid=pr-xxxxx,sct=xxxx,pairPwd=xxxx" -mqtt-broker "tcp://<IP_ADDRESS>:1883"
 ```
 
 ---
