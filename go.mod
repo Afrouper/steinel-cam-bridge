@@ -12,7 +12,7 @@ require (
 	github.com/pion/rtp v1.10.5
 	github.com/pion/webrtc/v4 v4.2.18
 	github.com/stretchr/testify v1.12.1
-	github.com/zaf/g711 v0.0.0-20190814101024-76a4a538f52b
+	github.com/zaf/g711 v1.4.0
 )
 
 require (
