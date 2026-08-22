@@ -212,15 +212,19 @@ func (c *Client) Connect() error {
 			c.conn = conn
 
 			if isNewKey {
-				log.Printf("[IAM] Performing initial pairing for new client key...")
-				if err := c.pairPassword(c.cfg.PairPwd); err != nil {
-					log.Printf("[IAM] ❌ Initial pairing failed: %v", err)
-					return fmt.Errorf("initial pairing failed: %w", err)
-				}
-				if err := os.WriteFile(c.cfg.KeyPath, []byte(c.privateKey), 0600); err != nil {
-					log.Printf("[!] Warning: Could not save key to %s: %v", c.cfg.KeyPath, err)
+				if c.cfg.PairPwd == "" || c.cfg.PairPwd == "xxxx" {
+					log.Printf("[IAM] ⚠️ Warning: New client key generated, but no QR code ('qr_code') is configured. Initial pairing requires a valid QR code!")
 				} else {
-					log.Printf("[IAM] ✅ Saved paired key to: %s", c.cfg.KeyPath)
+					log.Printf("[IAM] Performing initial pairing for new client key...")
+					if err := c.pairPassword(c.cfg.PairPwd); err != nil {
+						log.Printf("[IAM] ❌ Initial pairing failed: %v", err)
+						return fmt.Errorf("initial pairing failed: %w", err)
+					}
+					if err := os.WriteFile(c.cfg.KeyPath, []byte(c.privateKey), 0600); err != nil {
+						log.Printf("[!] Warning: Could not save key to %s: %v", c.cfg.KeyPath, err)
+					} else {
+						log.Printf("[IAM] ✅ Saved paired key to: %s", c.cfg.KeyPath)
+					}
 				}
 			}
 			return nil
@@ -421,8 +425,12 @@ func (c *Client) RequestTracks() (uint16, error) {
 		C.nabto_client_coap_get_response_status_code(coap, &statusCode)
 		log.Printf("[CoAP] /webrtc/tracks response status=%d", statusCode)
 		if statusCode == 401 {
-			log.Printf("[CoAP] ❌ /webrtc/tracks returned 401 Unauthorized: Stored key '%s' is not authorized by camera IAM. Auto-removing invalid key file for fresh pairing...", c.cfg.KeyPath)
-			_ = os.Remove(c.cfg.KeyPath)
+			if c.cfg.PairPwd != "" && c.cfg.PairPwd != "xxxx" {
+				log.Printf("[CoAP] ❌ /webrtc/tracks returned 401 Unauthorized: Stored key '%s' is not authorized by camera IAM. Auto-removing invalid key file to re-pair with configured QR code on next connect...", c.cfg.KeyPath)
+				_ = os.Remove(c.cfg.KeyPath)
+			} else {
+				log.Printf("[CoAP] ❌ /webrtc/tracks returned 401 Unauthorized: Stored key '%s' is not authorized by camera IAM! Re-pairing requires a valid 'qr_code' in your configuration.", c.cfg.KeyPath)
+			}
 		}
 		return uint16(statusCode), nil
 	}

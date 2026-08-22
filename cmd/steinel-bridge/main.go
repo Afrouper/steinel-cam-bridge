@@ -568,7 +568,11 @@ func main() {
 
 	// Handle pairing reset
 	if appCfg.ResetPairing {
-		log.Printf("[Reset] 🔄 Pairing reset requested: Removing client key '%s' to force fresh EC key generation & re-pairing...", cfg.KeyPath)
+		if cfg.PairPwd == "" || cfg.PairPwd == "xxxx" {
+			log.Printf("[Reset] ⚠️ Warning: Pairing reset requested, but no valid QR code ('qr_code') is configured! Re-pairing requires a valid QR code.")
+		} else {
+			log.Printf("[Reset] 🔄 Pairing reset requested: Removing client key '%s' to force fresh EC key generation & re-pairing with configured QR code...", cfg.KeyPath)
+		}
 		if err := os.Remove(cfg.KeyPath); err != nil && !os.IsNotExist(err) {
 			log.Printf("[Reset] ⚠️ Warning: Could not delete '%s': %v", cfg.KeyPath, err)
 		} else {
