@@ -172,6 +172,7 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
 7. **Release**:
   - Releases werden erzeugt in dem ein neues git-Tag nach Semantic Versioning angelegt wird. Ein Push triggert den Build auf GitHub
     - Das Format lautet wie folgt: "v<MAJOR>.<MINOR>.<PATCH>" z.B. v1.0.0
+    - Beta Releases haben das Format "v<MAJOR>.<MINOR>.<PATCH>-beta.<VERSION>" z.B. "v1.0.0-beta.1"
 
 ---
 
