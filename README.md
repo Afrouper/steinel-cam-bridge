@@ -142,14 +142,49 @@ Die Bridge stellt auf Port `8000` eine direkte 1:1 REST-API bereit, um Aufnahmen
 
 ---
 
-## 💻 Lokale Entwicklung
+## 💻 Lokale Entwicklung (macOS & Linux)
 
+Die Bridge kann vollständig nativ auf einem Entwickler-Rechner (macOS / Linux) ohne Docker gebaut, getestet und ausgeführt werden:
+
+### 1. Nabto SDK vorbereiten
+Laden Sie die passende native Nabto Client SDK-Bibliothek (`libnabto_client.dylib` bzw. `.so`) einmalig in das lokale `.sdk/`-Verzeichnis herunter:
 ```bash
-# 1. Offizielles Nabto Client SDK nach .sdk/ herunterladen (git-ignored)
 ./scripts/setup-sdk.sh
+```
 
-# 2. Lokal bauen und starten (optional mit MQTT)
-./scripts/run-dev.sh -ip 192.168.1.100 -qr "did=de-xxxxxxx,pid=pr-xxxxx,sct=xxxx,pairPwd=xxxx" -mqtt-broker "tcp://<IP_ADDRESS>:1883"
+### 2. Lokale Tests ausführen
+```bash
+# macOS:
+DYLD_LIBRARY_PATH="$(pwd)/.sdk/lib" go test -v ./...
+
+# Linux:
+LD_LIBRARY_PATH="$(pwd)/.sdk/lib" go test -v ./...
+```
+
+### 3. Natives Binary kompilieren
+```bash
+# macOS:
+CGO_LDFLAGS="-L$(pwd)/.sdk/lib -lnabto_client" CGO_CFLAGS="-I$(pwd)/.sdk/include" go build -o steinel-bridge ./cmd/steinel-bridge
+
+# Linux:
+CGO_LDFLAGS="-L$(pwd)/.sdk/lib -lnabto_client" CGO_CFLAGS="-I$(pwd)/.sdk/include" go build -o steinel-bridge ./cmd/steinel-bridge
+```
+
+### 4. Bridge lokal starten
+```bash
+# macOS:
+DYLD_LIBRARY_PATH="$(pwd)/.sdk/lib" ./steinel-bridge \
+  -ip 192.168.1.100 \
+  -qr "did=de-xxxxxxx,pid=pr-xxxxx,sct=xxxx,pairPwd=xxxx" \
+  -key ./data/local_client.key \
+  -debug
+
+# Linux:
+LD_LIBRARY_PATH="$(pwd)/.sdk/lib" ./steinel-bridge \
+  -ip 192.168.1.100 \
+  -qr "did=de-xxxxxxx,pid=pr-xxxxx,sct=xxxx,pairPwd=xxxx" \
+  -key ./data/local_client.key \
+  -debug
 ```
 
 ---
@@ -170,6 +205,7 @@ Die Bridge stellt auf Port `8000` eine direkte 1:1 REST-API bereit, um Aufnahmen
 | `MQTT_PASSWORD` | `-mqtt-pass` | `""` | MQTT Passwort |
 | `MQTT_TOPIC_PREFIX` | `-mqtt-topic` | `steinel` | MQTT Basis-Topic (Geräte-ID wird automatisch angehängt) |
 | `MQTT_DISCOVERY_PREFIX` | `-mqtt-disc` | `homeassistant` | Home Assistant MQTT Auto-Discovery Prefix |
+| `DEBUG` | `-debug` | `false` | Ausführliches Debug-Logging für RTSP, WebRTC, Signaling & MCU |
 | `RESET_PAIRING` | `-reset-pairing` | `false` | Löscht den gespeicherten Private Key und erzwingt ein erneutes Pairing mit dem angegebenen QR-Code |
 
 ---

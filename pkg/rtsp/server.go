@@ -231,7 +231,9 @@ func (s *Server) Close() {
 func (s *Server) handleBackchannelPacket(medi *description.Media, pkt *rtp.Packet, source string) {
 	if medi == nil || medi == s.backchannelMedia || medi.IsBackChannel {
 		cnt := s.backchannelPacketCount.Add(1)
-		if cnt == 1 || cnt%50 == 0 {
+		if cnt == 1 {
+			log.Printf("[RTSP] 🎙️ Audio backchannel stream started (%s, PT=%d, SSRC=%d)", source, pkt.PayloadType, pkt.SSRC)
+		} else if s.debug && cnt%50 == 0 {
 			log.Printf("[RTSP] 🎙️ Forwarding audio backchannel (%s) RTP packet #%d (PT=%d, SSRC=%d, Seq=%d, Payload=%d bytes)",
 				source, cnt, pkt.PayloadType, pkt.SSRC, pkt.SequenceNumber, len(pkt.Payload))
 		}

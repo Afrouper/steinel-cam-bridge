@@ -42,10 +42,11 @@ type Bridge struct {
 	backchannelTs    uint32
 	backchannelCount atomic.Uint64
 	backchannelMu    sync.Mutex
+	debug            bool
 	mu               sync.Mutex
 }
 
-func NewBridge(client *nabto.Client, stream *nabto.Stream, rtspServer *rtsp.Server, resolution string, pliInterval time.Duration) *Bridge {
+func NewBridge(client *nabto.Client, stream *nabto.Stream, rtspServer *rtsp.Server, resolution string, pliInterval time.Duration, debug bool) *Bridge {
 	if resolution == "" {
 		resolution = "1080p"
 	}
@@ -58,6 +59,7 @@ func NewBridge(client *nabto.Client, stream *nabto.Stream, rtspServer *rtsp.Serv
 		rtspServer:  rtspServer,
 		resolution:  resolution,
 		pliInterval: pliInterval,
+		debug:       debug,
 	}
 
 	// Initialize SD Card Manager using DataChannel JSON command dispatcher
@@ -322,14 +324,16 @@ func (b *Bridge) Run(ctx context.Context) error {
 			if err := json.Unmarshal([]byte(msg.Data), &sdpWrap); err != nil {
 				continue
 			}
-			log.Printf("[WebRTC Signaling] 📥 Received SDP Answer from camera")
+			if b.debug {
+				log.Printf("[WebRTC Signaling] 📥 Received SDP Answer from camera")
+			}
 			if pc.SignalingState() == pion.SignalingStateHaveLocalOffer {
 				if err := pc.SetRemoteDescription(pion.SessionDescription{
 					Type: pion.SDPTypeAnswer,
 					SDP:  sdpWrap.SDP,
 				}); err != nil {
 					log.Printf("[WebRTC Signaling] ⚠️ SetRemoteDescription (Answer) error: %v", err)
-				} else {
+				} else if b.debug {
 					logTransceivers(pc)
 				}
 			}
@@ -339,7 +343,9 @@ func (b *Bridge) Run(ctx context.Context) error {
 			if err := json.Unmarshal([]byte(msg.Data), &sdpWrap); err != nil {
 				continue
 			}
-			log.Printf("[WebRTC Signaling] 📥 Received renegotiation SDP Offer from camera")
+			if b.debug {
+				log.Printf("[WebRTC Signaling] 📥 Received renegotiation SDP Offer from camera")
+			}
 
 			if err := pc.SetRemoteDescription(pion.SessionDescription{
 				Type: pion.SDPTypeOffer,
@@ -357,7 +363,9 @@ func (b *Bridge) Run(ctx context.Context) error {
 							_ = tr.Sender().ReplaceTrack(b.audioSendTrack)
 						}
 					}
-					log.Printf("[WebRTC] 🎙️ Attached audioSendTrack to camera audio transceiver (mid=%s)", tr.Mid())
+					if b.debug {
+						log.Printf("[WebRTC] 🎙️ Attached audioSendTrack to camera audio transceiver (mid=%s)", tr.Mid())
+					}
 				}
 			}
 
@@ -373,7 +381,9 @@ func (b *Bridge) Run(ctx context.Context) error {
 				continue
 			}
 			<-ansGatherComplete
-			logTransceivers(pc)
+			if b.debug {
+				logTransceivers(pc)
+			}
 
 			var tracks []MetadataTrack
 			if msg.Metadata != nil && len(msg.Metadata.Tracks) > 0 {
@@ -474,7 +484,9 @@ func (b *Bridge) WriteAudioBackchannel(pkt *rtp.Packet) error {
 		b.backchannelTs += timestampStep
 
 		cnt := b.backchannelCount.Add(1)
-		if cnt == 1 || cnt%50 == 0 {
+		if cnt == 1 {
+			log.Printf("[Audio Backchannel] 🎙️ Two-way audio active: forwarding to camera speaker")
+		} else if b.debug && cnt%50 == 0 {
 			log.Printf("[Audio Backchannel] 🎙️ Forwarded 20ms PCMU frame #%d to camera speaker (seq=%d, ts=%d)",
 				cnt, outPkt.SequenceNumber, outPkt.Timestamp)
 		}
