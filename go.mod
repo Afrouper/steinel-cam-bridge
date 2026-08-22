@@ -2,6 +2,8 @@ module steinel-cam-bridge
 
 go 1.26.0
 
+replace github.com/bluenviron/gortsplib/v4 => ./third_party/gortsplib
+
 require (
 	github.com/bluenviron/gortsplib/v4 v4.11.2
 	github.com/bluenviron/mediacommon v1.13.1

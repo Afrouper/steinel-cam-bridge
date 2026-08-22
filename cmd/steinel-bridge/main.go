@@ -15,6 +15,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/pion/rtp"
+
 	"steinel-cam-bridge/pkg/mcu"
 	"steinel-cam-bridge/pkg/mqtt"
 	"steinel-cam-bridge/pkg/nabto"
@@ -179,6 +181,17 @@ func (m *BridgeManager) GetSDCardManager() *webrtc.SDCardManager {
 		return nil
 	}
 	return b.GetSDCardManager()
+}
+
+func (m *BridgeManager) WriteAudioBackchannel(pkt *rtp.Packet) error {
+	m.mu.RLock()
+	b := m.currentBridge
+	m.mu.RUnlock()
+
+	if b == nil {
+		return fmt.Errorf("camera bridge offline")
+	}
+	return b.WriteAudioBackchannel(pkt)
 }
 
 var AppVersion = "dev"
@@ -598,6 +611,7 @@ func main() {
 	defer rtspServer.Close()
 
 	rtspServer.SetOnPlayHandler(bridgeMgr.RequestKeyframe)
+	rtspServer.SetAudioBackchannelHandler(bridgeMgr.WriteAudioBackchannel)
 
 	if err := rtspServer.Start(); err != nil {
 		log.Fatalf("[!] Failed to start RTSP server: %v", err)

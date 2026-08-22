@@ -37,6 +37,7 @@ RUN curl -fsSL "https://github.com/nabto/nabto-client-sdk-releases/archive/refs/
 
 # 2. Copy dependencies and download Go modules (Cached with BuildKit cache mount)
 COPY go.mod go.sum ./
+COPY third_party ./third_party
 RUN --mount=type=cache,target=/go/pkg/mod \
     go mod download
 

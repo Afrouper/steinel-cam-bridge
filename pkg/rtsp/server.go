@@ -356,6 +356,19 @@ func (s *Server) OnPlay(ctx *gortsplib.ServerHandlerOnPlayCtx) (*base.Response, 
 		log.Printf("[RTSP] ▶️ Stream active (client connected: %s)", ctx.Path)
 	}
 
+	if ctx.Session != nil {
+		for _, medi := range ctx.Session.SetuppedMedias() {
+			if medi == s.backchannelMedia || (medi != nil && medi.IsBackChannel) {
+				cmedia := medi
+				for _, forma := range medi.Formats {
+					ctx.Session.OnPacketRTP(medi, forma, func(pkt *rtp.Packet) {
+						s.handleBackchannelPacket(cmedia, pkt, "TCP/Interleaved")
+					})
+				}
+			}
+		}
+	}
+
 	s.mu.RLock()
 	handler := s.onPlayHandler
 	s.mu.RUnlock()
