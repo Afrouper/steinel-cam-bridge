@@ -4,14 +4,20 @@
 # Supported Architectures: linux/amd64 (x86_64 NAS), linux/arm64 (Raspberry Pi / Apple Silicon)
 # ==============================================================================
 
-# --- Stage 1: Build native Go binary with CGo & Nabto SDK ---
-FROM golang:1.26-bookworm AS builder
+# --- Stage 1: Fast native builder with CGo cross-compilation ---
+FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS builder
 
 ARG TARGETARCH
+ARG TARGETOS
+ARG BUILDPLATFORM
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     gcc \
+    gcc-aarch64-linux-gnu \
+    libc6-dev-arm64-cross \
+    gcc-x86-64-linux-gnu \
+    libc6-dev-amd64-cross \
     ca-certificates \
     curl \
     tar \
@@ -25,14 +31,12 @@ RUN curl -fsSL "https://github.com/nabto/nabto-client-sdk-releases/archive/refs/
     mkdir -p /tmp/nabto && \
     tar -xzf /tmp/nabto.tar.gz -C /tmp/nabto && \
     EXTRACTED="$(find /tmp/nabto -maxdepth 1 -type d -name 'nabto-client-sdk-releases*' | head -n 1)" && \
-    mkdir -p /usr/include/nabto /usr/lib && \
+    mkdir -p /usr/include/nabto /usr/lib /usr/lib/x86_64-linux-gnu /usr/lib/aarch64-linux-gnu /usr/aarch64-linux-gnu/lib && \
     cp -r "${EXTRACTED}/include/nabto/"* /usr/include/nabto/ && \
-    if [ "$TARGETARCH" = "arm64" ]; then \
-        cp "${EXTRACTED}/lib/linux-aarch64/libnabto_client.so" /usr/lib/libnabto_client.so; \
-    else \
-        cp "${EXTRACTED}/lib/linux-x86_64/libnabto_client.so" /usr/lib/libnabto_client.so; \
-    fi && \
-    ldconfig && \
+    cp "${EXTRACTED}/lib/linux-x86_64/libnabto_client.so" /usr/lib/x86_64-linux-gnu/libnabto_client.so && \
+    cp "${EXTRACTED}/lib/linux-x86_64/libnabto_client.so" /usr/lib/libnabto_client.so && \
+    cp "${EXTRACTED}/lib/linux-aarch64/libnabto_client.so" /usr/lib/aarch64-linux-gnu/libnabto_client.so && \
+    cp "${EXTRACTED}/lib/linux-aarch64/libnabto_client.so" /usr/aarch64-linux-gnu/lib/libnabto_client.so && \
     rm -rf /tmp/nabto /tmp/nabto.tar.gz
 
 # 2. Copy dependencies and download Go modules (Cached with BuildKit cache mount)
@@ -43,12 +47,17 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # 3. Copy source code
 COPY . .
 
-# 4. Compile pure Go launcher (statically linked, CGO_ENABLED=0) and CGo bridge binary
+# 4. Compile pure Go launcher (statically linked, CGO_ENABLED=0) and CGo bridge binary with native cross-compilers
 ARG APP_VERSION="dev"
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 go build -ldflags="-s -w" -o /app/launcher ./cmd/launcher && \
-    CGO_ENABLED=1 go build -ldflags="-s -w -X main.AppVersion=${APP_VERSION}" -o /app/steinel-bridge ./cmd/steinel-bridge && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -ldflags="-s -w" -o /app/launcher ./cmd/launcher && \
+    if [ "$TARGETARCH" = "arm64" ]; then \
+        export CC=aarch64-linux-gnu-gcc; \
+    else \
+        export CC=x86_64-linux-gnu-gcc; \
+    fi && \
+    CGO_ENABLED=1 GOOS=linux GOARCH=${TARGETARCH} CC=${CC} go build -ldflags="-s -w -X main.AppVersion=${APP_VERSION}" -o /app/steinel-bridge ./cmd/steinel-bridge && \
     mkdir -p /data
 
 # --- Stage 2: Ultra-minimal Distroless runtime (~25 MB Image, 0 Byte proprietary binaries) ---

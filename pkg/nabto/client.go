@@ -4,8 +4,8 @@ package nabto
 #cgo CFLAGS: -I${SRCDIR}/../../.sdk/include -I/usr/local/include -I/usr/include
 #cgo darwin,arm64 LDFLAGS: -L${SRCDIR}/../../.sdk/lib -L/usr/local/lib -lnabto_client -lpthread
 #cgo darwin,amd64 LDFLAGS: -L${SRCDIR}/../../.sdk/lib -L/usr/local/lib -lnabto_client -lpthread
-#cgo linux,amd64 LDFLAGS: -L${SRCDIR}/../../.sdk/lib -L/usr/lib -L/usr/local/lib -lnabto_client -lpthread
-#cgo linux,arm64 LDFLAGS: -L${SRCDIR}/../../.sdk/lib -L/usr/lib -L/usr/local/lib -lnabto_client -lpthread
+#cgo linux,amd64 LDFLAGS: -L${SRCDIR}/../../.sdk/lib -L/usr/lib -L/usr/lib/x86_64-linux-gnu -L/usr/local/lib -lnabto_client -lpthread
+#cgo linux,arm64 LDFLAGS: -L${SRCDIR}/../../.sdk/lib -L/usr/lib -L/usr/lib/aarch64-linux-gnu -L/usr/aarch64-linux-gnu/lib -L/usr/local/lib -lnabto_client -lpthread
 #cgo windows,amd64 LDFLAGS: -L${SRCDIR}/../../.sdk/lib -lnabto_client
 
 #include <stdlib.h>
