@@ -1,4 +1,4 @@
-module steinel-cam-bridge
+module github.com/Afrouper/steinel-cam-bridge
 
 go 1.27.0
 

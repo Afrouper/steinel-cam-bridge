@@ -18,12 +18,12 @@ import (
 
 	"github.com/pion/rtp"
 
-	"steinel-cam-bridge/pkg/mcu"
-	"steinel-cam-bridge/pkg/mqtt"
-	"steinel-cam-bridge/pkg/nabto"
-	"steinel-cam-bridge/pkg/onvif"
-	"steinel-cam-bridge/pkg/rtsp"
-	"steinel-cam-bridge/pkg/webrtc"
+	"github.com/Afrouper/steinel-cam-bridge/pkg/mcu"
+	"github.com/Afrouper/steinel-cam-bridge/pkg/mqtt"
+	"github.com/Afrouper/steinel-cam-bridge/pkg/nabto"
+	"github.com/Afrouper/steinel-cam-bridge/pkg/onvif"
+	"github.com/Afrouper/steinel-cam-bridge/pkg/rtsp"
+	"github.com/Afrouper/steinel-cam-bridge/pkg/webrtc"
 )
 
 type BridgeManager struct {

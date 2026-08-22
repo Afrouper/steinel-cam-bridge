@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"steinel-cam-bridge/pkg/events"
+	"github.com/Afrouper/steinel-cam-bridge/pkg/events"
 )
 
 func TestONVIFServices(t *testing.T) {

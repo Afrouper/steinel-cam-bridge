@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"steinel-cam-bridge/pkg/events"
+	"github.com/Afrouper/steinel-cam-bridge/pkg/events"
 
 	"github.com/google/uuid"
 )

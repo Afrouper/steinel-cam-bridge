@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"steinel-cam-bridge/pkg/events"
+	"github.com/Afrouper/steinel-cam-bridge/pkg/events"
 
 	paho "github.com/eclipse/paho.mqtt.golang"
 )

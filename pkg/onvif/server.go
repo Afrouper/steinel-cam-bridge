@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"steinel-cam-bridge/pkg/events"
-	"steinel-cam-bridge/pkg/webrtc"
+	"github.com/Afrouper/steinel-cam-bridge/pkg/events"
+	"github.com/Afrouper/steinel-cam-bridge/pkg/webrtc"
 
 	"github.com/google/uuid"
 )

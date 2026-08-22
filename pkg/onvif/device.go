@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"steinel-cam-bridge/pkg/events"
+	"github.com/Afrouper/steinel-cam-bridge/pkg/events"
 )
 
 type DeviceHandler struct {

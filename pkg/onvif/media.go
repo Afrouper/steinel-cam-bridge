@@ -5,7 +5,7 @@ import (
 	"log"
 	"strings"
 
-	"steinel-cam-bridge/pkg/events"
+	"github.com/Afrouper/steinel-cam-bridge/pkg/events"
 )
 
 type MediaHandler struct {

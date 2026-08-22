@@ -10,11 +10,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"steinel-cam-bridge/pkg/audio"
-	"steinel-cam-bridge/pkg/events"
-	"steinel-cam-bridge/pkg/mcu"
-	"steinel-cam-bridge/pkg/nabto"
-	"steinel-cam-bridge/pkg/rtsp"
+	"github.com/Afrouper/steinel-cam-bridge/pkg/audio"
+	"github.com/Afrouper/steinel-cam-bridge/pkg/events"
+	"github.com/Afrouper/steinel-cam-bridge/pkg/mcu"
+	"github.com/Afrouper/steinel-cam-bridge/pkg/nabto"
+	"github.com/Afrouper/steinel-cam-bridge/pkg/rtsp"
 
 	"github.com/google/uuid"
 	"github.com/pion/rtcp"
