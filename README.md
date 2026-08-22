@@ -8,7 +8,7 @@
 [![Home Assistant Add-on](https://img.shields.io/badge/Home%20Assistant-Add--on-41BDF5?logo=home-assistant&logoColor=white)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2FAfrouper%2Fsteinel-cam-bridge)
 [![Docker Image](https://img.shields.io/badge/Docker-GHCR-blue?logo=docker)](https://github.com/Afrouper/steinel-cam-bridge/pkgs/container/steinel-cam-bridge)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Go Version](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go)](https://go.dev)
+[![Go Version](https://img.shields.io/badge/Go-1.27-00ADD8?logo=go)](https://go.dev)
 
 Die Anwendung ist als hochperformanter, 100 % autarker **Go-Daemon**.
 Es soll die **Steinel L 625 CAM SC** Außenleuchte (und ggf. baugleiche Modelle) in eine standardkonforme **ONVIF Profile S/T Kamera** mit **RTSP-Streaming**, **2-Wege-Audio (Gegensprechen)** und vollständiger **MQTT Home Assistant Auto-Discovery** verwandelt – zur nahtlosen Integration in **Home Assistant**, **Scrypted / Apple HomeKit Secure Video (HKSV)** und weitere.

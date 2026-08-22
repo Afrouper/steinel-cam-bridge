@@ -5,7 +5,7 @@
 # ==============================================================================
 
 # --- Stage 1: Fast native builder with CGo cross-compilation ---
-FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27-bookworm AS builder
 
 ARG TARGETARCH
 ARG TARGETOS

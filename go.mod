@@ -1,6 +1,6 @@
 module steinel-cam-bridge
 
-go 1.26.0
+go 1.27.0
 
 require (
 	github.com/bluenviron/gortsplib/v4 v4.11.2
