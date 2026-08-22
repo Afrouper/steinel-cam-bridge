@@ -90,8 +90,8 @@ func (c *interceptingConn) Read(p []byte) (int, error) {
 				// Backchannel channels are typically >= 4 and even (e.g. 4 for RTP, 5 for RTCP)
 				if channel%2 == 0 {
 					var pkt rtp.Packet
-					if err := pkt.Unmarshal(payload); err == nil && pkt.PayloadType == 0 {
-						// Intercepted PCMU 8kHz Backchannel packet from Apple Home / Scrypted
+					if err := pkt.Unmarshal(payload); err == nil {
+						// Intercepted Backchannel RTP packet from Apple Home / Scrypted
 						c.server.handleBackchannelPacket(c.server.backchannelMedia, &pkt, "TCP/Interleaved")
 						continue // Consume frame, do not pass to gortsplib
 					}

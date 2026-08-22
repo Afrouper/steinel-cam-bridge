@@ -37,6 +37,11 @@ type Bridge struct {
 	lastVideoPacket  atomic.Int64
 	motionResetTimer *time.Timer
 	sdcardManager    *SDCardManager
+	backchannelBuf   []byte
+	backchannelSeq   uint16
+	backchannelTs    uint32
+	backchannelCount atomic.Uint64
+	backchannelMu    sync.Mutex
 	mu               sync.Mutex
 }
 
@@ -163,10 +168,6 @@ func (b *Bridge) Run(ctx context.Context) error {
 	if err != nil {
 		_ = pc.Close()
 		return fmt.Errorf("failed to create local audio send track: %w", err)
-	}
-
-	if _, err := pc.AddTrack(audioSendTrack); err != nil {
-		log.Printf("[WebRTC] ⚠️ Could not add audio send track: %v", err)
 	}
 
 	b.mu.Lock()
@@ -321,11 +322,16 @@ func (b *Bridge) Run(ctx context.Context) error {
 			if err := json.Unmarshal([]byte(msg.Data), &sdpWrap); err != nil {
 				continue
 			}
+			log.Printf("[WebRTC Signaling] 📥 Received SDP Answer from camera")
 			if pc.SignalingState() == pion.SignalingStateHaveLocalOffer {
-				_ = pc.SetRemoteDescription(pion.SessionDescription{
+				if err := pc.SetRemoteDescription(pion.SessionDescription{
 					Type: pion.SDPTypeAnswer,
 					SDP:  sdpWrap.SDP,
-				})
+				}); err != nil {
+					log.Printf("[WebRTC Signaling] ⚠️ SetRemoteDescription (Answer) error: %v", err)
+				} else {
+					logTransceivers(pc)
+				}
 			}
 
 		case TypeOffer:
@@ -333,24 +339,52 @@ func (b *Bridge) Run(ctx context.Context) error {
 			if err := json.Unmarshal([]byte(msg.Data), &sdpWrap); err != nil {
 				continue
 			}
+			log.Printf("[WebRTC Signaling] 📥 Received renegotiation SDP Offer from camera")
 
 			if err := pc.SetRemoteDescription(pion.SessionDescription{
 				Type: pion.SDPTypeOffer,
 				SDP:  sdpWrap.SDP,
 			}); err != nil {
+				log.Printf("[WebRTC Signaling] ⚠️ SetRemoteDescription (Offer) error: %v", err)
 				continue
+			}
+
+			// Attach local audioSendTrack to the camera's audio transceiver (frontdoor-audio)
+			for _, tr := range pc.GetTransceivers() {
+				if tr.Kind() == pion.RTPCodecTypeAudio {
+					if _, err := pc.AddTrack(b.audioSendTrack); err != nil {
+						if tr.Sender() != nil {
+							_ = tr.Sender().ReplaceTrack(b.audioSendTrack)
+						}
+					}
+					log.Printf("[WebRTC] 🎙️ Attached audioSendTrack to camera audio transceiver (mid=%s)", tr.Mid())
+				}
 			}
 
 			answer, err := pc.CreateAnswer(nil)
 			if err != nil {
+				log.Printf("[WebRTC Signaling] ⚠️ CreateAnswer error: %v", err)
 				continue
 			}
 
 			ansGatherComplete := pion.GatheringCompletePromise(pc)
 			if err := pc.SetLocalDescription(answer); err != nil {
+				log.Printf("[WebRTC Signaling] ⚠️ SetLocalDescription (Answer) error: %v", err)
 				continue
 			}
 			<-ansGatherComplete
+			logTransceivers(pc)
+
+			var tracks []MetadataTrack
+			if msg.Metadata != nil && len(msg.Metadata.Tracks) > 0 {
+				for _, t := range msg.Metadata.Tracks {
+					tracks = append(tracks, MetadataTrack{
+						Mid:     t.Mid,
+						TrackID: t.TrackID,
+						Error:   "OK",
+					})
+				}
+			}
 
 			cleanAnsSDP := fixAnswerSDP(pc.LocalDescription().SDP)
 			ansJSON, _ := json.Marshal(SDPWrapper{Type: "answer", SDP: cleanAnsSDP})
@@ -359,6 +393,8 @@ func (b *Bridge) Run(ctx context.Context) error {
 				Data: string(ansJSON),
 				Metadata: &SignalMessageMetadata{
 					NoTrickle: true,
+					Status:    "OK",
+					Tracks:    tracks,
 				},
 			}
 			ansBytes, _ := MarshalSignalMessage(ansMsg)
@@ -379,7 +415,24 @@ func (b *Bridge) Run(ctx context.Context) error {
 	}
 }
 
-// WriteAudioBackchannel forwards an incoming PCMU RTP packet to the camera speaker via WebRTC
+func logTransceivers(pc *pion.PeerConnection) {
+	for _, tr := range pc.GetTransceivers() {
+		kind := tr.Kind().String()
+		mid := tr.Mid()
+		dir := tr.Direction().String()
+		var trackInfo string
+		if tr.Receiver() != nil && tr.Receiver().Track() != nil {
+			trackInfo += fmt.Sprintf("rxTrack=%s (ID=%s) ", tr.Receiver().Track().Kind().String(), tr.Receiver().Track().ID())
+		}
+		if tr.Sender() != nil && tr.Sender().Track() != nil {
+			trackInfo += fmt.Sprintf("txTrack=%s (ID=%s) ", tr.Sender().Track().Kind().String(), tr.Sender().Track().ID())
+		}
+		log.Printf("[WebRTC] 📡 Transceiver mid=%s kind=%s direction=%s %s", mid, kind, dir, trackInfo)
+	}
+}
+
+// WriteAudioBackchannel forwards incoming PCMU audio samples to the camera speaker via WebRTC.
+// It chunks incoming audio into standard 20ms (160 bytes at 8000Hz) RTP frames with consecutive timestamps and sequence numbers.
 func (b *Bridge) WriteAudioBackchannel(pkt *rtp.Packet) error {
 	b.mu.Lock()
 	track := b.audioSendTrack
@@ -389,8 +442,50 @@ func (b *Bridge) WriteAudioBackchannel(pkt *rtp.Packet) error {
 		return fmt.Errorf("audio send track not active")
 	}
 
-	pkt.PayloadType = 0 // PCMU
-	return track.WriteRTP(pkt)
+	if len(pkt.Payload) == 0 {
+		return nil
+	}
+
+	b.backchannelMu.Lock()
+	defer b.backchannelMu.Unlock()
+
+	// Append incoming audio payload to buffer
+	b.backchannelBuf = append(b.backchannelBuf, pkt.Payload...)
+
+	// Target 20ms frame size for 8kHz 8-bit mono PCMU: 160 bytes
+	const frameSize = 160
+	const timestampStep = 160
+
+	for len(b.backchannelBuf) >= frameSize {
+		chunk := make([]byte, frameSize)
+		copy(chunk, b.backchannelBuf[:frameSize])
+		b.backchannelBuf = b.backchannelBuf[frameSize:]
+
+		outPkt := &rtp.Packet{
+			Header: rtp.Header{
+				Version:        2,
+				PayloadType:    0, // PCMU
+				SequenceNumber: b.backchannelSeq,
+				Timestamp:      b.backchannelTs,
+			},
+			Payload: chunk,
+		}
+		b.backchannelSeq++
+		b.backchannelTs += timestampStep
+
+		cnt := b.backchannelCount.Add(1)
+		if cnt == 1 || cnt%50 == 0 {
+			log.Printf("[Audio Backchannel] 🎙️ Forwarded 20ms PCMU frame #%d to camera speaker (seq=%d, ts=%d)",
+				cnt, outPkt.SequenceNumber, outPkt.Timestamp)
+		}
+
+		if err := track.WriteRTP(outPkt); err != nil {
+			log.Printf("[Audio Backchannel] ⚠️ WriteRTP error: %v", err)
+			return err
+		}
+	}
+
+	return nil
 }
 
 // SetResolution sends a DataChannel command to change video quality dynamically

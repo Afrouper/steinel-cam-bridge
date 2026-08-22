@@ -18,8 +18,16 @@ type SignalMessage struct {
 	Metadata *SignalMessageMetadata `json:"metadata,omitempty"`
 }
 
+type MetadataTrack struct {
+	Mid     string `json:"mid"`
+	TrackID string `json:"trackId"`
+	Error   string `json:"error,omitempty"`
+}
+
 type SignalMessageMetadata struct {
-	NoTrickle bool `json:"no_trickle,omitempty"`
+	NoTrickle bool            `json:"no_trickle,omitempty"`
+	Status    string          `json:"status,omitempty"`
+	Tracks    []MetadataTrack `json:"tracks,omitempty"`
 }
 
 type TurnServer struct {
