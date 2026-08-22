@@ -55,6 +55,7 @@ static void send_mdns_wakeup_c(const char* camera_ip, int port) {
 */
 import "C"
 import (
+	crand "crypto/rand"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -74,6 +75,8 @@ type Config struct {
 	SCT        string
 	PairPwd    string
 	KeyPath    string
+	IsBeta     bool
+	ClientName string
 }
 
 type Client struct {
@@ -211,13 +214,13 @@ func (c *Client) Connect() error {
 			if isNewKey {
 				log.Printf("[IAM] Performing initial pairing for new client key...")
 				if err := c.pairPassword(c.cfg.PairPwd); err != nil {
-					log.Printf("[!] Warning: Pairing error: %v", err)
+					log.Printf("[IAM] ❌ Initial pairing failed: %v", err)
+					return fmt.Errorf("initial pairing failed: %w", err)
+				}
+				if err := os.WriteFile(c.cfg.KeyPath, []byte(c.privateKey), 0600); err != nil {
+					log.Printf("[!] Warning: Could not save key to %s: %v", c.cfg.KeyPath, err)
 				} else {
-					if err := os.WriteFile(c.cfg.KeyPath, []byte(c.privateKey), 0600); err != nil {
-						log.Printf("[!] Warning: Could not save key to %s: %v", c.cfg.KeyPath, err)
-					} else {
-						log.Printf("[IAM] ✅ Saved paired key to: %s", c.cfg.KeyPath)
-					}
+					log.Printf("[IAM] ✅ Saved paired key to: %s", c.cfg.KeyPath)
 				}
 			}
 			return nil
@@ -230,6 +233,32 @@ func (c *Client) Connect() error {
 	}
 
 	return fmt.Errorf("connection failed after %d attempts", maxRetries)
+}
+
+func encodeUsernameCBOR(username string) []byte {
+	header := []byte{0xa1, 0x68, 'U', 's', 'e', 'r', 'n', 'a', 'm', 'e'}
+	uBytes := []byte(username)
+	if len(uBytes) < 24 {
+		header = append(header, byte(0x60+len(uBytes)))
+	} else {
+		header = append(header, 0x78, byte(len(uBytes)))
+	}
+	return append(header, uBytes...)
+}
+
+func generateDynamicUsername(isBeta bool, customName string) string {
+	if customName != "" {
+		return customName
+	}
+	b := make([]byte, 3)
+	if _, err := io.ReadFull(crand.Reader, b); err != nil {
+		binary.LittleEndian.PutUint32(b, uint32(time.Now().UnixNano()))
+	}
+	suffix := fmt.Sprintf("%02x%02x%02x", b[0], b[1], b[2])
+	if isBeta {
+		return fmt.Sprintf("steinel-bridge-beta-%s", suffix)
+	}
+	return fmt.Sprintf("steinel-bridge-%s", suffix)
 }
 
 func (c *Client) pairPassword(password string) error {
@@ -248,46 +277,58 @@ func (c *Client) pairPassword(password string) error {
 		return fmt.Errorf("password authentication failed: %s", C.GoString(C.nabto_client_error_get_message(errCode)))
 	}
 
-	cborPayload := []byte{
-		0xa1,
-		0x68, 'U', 's', 'e', 'r', 'n', 'a', 'm', 'e',
-		0x6e, 's', 't', 'e', 'i', 'n', 'e', 'l', '-', 'c', 'l', 'i', 'e', 'n', 't',
+	const maxPairAttempts = 3
+	var lastStatus C.uint16_t
+
+	for attempt := 1; attempt <= maxPairAttempts; attempt++ {
+		username := generateDynamicUsername(c.cfg.IsBeta, c.cfg.ClientName)
+		cborPayload := encodeUsernameCBOR(username)
+
+		cMethod := C.CString("POST")
+		cPath := C.CString("/iam/pairing/password-open")
+
+		coap := C.nabto_client_coap_new(c.conn, cMethod, cPath)
+		C.free(unsafe.Pointer(cMethod))
+		C.free(unsafe.Pointer(cPath))
+
+		if coap == nil {
+			return fmt.Errorf("failed to create CoAP pairing request")
+		}
+
+		C.nabto_client_coap_set_request_payload(
+			coap,
+			C.NABTO_CLIENT_COAP_CONTENT_FORMAT_APPLICATION_CBOR,
+			unsafe.Pointer(&cborPayload[0]),
+			C.size_t(len(cborPayload)),
+		)
+
+		fut = C.nabto_client_future_new(c.ctx)
+		C.nabto_client_coap_execute(coap, fut)
+		C.nabto_client_future_wait(fut)
+		errCode = C.nabto_client_future_error_code(fut)
+		C.nabto_client_future_free(fut)
+
+		var statusCode C.uint16_t
+		if errCode == C.NABTO_CLIENT_EC_OK {
+			C.nabto_client_coap_get_response_status_code(coap, &statusCode)
+		}
+		C.nabto_client_coap_free(coap)
+
+		log.Printf("[IAM] Pairing response status for '%s': %d", username, statusCode)
+		lastStatus = statusCode
+
+		if statusCode == 201 || statusCode == 200 {
+			log.Printf("[IAM] ✅ Successfully paired as '%s'", username)
+			return nil
+		}
+
+		if statusCode != 409 {
+			break
+		}
+		log.Printf("[IAM] ⚠️ Username '%s' already registered (409 Conflict). Retrying with new ID (attempt %d/%d)...", username, attempt, maxPairAttempts)
 	}
 
-	cMethod := C.CString("POST")
-	cPath := C.CString("/iam/pairing/password-open")
-	defer C.free(unsafe.Pointer(cMethod))
-	defer C.free(unsafe.Pointer(cPath))
-
-	coap := C.nabto_client_coap_new(c.conn, cMethod, cPath)
-	if coap == nil {
-		return fmt.Errorf("failed to create CoAP pairing request")
-	}
-	defer C.nabto_client_coap_free(coap)
-
-	C.nabto_client_coap_set_request_payload(
-		coap,
-		C.NABTO_CLIENT_COAP_CONTENT_FORMAT_APPLICATION_CBOR,
-		unsafe.Pointer(&cborPayload[0]),
-		C.size_t(len(cborPayload)),
-	)
-
-	fut = C.nabto_client_future_new(c.ctx)
-	C.nabto_client_coap_execute(coap, fut)
-	C.nabto_client_future_wait(fut)
-	errCode = C.nabto_client_future_error_code(fut)
-	C.nabto_client_future_free(fut)
-
-	var statusCode C.uint16_t
-	if errCode == C.NABTO_CLIENT_EC_OK {
-		C.nabto_client_coap_get_response_status_code(coap, &statusCode)
-	}
-
-	log.Printf("[IAM] Pairing response status: %d", statusCode)
-	if statusCode == 201 || statusCode == 409 || statusCode == 400 {
-		return nil
-	}
-	return fmt.Errorf("pairing returned status code %d", statusCode)
+	return fmt.Errorf("pairing returned status code %d", lastStatus)
 }
 
 // GetSignalingPort queries /p2p/webrtc-info via CoAP to get the SignalingStreamPort

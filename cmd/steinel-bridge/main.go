@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -558,6 +559,7 @@ func main() {
 	// Resolve configuration according to POSIX & 12-Factor App hierarchy
 	appCfg := resolveConfig("/data/options.json", flag.CommandLine)
 	cfg := appCfg.NabtoConfig
+	cfg.IsBeta = strings.Contains(strings.ToLower(AppVersion), "beta")
 
 	// Handle pairing reset
 	if appCfg.ResetPairing {
