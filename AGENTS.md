@@ -117,7 +117,7 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
   - `ha-addon-beta/config.yaml`: Manifest für Home Assistant Beta (Schema für Einstellungs-Formular, `host_network: true`, `services: ["mqtt:want"]`, `reset_pairing: bool`).
     - Es ist immer die aktuellste (Beta) Version einzutragen.
   - `ha-addon-beta/build.yaml`: Verknüpft das Add-on direkt mit dem pre-built Multi-Arch Image `ghcr.io/afrouper/steinel-cam-bridge:{arch}`.
-    - Es kann immer `latest` verwendet werden.
+    - Es ist immer die konkrete (Beta) Version einzutragen; nicht `latest`.
   - `ha-addon-beta/DOCS.md`: In-App Dokumentation für Home Assistant Beta Benutzer.
 
 - **`extracts/`**: Nur für die Agenten zum Nachschlagen von Informationen und Dokumentationen. Darf nicht ins git eingecheckt werden da ggf. sensible Informationen enthalten sind.
