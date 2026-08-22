@@ -50,11 +50,19 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
   - Initialisiert Server (`rtsp.Server`, `onvif.Server`, `mqtt.Client`).
   - Beherbergt den **Supervisor-Loop**: Fängt Verbindungsabbrüche, Session-Beendigungen oder Watchdog-Resets ab und erzwingt einen sauberen **30-Sekunden-Cooldown**, damit neu startende Kameras stabil hochfahren können, ohne das Netzwerk zu fluten.
 
-- **`repository.yaml` & `ha-addon/` (Home Assistant Add-on)**:
+- **`repository.yaml`,  `ha-addon/` & `ha-addon-beta/` (Home Assistant Add-ons)**:
   - `repository.yaml`: Ermöglicht das Hinzufügen dieses GitHub-Repositories als externe Add-on-Quelle in Home Assistant.
   - `ha-addon/config.yaml`: Manifest für Home Assistant (Schema für Einstellungs-Formular, `host_network: true`, `services: ["mqtt:want"]`, `reset_pairing: bool`).
+    - Es ist immer die aktuelle Stable Version einzutragen.
   - `ha-addon/build.yaml`: Verknüpft das Add-on direkt mit dem pre-built Multi-Arch Image `ghcr.io/afrouper/steinel-cam-bridge:{arch}`.
+    - Es ist immer die aktuelle Stable Version einzutragen; nicht `latest`.
   - `ha-addon/DOCS.md`: In-App Dokumentation für Home Assistant Benutzer.
+  - `ha-addon-beta/`: Addon für das Ausliefern von Beta-Versionen. Es sind latest Versionen zu verwenden. Neue Features, etc. werden zuerst hierüber dokumentiert, getestet und veröffentlicht. Nach erfolgreichem Test können die Anpassungen nach `ha-addon` übertragen werden.
+  - `ha-addon-beta/config.yaml`: Manifest für Home Assistant Beta (Schema für Einstellungs-Formular, `host_network: true`, `services: ["mqtt:want"]`, `reset_pairing: bool`).
+    - Es ist immer die aktuellste (Beta) Version einzutragen.
+  - `ha-addon-beta/build.yaml`: Verknüpft das Add-on direkt mit dem pre-built Multi-Arch Image `ghcr.io/afrouper/steinel-cam-bridge:{arch}`.
+    - Es kann immer `latest` verwendet werden.
+  - `ha-addon-beta/DOCS.md`: In-App Dokumentation für Home Assistant Beta Benutzer.
 
 - **`pkg/nabto/`**:
   - `client.go`: CGo-Bindings für das Nabto Edge Client SDK (`nabto_client.h`).
