@@ -14,7 +14,6 @@ Die Anwendung ist als hochperformanter, 100 % autarker **Go-Daemon**.
 Es soll die **Steinel L 625 CAM SC** Außenleuchte (und ggf. baugleiche Modelle) in eine standardkonforme **ONVIF Profile S/T Kamera** mit **RTSP-Streaming**, **2-Wege-Audio (Gegensprechen)** und vollständiger **MQTT Home Assistant Auto-Discovery** verwandelt – zur nahtlosen Integration in **Home Assistant**, **Scrypted / Apple HomeKit Secure Video (HKSV)** und weitere.
 
 Das Schwestermodell **XLED CAM2 SC** konnte nicht verprobt werden, könnte aber ebenfalls funktionieren. Über Rückmeldungen würde ich mich freuen.
-Die Vorgängermodelle **Steinel L 620 CAM** scheinen auch das Nabto [SDK/Protokoll zu verwenden](https://www.nabto.com/cases/steinel-partner/), konnten aber ebenfalls nicht verprobt werden. Auch hier würde ich mich über Rückmeldungen freuen.
 
 > [!WARNING]
 > Trotz sorgfältiger Entwicklung und Verwendung der Schnittstellen des offiziellen Nabto SDKs und APIs die von der Kamera bereitgestellt werden kann nicht garantiert werden das es zu keinen Komplikationen mit der Hardware der Kamera/Leuchte kommt. Das Projekt oder meine Personen übernehmen keine Gewährleistung oder Sachmängelhaftung für eventuell eintretende Schäden an der Hardware.
