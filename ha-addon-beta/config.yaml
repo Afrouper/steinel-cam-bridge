@@ -17,6 +17,9 @@ environment:
   IS_BETA: "true"
 options:
   camera_ip: ""
+  camera_type: "auto"
+  camera_user: "admin"
+  camera_password: ""
   qr_code: ""
   resolution: "1080p"
   audio_codec: "aac"
@@ -26,6 +29,9 @@ options:
   debug: false
 schema:
   camera_ip: "str"
+  camera_type: "list(auto|l625|l620)?"
+  camera_user: "str?"
+  camera_password: "password?"
   qr_code: "str?"
   resolution: "list(1080p|720p|360p)"
   audio_codec: "list(aac|pcmu)"

@@ -145,6 +145,9 @@ func TestLayer4_CLIFlagsOverrideAll(t *testing.T) {
 
 	jsonContent := `{
 		"camera_ip": "192.168.88.89",
+		"camera_type": "l625",
+		"camera_user": "admin",
+		"camera_password": "pass",
 		"resolution": "720p",
 		"rtsp_port": 8555
 	}`
@@ -153,22 +156,31 @@ func TestLayer4_CLIFlagsOverrideAll(t *testing.T) {
 
 	// Set environment variables
 	t.Setenv("CAMERA_IP", "192.168.99.99")
+	t.Setenv("CAMERA_TYPE", "l620")
+	t.Setenv("CAMERA_USER", "admin_env")
+	t.Setenv("CAMERA_PASSWORD", "pass_env")
 	t.Setenv("RESOLUTION", "360p")
 	t.Setenv("RTSP_PORT", "8556")
 
 	// Set explicit CLI flag set
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
 	fs.String("ip", "", "")
+	fs.String("type", "", "")
+	fs.String("user", "", "")
+	fs.String("pass", "", "")
 	fs.String("res", "", "")
 	fs.Int("port", 0, "")
 
-	err = fs.Parse([]string{"-ip", "10.0.0.1", "-res", "1080p", "-port", "9000"})
+	err = fs.Parse([]string{"-ip", "10.0.0.1", "-type", "l620", "-user", "admin_cli", "-pass", "secret_cli", "-res", "1080p", "-port", "9000"})
 	assert.NoError(t, err)
 
 	cfg := resolveConfig(optsFile, fs)
 
 	// CLI flags override everything
 	assert.Equal(t, "10.0.0.1", cfg.NabtoConfig.CameraIP)
+	assert.Equal(t, "l620", cfg.CameraType)
+	assert.Equal(t, "admin_cli", cfg.CameraUser)
+	assert.Equal(t, "secret_cli", cfg.CameraPassword)
 	assert.Equal(t, "1080p", cfg.Resolution)
 	assert.Equal(t, 9000, cfg.RTSPPort)
 }

@@ -18,23 +18,34 @@ import (
 
 	"github.com/pion/rtp"
 
+	"github.com/Afrouper/steinel-cam-bridge/pkg/events"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/mcu"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/mqtt"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/nabto"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/onvif"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/rtsp"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/webrtc"
+	"github.com/Afrouper/steinel-cam-bridge/pkg/xiongmai"
 )
 
 type BridgeManager struct {
-	currentBridge *webrtc.Bridge
-	mu            sync.RWMutex
+	currentBridge   *webrtc.Bridge
+	currentXMDriver *xiongmai.Driver
+	mu              sync.RWMutex
 }
 
 func (m *BridgeManager) SetBridge(b *webrtc.Bridge) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.currentBridge = b
+	m.currentXMDriver = nil
+}
+
+func (m *BridgeManager) SetXMDriver(d *xiongmai.Driver) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.currentXMDriver = d
+	m.currentBridge = nil
 }
 
 func (m *BridgeManager) SetResolution(res string) error {
@@ -43,7 +54,7 @@ func (m *BridgeManager) SetResolution(res string) error {
 	m.mu.RUnlock()
 
 	if b == nil {
-		return fmt.Errorf("camera bridge offline")
+		return nil
 	}
 	return b.SetResolution(res)
 }
@@ -51,102 +62,136 @@ func (m *BridgeManager) SetResolution(res string) error {
 func (m *BridgeManager) SetLampState(mode string) error {
 	m.mu.RLock()
 	b := m.currentBridge
+	d := m.currentXMDriver
 	m.mu.RUnlock()
 
-	if b == nil {
-		return fmt.Errorf("camera bridge offline")
+	if b != nil {
+		return b.SetLampState(mode)
 	}
-	return b.SetLampState(mode)
+	if d != nil {
+		modeLower := strings.ToLower(mode)
+		on := modeLower == "on" || modeLower == "1" || modeLower == "dauerlicht"
+		return d.SetLamp(on)
+	}
+	return fmt.Errorf("camera bridge offline")
 }
 
 func (m *BridgeManager) SetHighlight(percent int) error {
 	m.mu.RLock()
 	b := m.currentBridge
+	d := m.currentXMDriver
 	m.mu.RUnlock()
 
-	if b == nil {
-		return fmt.Errorf("camera bridge offline")
+	if b != nil {
+		b64, err := mcu.BuildSetHighlight(percent)
+		if err != nil {
+			return err
+		}
+		return b.SendCommand("tran_ctl", map[string]interface{}{"data": b64})
 	}
-	b64, err := mcu.BuildSetHighlight(percent)
-	if err != nil {
-		return err
+	if d != nil {
+		return d.SetDim(percent)
 	}
-	return b.SendCommand("tran_ctl", map[string]interface{}{"data": b64})
+	return fmt.Errorf("camera bridge offline")
 }
 
 func (m *BridgeManager) SetHighlightTime(seconds int) error {
 	m.mu.RLock()
 	b := m.currentBridge
+	d := m.currentXMDriver
 	m.mu.RUnlock()
 
-	if b == nil {
-		return fmt.Errorf("camera bridge offline")
+	if b != nil {
+		b64, err := mcu.BuildSetHighlightTime(seconds)
+		if err != nil {
+			return err
+		}
+		return b.SendCommand("tran_ctl", map[string]interface{}{"data": b64})
 	}
-	b64, err := mcu.BuildSetHighlightTime(seconds)
-	if err != nil {
-		return err
+	if d != nil {
+		return d.SetDuration(seconds)
 	}
-	return b.SendCommand("tran_ctl", map[string]interface{}{"data": b64})
+	return fmt.Errorf("camera bridge offline")
 }
 
 func (m *BridgeManager) SetLowlight(percent int) error {
 	m.mu.RLock()
 	b := m.currentBridge
+	d := m.currentXMDriver
 	m.mu.RUnlock()
 
-	if b == nil {
-		return fmt.Errorf("camera bridge offline")
+	if b != nil {
+		b64, err := mcu.BuildSetLowlight(percent)
+		if err != nil {
+			return err
+		}
+		return b.SendCommand("tran_ctl", map[string]interface{}{"data": b64})
 	}
-	b64, err := mcu.BuildSetLowlight(percent)
-	if err != nil {
-		return err
+	if d != nil {
+		return d.SetNightlight(percent)
 	}
-	return b.SendCommand("tran_ctl", map[string]interface{}{"data": b64})
+	return fmt.Errorf("camera bridge offline")
 }
 
 func (m *BridgeManager) SetLowlightTime(timeVal int) error {
 	m.mu.RLock()
 	b := m.currentBridge
+	d := m.currentXMDriver
 	m.mu.RUnlock()
 
-	if b == nil {
-		return fmt.Errorf("camera bridge offline")
+	if b != nil {
+		b64, err := mcu.BuildSetLowlightTime(timeVal)
+		if err != nil {
+			return err
+		}
+		return b.SendCommand("tran_ctl", map[string]interface{}{"data": b64})
 	}
-	b64, err := mcu.BuildSetLowlightTime(timeVal)
-	if err != nil {
-		return err
+	if d != nil {
+		return d.SetNightlightDuration(fmt.Sprintf("%dh", timeVal/60))
 	}
-	return b.SendCommand("tran_ctl", map[string]interface{}{"data": b64})
+	return fmt.Errorf("camera bridge offline")
 }
 
 func (m *BridgeManager) SetPIRSensitivity(percent int) error {
 	m.mu.RLock()
 	b := m.currentBridge
+	d := m.currentXMDriver
 	m.mu.RUnlock()
 
-	if b == nil {
-		return fmt.Errorf("camera bridge offline")
+	if b != nil {
+		b64, err := mcu.BuildSetPIRSensitivity(percent)
+		if err != nil {
+			return err
+		}
+		return b.SendCommand("tran_ctl", map[string]interface{}{"data": b64})
 	}
-	b64, err := mcu.BuildSetPIRSensitivity(percent)
-	if err != nil {
-		return err
+	if d != nil {
+		dist := percent / 10
+		if dist <= 0 {
+			dist = 1
+		}
+		return d.SetDistance(dist)
 	}
-	return b.SendCommand("tran_ctl", map[string]interface{}{"data": b64})
+	return fmt.Errorf("camera bridge offline")
 }
 
 func (m *BridgeManager) SetLuxThreshold(lux int) error {
 	m.mu.RLock()
 	b := m.currentBridge
+	d := m.currentXMDriver
 	m.mu.RUnlock()
 
-	if b == nil {
-		return fmt.Errorf("camera bridge offline")
+	if b != nil {
+		b64, err := mcu.BuildSetLuxThreshold(lux)
+		if err != nil {
+			return err
+		}
+		return b.SendCommand("tran_ctl", map[string]interface{}{"data": b64})
 	}
-	b64, err := mcu.BuildSetLuxThreshold(lux)
-	if err != nil {
-		return err
+	if d != nil {
+		return d.SetTwilight(lux)
 	}
-	return b.SendCommand("tran_ctl", map[string]interface{}{"data": b64})
+	return fmt.Errorf("camera bridge offline")
 }
 
 func (m *BridgeManager) SetSiren(on bool) error {
@@ -155,7 +200,7 @@ func (m *BridgeManager) SetSiren(on bool) error {
 	m.mu.RUnlock()
 
 	if b == nil {
-		return fmt.Errorf("camera bridge offline")
+		return nil
 	}
 	cmd := map[string]interface{}{
 		"play": on,
@@ -187,31 +232,39 @@ func (m *BridgeManager) GetSDCardManager() *webrtc.SDCardManager {
 func (m *BridgeManager) WriteAudioBackchannel(pkt *rtp.Packet) error {
 	m.mu.RLock()
 	b := m.currentBridge
+	d := m.currentXMDriver
 	m.mu.RUnlock()
 
-	if b == nil {
-		return fmt.Errorf("camera bridge offline")
+	if b != nil {
+		return b.WriteAudioBackchannel(pkt)
 	}
-	return b.WriteAudioBackchannel(pkt)
+	if d != nil {
+		d.OnAudioBackchannelPacket(pkt)
+		return nil
+	}
+	return fmt.Errorf("camera bridge offline")
 }
 
 var AppVersion = "dev"
 
 // AppConfig encapsulates the complete resolved runtime configuration
 type AppConfig struct {
-	NabtoConfig   *nabto.Config
-	Resolution    string
-	AudioCodec    string
-	RTSPPort      int
-	RTSPPath      string
-	ONVIFPort     int
-	ResetPairing  bool
-	MQTTBroker    string
-	MQTTUser      string
-	MQTTPassword  string
-	MQTTTopic     string
-	MQTTDiscovery string
-	Debug         bool
+	NabtoConfig    *nabto.Config
+	CameraType     string
+	CameraUser     string
+	CameraPassword string
+	Resolution     string
+	AudioCodec     string
+	RTSPPort       int
+	RTSPPath       string
+	ONVIFPort      int
+	ResetPairing   bool
+	MQTTBroker     string
+	MQTTUser       string
+	MQTTPassword   string
+	MQTTTopic      string
+	MQTTDiscovery  string
+	Debug          bool
 }
 
 func loadHomeAssistantOptionsFromPath(path string, cfg *AppConfig) {
@@ -225,6 +278,9 @@ func loadHomeAssistantOptionsFromPath(path string, cfg *AppConfig) {
 
 	var opts struct {
 		CameraIP            string `json:"camera_ip"`
+		CameraType          string `json:"camera_type"`
+		CameraUser          string `json:"camera_user"`
+		CameraPassword      string `json:"camera_password"`
 		QRCode              string `json:"qr_code"`
 		Resolution          string `json:"resolution"`
 		AudioCodec          string `json:"audio_codec"`
@@ -250,6 +306,15 @@ func loadHomeAssistantOptionsFromPath(path string, cfg *AppConfig) {
 
 	if opts.CameraIP != "" {
 		cfg.NabtoConfig.CameraIP = opts.CameraIP
+	}
+	if opts.CameraType != "" {
+		cfg.CameraType = opts.CameraType
+	}
+	if opts.CameraUser != "" {
+		cfg.CameraUser = opts.CameraUser
+	}
+	if opts.CameraPassword != "" {
+		cfg.CameraPassword = opts.CameraPassword
 	}
 	if opts.QRCode != "" {
 		nabto.ParseQRCode(opts.QRCode, cfg.NabtoConfig)
@@ -447,6 +512,17 @@ func resolveConfig(optionsPath string, fs *flag.FlagSet) *AppConfig {
 			cfg.ONVIFPort = p
 		}
 	}
+	if ct := os.Getenv("CAMERA_TYPE"); ct != "" {
+		cfg.CameraType = ct
+	}
+	if cu := os.Getenv("CAMERA_USER"); cu != "" {
+		cfg.CameraUser = cu
+	}
+	if cp := os.Getenv("CAMERA_PASSWORD"); cp != "" {
+		cfg.CameraPassword = cp
+	} else if cp := os.Getenv("CAMERA_PASS"); cp != "" {
+		cfg.CameraPassword = cp
+	}
 	if mb := os.Getenv("MQTT_BROKER"); mb != "" {
 		cfg.MQTTBroker = mb
 	}
@@ -484,6 +560,12 @@ func resolveConfig(optionsPath string, fs *flag.FlagSet) *AppConfig {
 			switch f.Name {
 			case "ip":
 				cfg.NabtoConfig.CameraIP = f.Value.String()
+			case "type":
+				cfg.CameraType = f.Value.String()
+			case "user":
+				cfg.CameraUser = f.Value.String()
+			case "pass", "password":
+				cfg.CameraPassword = f.Value.String()
 			case "qr":
 				nabto.ParseQRCode(f.Value.String(), cfg.NabtoConfig)
 			case "key":
@@ -530,6 +612,9 @@ func resolveConfig(optionsPath string, fs *flag.FlagSet) *AppConfig {
 func main() {
 	flag.String("qr", "", "Steinel camera QR code string (did=...,pid=...,sct=...,pairPwd=...)")
 	flag.String("ip", "", "Steinel camera local IP address")
+	flag.String("type", "", "Camera model type ('auto', 'l625', 'l620')")
+	flag.String("user", "", "Camera authentication username (for L 620 CAM)")
+	flag.String("pass", "", "Camera authentication password (for L 620 CAM)")
 	flag.String("key", "", "Path to client private key file")
 	flag.String("res", "", "Video resolution (1080p, 720p, 360p)")
 	flag.Int("port", 0, "RTSP server port")
@@ -552,11 +637,6 @@ func main() {
 		AppVersion = envVer
 	}
 
-	fmt.Println("═══════════════════════════════════════════════════════════════════")
-	fmt.Printf(" Steinel L 625 CAM SC — Standalone Bridge (%s)\n", AppVersion)
-	fmt.Println(" 100% Native Single Binary (Nabto + WebRTC + RTSP + ONVIF + MQTT)")
-	fmt.Println("═══════════════════════════════════════════════════════════════════")
-
 	// Resolve configuration according to POSIX & 12-Factor App hierarchy
 	appCfg := resolveConfig("/data/options.json", flag.CommandLine)
 	cfg := appCfg.NabtoConfig
@@ -566,8 +646,31 @@ func main() {
 		os.Getenv("IS_BETA") == "1" ||
 		os.Getenv("BETA") == "true"
 
+	isL620 := strings.EqualFold(appCfg.CameraType, "l620") ||
+		(appCfg.CameraPassword != "" && cfg.DeviceID == "" && cfg.SCT == "")
+
+	modelName := "L 625 CAM SC"
+	if isL620 {
+		modelName = "L 620 CAM"
+		if cfg.DeviceID == "" {
+			cfg.DeviceID = "steinel-l620"
+		}
+		if cfg.ProductID == "" {
+			cfg.ProductID = "pr-xiongmai"
+		}
+	}
+
+	fmt.Println("═══════════════════════════════════════════════════════════════════")
+	fmt.Printf(" Steinel %s — Standalone Bridge (%s)\n", modelName, AppVersion)
+	if isL620 {
+		fmt.Println(" 100% Native Single Binary (Xiongmai Sofia + Local RTSP + ONVIF + MQTT)")
+	} else {
+		fmt.Println(" 100% Native Single Binary (Nabto + WebRTC + RTSP + ONVIF + MQTT)")
+	}
+	fmt.Println("═══════════════════════════════════════════════════════════════════")
+
 	// Handle pairing reset
-	if appCfg.ResetPairing {
+	if appCfg.ResetPairing && !isL620 {
 		if cfg.PairPwd == "" || cfg.PairPwd == "xxxx" {
 			log.Printf("[Reset] ⚠️ Warning: Pairing reset requested, but no valid QR code ('qr_code') is configured! Re-pairing requires a valid QR code.")
 		} else {
@@ -584,7 +687,7 @@ func main() {
 		log.Fatalf("[Config] ❌ Error: Camera IP address is mandatory! Please configure 'camera_ip' in Home Assistant or supply -ip / CAMERA_IP.")
 	}
 
-	if cfg.DeviceID == "" && cfg.SCT == "" {
+	if !isL620 && cfg.DeviceID == "" && cfg.SCT == "" {
 		log.Printf("[!] Note: No QR code provided. Local direct connection mode will be used for %s.", cfg.CameraIP)
 	}
 
@@ -593,8 +696,10 @@ func main() {
 		_ = os.MkdirAll(dir, 0755)
 	}
 
-	log.Printf("[Config] Camera: %s (ID: %s, Res: %s, Audio: %s, Debug: %v)", cfg.CameraIP, cfg.DeviceID, appCfg.Resolution, appCfg.AudioCodec, appCfg.Debug)
-	log.Printf("[Config] Key:    %s", cfg.KeyPath)
+	log.Printf("[Config] Camera: %s (Type: %s, Model: %s, Res: %s, Audio: %s, Debug: %v)", cfg.CameraIP, appCfg.CameraType, modelName, appCfg.Resolution, appCfg.AudioCodec, appCfg.Debug)
+	if !isL620 {
+		log.Printf("[Config] Key:    %s", cfg.KeyPath)
+	}
 	log.Printf("[Config] Ports:  RTSP=%d, ONVIF=%d, WS-Discovery=3702/udp", appCfg.RTSPPort, appCfg.ONVIFPort)
 	if appCfg.MQTTBroker != "" {
 		log.Printf("[Config] MQTT:   Broker=%s, BaseTopic=%s, Discovery=%s", appCfg.MQTTBroker, appCfg.MQTTTopic, appCfg.MQTTDiscovery)
@@ -661,7 +766,7 @@ func main() {
 			DiscoveryPrefix: appCfg.MQTTDiscovery,
 			DeviceID:        cfg.DeviceID,
 			ProductID:       cfg.ProductID,
-			Model:           "L 625 CAM SC",
+			Model:           modelName,
 			BridgeHTTPURL:   fmt.Sprintf("http://%s:%d", cfg.CameraIP, appCfg.ONVIFPort),
 		}, mqtt.Callbacks{
 			SetLampMode:       bridgeMgr.SetLampState,
@@ -683,83 +788,99 @@ func main() {
 		}()
 	}
 
-	const reconnectCooldown = 30 * time.Second
-
-	// 4. Supervisor loop for Nabto + WebRTC
-	for ctx.Err() == nil {
-		client, err := nabto.NewClient(cfg)
-		if err != nil {
-			log.Printf("[!] Nabto client init error: %v", err)
-			select {
-			case <-ctx.Done():
-				break
-			case <-time.After(5 * time.Second):
-			}
-			continue
-		}
-
-		if err := client.Connect(); err != nil {
-			client.Close()
-			if ctx.Err() != nil {
-				break
-			}
-			log.Printf("[Supervisor] ⏳ Connect failed (%v). Waiting 30s before retry to allow camera reboot...", err)
-			select {
-			case <-ctx.Done():
-				break
-			case <-time.After(reconnectCooldown):
-			}
-			continue
-		}
-
-		port, err := client.GetSignalingPort()
-		if err != nil {
-			client.Close()
-			if ctx.Err() != nil {
-				break
-			}
-			log.Printf("[Supervisor] ⏳ GetSignalingPort failed (%v). Waiting 30s before retry...", err)
-			select {
-			case <-ctx.Done():
-				break
-			case <-time.After(reconnectCooldown):
-			}
-			continue
-		}
-
-		stream, err := client.OpenSignalingStream(port)
-		if err != nil {
-			client.Close()
-			if ctx.Err() != nil {
-				break
-			}
-			log.Printf("[Supervisor] ⏳ OpenSignalingStream failed (%v). Waiting 30s before retry...", err)
-			select {
-			case <-ctx.Done():
-				break
-			case <-time.After(reconnectCooldown):
-			}
-			continue
-		}
-
-		log.Printf("[Bridge] 🚀 [ONLINE] Stream ready at rtsp://0.0.0.0:%d/%s", appCfg.RTSPPort, appCfg.RTSPPath)
+	// 4. Branch: Xiongmai Sofia Driver (L 620 CAM) vs. Nabto WebRTC Driver (L 625 CAM SC)
+	if isL620 {
+		log.Printf("[Bridge] 🚀 [ONLINE] Steinel L 620 CAM stream ready at rtsp://0.0.0.0:%d/%s", appCfg.RTSPPort, appCfg.RTSPPath)
 		log.Printf("[Bridge] 🛰️ [ONVIF] Endpoints active at http://0.0.0.0:%d/onvif/device_service", appCfg.ONVIFPort)
 
-		bridge := webrtc.NewBridge(client, stream, rtspServer, appCfg.Resolution, 1*time.Second, appCfg.Debug)
-		bridgeMgr.SetBridge(bridge)
+		xmDriver := xiongmai.NewDriver(cfg.CameraIP, appCfg.CameraUser, appCfg.CameraPassword, rtspServer, events.GlobalBus, appCfg.Debug)
+		bridgeMgr.SetXMDriver(xmDriver)
 
-		_ = bridge.Run(ctx)
+		if err := xmDriver.Start(ctx); err != nil {
+			log.Printf("[Xiongmai] ⚠️ Driver initialization warning: %v", err)
+		}
+		defer xmDriver.Close()
 
-		bridgeMgr.SetBridge(nil)
-		stream.Close()
-		client.Close()
+		<-ctx.Done()
+	} else {
+		const reconnectCooldown = 30 * time.Second
 
-		if ctx.Err() == nil {
-			log.Printf("[Supervisor] ⏳ Stream session disconnected / Watchdog reset. Waiting 30s cooldown before reconnecting to allow camera reboot...")
-			select {
-			case <-ctx.Done():
-				break
-			case <-time.After(reconnectCooldown):
+		// Supervisor loop for Nabto + WebRTC
+		for ctx.Err() == nil {
+			client, err := nabto.NewClient(cfg)
+			if err != nil {
+				log.Printf("[!] Nabto client init error: %v", err)
+				select {
+				case <-ctx.Done():
+					break
+				case <-time.After(5 * time.Second):
+				}
+				continue
+			}
+
+			if err := client.Connect(); err != nil {
+				client.Close()
+				if ctx.Err() != nil {
+					break
+				}
+				log.Printf("[Supervisor] ⏳ Connect failed (%v). Waiting 30s before retry to allow camera reboot...", err)
+				select {
+				case <-ctx.Done():
+					break
+				case <-time.After(reconnectCooldown):
+				}
+				continue
+			}
+
+			port, err := client.GetSignalingPort()
+			if err != nil {
+				client.Close()
+				if ctx.Err() != nil {
+					break
+				}
+				log.Printf("[Supervisor] ⏳ GetSignalingPort failed (%v). Waiting 30s before retry...", err)
+				select {
+				case <-ctx.Done():
+					break
+				case <-time.After(reconnectCooldown):
+				}
+				continue
+			}
+
+			stream, err := client.OpenSignalingStream(port)
+			if err != nil {
+				client.Close()
+				if ctx.Err() != nil {
+					break
+				}
+				log.Printf("[Supervisor] ⏳ OpenSignalingStream failed (%v). Waiting 30s before retry...", err)
+				select {
+				case <-ctx.Done():
+					break
+				case <-time.After(reconnectCooldown):
+				}
+				continue
+			}
+
+			log.Printf("[Bridge] 🚀 [ONLINE] Stream ready at rtsp://0.0.0.0:%d/%s", appCfg.RTSPPort, appCfg.RTSPPath)
+			log.Printf("[Bridge] 🛰️ [ONVIF] Endpoints active at http://0.0.0.0:%d/onvif/device_service", appCfg.ONVIFPort)
+
+			bridge := webrtc.NewBridge(client, stream, rtspServer, appCfg.Resolution, 1*time.Second, appCfg.Debug)
+			bridgeMgr.SetBridge(bridge)
+
+			_ = bridge.Run(ctx)
+
+			bridgeMgr.SetBridge(nil)
+			stream.Close()
+			client.Close()
+
+			if ctx.Err() == nil {
+				log.Printf("[Supervisor] ⏳ Stream session disconnected / Watchdog reset. Waiting 30s cooldown before reconnecting to allow camera reboot...")
+				select {
+				case <-ctx.Done():
+					break
+				case <-time.After(reconnectCooldown):
+				}
 			}
 		}
 	}
