@@ -143,14 +143,16 @@ func formatLoginError(code int) string {
 
 // passwordCandidate represents a login attempt variant.
 type passwordCandidate struct {
-	label    string
-	password string
+	label       string
+	password    string
+	encryptType string
 }
 
 func (c *Client) getPasswordCandidates() []passwordCandidate {
 	if c.password == "" {
 		return []passwordCandidate{
-			{label: "empty password", password: ""},
+			{label: "empty password (MD5)", password: "", encryptType: "MD5"},
+			{label: "empty password (NONE)", password: "", encryptType: "NONE"},
 		}
 	}
 
@@ -161,10 +163,11 @@ func (c *Client) getPasswordCandidates() []passwordCandidate {
 	hexMD5 := hex.EncodeToString(md5Digest[:])
 
 	return []passwordCandidate{
-		{label: "Sofia 8-char hash", password: sofiaHash},
-		{label: "empty password (camera default)", password: ""},
-		{label: "32-char Hex MD5", password: hexMD5},
-		{label: "plaintext password", password: c.password},
+		{label: "Sofia 8-char hash (EncryptType MD5)", password: sofiaHash, encryptType: "MD5"},
+		{label: "empty password (camera default)", password: "", encryptType: "NONE"},
+		{label: "empty password (MD5)", password: "", encryptType: "MD5"},
+		{label: "32-char Hex MD5 (EncryptType MD5)", password: hexMD5, encryptType: "MD5"},
+		{label: "plaintext password (EncryptType NONE)", password: c.password, encryptType: "NONE"},
 	}
 }
 
@@ -175,12 +178,10 @@ func (c *Client) loginLocked() error {
 
 	for _, cand := range candidates {
 		loginReq := LoginReq{
-			Name: "OPUserLogin",
-			OPUserLogin: OPUserLoginInfo{
-				UserName:  c.user,
-				Password:  cand.password,
-				LoginType: "DVRIP-Web",
-			},
+			EncryptType: cand.encryptType,
+			LoginType:   "DVRIP-Web",
+			PassWord:    cand.password,
+			UserName:    c.user,
 		}
 
 		payload, err := json.Marshal(loginReq)
@@ -218,6 +219,9 @@ func (c *Client) loginLocked() error {
 		}
 
 		log.Printf("[Xiongmai] ℹ️ Auth attempt using %s rejected by camera (Ret: %d)", cand.label, resp.Ret)
+		if c.debug {
+			log.Printf("[Xiongmai] 🔍 Raw response payload: %s", string(respData))
+		}
 		lastErr = fmt.Errorf("camera login rejected: %s", formatLoginError(resp.Ret))
 		if resp.Ret != 124 {
 			return lastErr
@@ -396,11 +400,9 @@ func (c *Client) SendKeepAlive() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	req := KeepAliveReq{
-		Name: "OPKeepAlive",
-		OPKeepAlive: OPKeepAliveVal{
-			Time: time.Now().Format("2006-01-02 15:04:05"),
-		},
+	req := map[string]interface{}{
+		"Name":      "KeepAlive",
+		"SessionID": fmt.Sprintf("0x%08X", c.sessionID),
 	}
 	payload, _ := json.Marshal(req)
 	_, err := c.sendPacketLocked(MsgKeepAliveReq, payload)
@@ -458,7 +460,7 @@ func (c *Client) sendPacketLocked(msgID uint16, payload []byte) ([]byte, error) 
 	return []byte(cleanPayload), nil
 }
 
-// Close gracefully closes the connection.
+// Close gracefully logs out and closes the connection.
 func (c *Client) Close() error {
 	if c.closed.Swap(true) {
 		return nil
@@ -469,6 +471,15 @@ func (c *Client) Close() error {
 	defer c.mu.Unlock()
 
 	if c.conn != nil {
+		if c.isLoggedIn {
+			req := map[string]interface{}{
+				"Name":      "OPUserLogout",
+				"SessionID": fmt.Sprintf("0x%08X", c.sessionID),
+			}
+			payload, _ := json.Marshal(req)
+			_, _ = c.sendPacketLocked(MsgLogoutReq, payload)
+			c.isLoggedIn = false
+		}
 		err := c.conn.Close()
 		c.conn = nil
 		return err

@@ -378,7 +378,7 @@ func TestClientLoginFallback(t *testing.T) {
 				_ = json.Unmarshal(payload, &req)
 
 				var respPayload []byte
-				if req.OPUserLogin.Password == "" {
+				if req.PassWord == "" {
 					// Accept empty password
 					resp := LoginResp{
 						Name:      "OPUserLogin",

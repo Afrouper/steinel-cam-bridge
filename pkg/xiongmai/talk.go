@@ -42,6 +42,7 @@ func (t *TalkClient) StartTalk() error {
 		OPTalk: OPTalkInfo{
 			Action: "Start",
 		},
+		SessionID: fmt.Sprintf("0x%08X", t.client.sessionID),
 	}
 
 	payload, err := json.Marshal(req)
@@ -115,6 +116,7 @@ func (t *TalkClient) startTalkLocked() error {
 		OPTalk: OPTalkInfo{
 			Action: "Start",
 		},
+		SessionID: fmt.Sprintf("0x%08X", t.client.sessionID),
 	}
 	payload, _ := json.Marshal(req)
 	_, err := t.client.sendPacketLocked(MsgTalkClaimReq, payload)
@@ -140,6 +142,7 @@ func (t *TalkClient) StopTalk() error {
 		OPTalk: OPTalkInfo{
 			Action: "Stop",
 		},
+		SessionID: fmt.Sprintf("0x%08X", t.client.sessionID),
 	}
 	payload, _ := json.Marshal(req)
 	_, _ = t.client.sendPacketLocked(MsgTalkClaimReq, payload)
