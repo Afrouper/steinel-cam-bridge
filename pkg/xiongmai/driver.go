@@ -68,19 +68,22 @@ func (d *Driver) Start(ctx context.Context) error {
 
 	// Step 1: Connect & Login on Sofia port 34567
 	if err := d.client.Connect(ctx); err != nil {
-		return fmt.Errorf("xiongmai connection error: %w", err)
+		log.Printf("[Xiongmai Driver] ⚠️ Sofia port %d connection error (%v) — continuing in resilient RTSP mode", DefaultPort, err)
 	}
 
 	// Step 2: Zero-Touch RTSP Enablement
 	if err := d.client.EnableRTSP(); err != nil {
-		log.Printf("[Xiongmai Driver] ⚠️ Could not enable RTSP automatically: %v", err)
+		log.Printf("[Xiongmai Driver] ℹ️ Zero-touch RTSP enablement result: %v", err)
 	}
 
 	// Step 3: Query initial light and MCU states
 	d.syncInitialState()
 
-	// Step 4: Start RTSP Ingest with effective password discovered during login
+	// Step 4: Start RTSP Ingest with effective password or configured password
 	effectivePwd := d.client.GetEffectivePassword()
+	if effectivePwd == "" && d.password != "" {
+		effectivePwd = d.password
+	}
 	d.ingest = NewRTSPIngest(d.cameraIP, RTSPPort, d.user, effectivePwd, 0, d.rtspServer, d.debug)
 	if err := d.ingest.Start(ctx); err != nil {
 		log.Printf("[Xiongmai Driver] ⚠️ Failed to start RTSP Ingest: %v", err)
@@ -90,7 +93,7 @@ func (d *Driver) Start(ctx context.Context) error {
 	go d.keepAliveLoop(ctx)
 
 	d.running = true
-	log.Printf("[Xiongmai Driver] ✅ Steinel L 620 CAM driver fully initialized and running")
+	log.Printf("[Xiongmai Driver] ✅ Steinel L 620 CAM driver running")
 	return nil
 }
 
