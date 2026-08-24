@@ -2,6 +2,12 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.1.0-beta.4
+
+- 🔄 **RTSP-Passwort-Synchronisation**: Automatische Übergabe des beim Sofia-Login bestätigten wirksamen Gerätepassworts an den internen RTSP-Stream-Client auf Port 554.
+- 📋 **Detailliertes Auth-Attempt-Logging**: Transparente Protokollierung jedes einzelnen Authentifizierungsversuchs im Add-on-Log zur schnellen Fehlerdiagnose.
+- 🌐 **Präzisierte UI-Beschreibungen (DE/EN)**: Klarstellung in den Home Assistant Einstellungsdialogen, dass das lokale Gerätepasswort (ab Werk leer) und nicht das App-Cloud-Passwort gemeint ist.
+
 ## 1.1.0-beta.3
 
 - 🔑 **Multi-Varianten Authentifizierungs-Fallback**: Automatisches Durchprobieren aller Authentifizierungsformate bei Return-Code `124`. Behebt Login-Probleme, wenn das lokale Kamera-Passwort ab Werk leer ist (`""`), der Nutzer ein App-Cloud-Passwort eingetragen hat oder die Firmware Plaintext/Hex-MD5/Sofia-Hash erwartet.
