@@ -217,12 +217,14 @@ func (c *Client) loginLocked() error {
 			return nil
 		}
 
+		log.Printf("[Xiongmai] ℹ️ Auth attempt using %s rejected by camera (Ret: %d)", cand.label, resp.Ret)
 		lastErr = fmt.Errorf("camera login rejected: %s", formatLoginError(resp.Ret))
 		if resp.Ret != 124 {
 			return lastErr
 		}
 	}
 
+	log.Printf("[Xiongmai] ❌ All authentication candidates rejected by camera (check username and device password)")
 	return lastErr
 }
 
