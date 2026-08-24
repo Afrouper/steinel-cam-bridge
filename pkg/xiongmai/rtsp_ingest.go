@@ -52,7 +52,7 @@ func NewRTSPIngest(cameraIP string, port int, user, password string, streamSubty
 	authPart := ""
 	if password != "" {
 		authPart = fmt.Sprintf("%s:%s@", user, password)
-	} else {
+	} else if user != "" && user != "admin" {
 		authPart = fmt.Sprintf("%s@", user)
 	}
 

@@ -19,17 +19,18 @@ import (
 
 // Client manages the TCP control connection to a Xiongmai/Steinel L 620 CAM on port 34567.
 type Client struct {
-	addr       string
-	user       string
-	password   string
-	conn       net.Conn
-	sessionID  uint32
-	sequence   uint32
-	mu         sync.Mutex
-	isLoggedIn bool
-	debug      bool
-	closeChan  chan struct{}
-	closed     atomic.Bool
+	addr              string
+	user              string
+	password          string
+	effectivePassword string
+	conn              net.Conn
+	sessionID         uint32
+	sequence          uint32
+	mu                sync.Mutex
+	isLoggedIn        bool
+	debug             bool
+	closeChan         chan struct{}
+	closed            atomic.Bool
 }
 
 // NewClient creates a new Xiongmai Sofia protocol client.
@@ -41,12 +42,20 @@ func NewClient(cameraIP string, port int, user, password string, debug bool) *Cl
 		user = "admin"
 	}
 	return &Client{
-		addr:      fmt.Sprintf("%s:%d", cameraIP, port),
-		user:      user,
-		password:  password,
-		debug:     debug,
-		closeChan: make(chan struct{}),
+		addr:              fmt.Sprintf("%s:%d", cameraIP, port),
+		user:              user,
+		password:          password,
+		effectivePassword: password,
+		debug:             debug,
+		closeChan:         make(chan struct{}),
 	}
+}
+
+// GetEffectivePassword returns the actual working password discovered during login.
+func (c *Client) GetEffectivePassword() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.effectivePassword
 }
 
 // Connect dials the camera and performs the Sofia login handshake.
@@ -195,6 +204,12 @@ func (c *Client) loginLocked() error {
 				if sID, err := strconv.ParseUint(sessionStr, 16, 32); err == nil {
 					c.sessionID = uint32(sID)
 				}
+			}
+
+			if cand.password == "" {
+				c.effectivePassword = ""
+			} else {
+				c.effectivePassword = c.password
 			}
 
 			c.isLoggedIn = true

@@ -79,11 +79,11 @@ func (d *Driver) Start(ctx context.Context) error {
 	// Step 3: Query initial light and MCU states
 	d.syncInitialState()
 
-	// Step 4: Start RTSP Ingest
-	if d.ingest != nil {
-		if err := d.ingest.Start(ctx); err != nil {
-			log.Printf("[Xiongmai Driver] ⚠️ Failed to start RTSP Ingest: %v", err)
-		}
+	// Step 4: Start RTSP Ingest with effective password discovered during login
+	effectivePwd := d.client.GetEffectivePassword()
+	d.ingest = NewRTSPIngest(d.cameraIP, RTSPPort, d.user, effectivePwd, 0, d.rtspServer, d.debug)
+	if err := d.ingest.Start(ctx); err != nil {
+		log.Printf("[Xiongmai Driver] ⚠️ Failed to start RTSP Ingest: %v", err)
 	}
 
 	// Step 5: Start KeepAlive loop
