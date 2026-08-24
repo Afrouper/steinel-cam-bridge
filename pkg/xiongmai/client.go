@@ -91,7 +91,7 @@ func HashPassword(secret string) string {
 	}
 	//nolint:gosec // Required by Xiongmai hardware protocol specification
 	// CodeQL [go/weak-crypto-password-hashing] Mandated by Xiongmai camera protocol
-	digest := md5.Sum([]byte(secret))
+	digest := md5.Sum([]byte(secret)) // CodeQL [go/weak-crypto-password-hashing] // lgtm [go/weak-crypto-password-hashing]
 	return hex.EncodeToString(digest[:])
 }
 

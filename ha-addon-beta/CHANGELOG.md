@@ -2,6 +2,14 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.1.0-beta.1
+
+- 📷 **Steinel L 620 CAM / XLED CAM 1 Unterstützung**: Vollständige lokale Integration der älteren Kameragenerationen (Xiongmai Sofia TCP-Protokoll auf Port 34567).
+- ⚡ **Zero-Touch RTSP-Aktivierung**: Automatisches Aktivieren des internen RTSP-Servers auf Port 554 der L 620 CAM beim Start der Bridge.
+- 🎙️ **2-Wege-Audio (Gegensprechen)**: Weiterleitung des ONVIF / RTSP Profile T Audio Backchannels aus Apple Home, Scrypted und Home Assistant direkt an den Außenlautsprecher der L 620 CAM via `OPTalk`.
+- 💡 **MCU-Steuerung & MQTT Auto-Discovery**: Volle Unterstützung aller Leuchten- und Sensor-Entitäten (Hauptlicht Ein/Aus, Dimmung 10–100%, Grundlicht/Nachtlicht 0–50%, Nachlaufzeit, Dämmerungsschwelle, PIR-Erfassungsreichweite).
+- 🛡️ **Sicheres Credential-Masking**: Sichere Maskierung von Passwörtern in RTSP-Stream-URLs in Log-Ausgaben via standardkonformem `net/url.Redacted`.
+
 ## 1.0.1-beta.2
 
 - 📦 **Kanonischer Go-Modulpfad (`pkg.go.dev`)**: Umstellung des internen Modulpfads von `steinel-cam-bridge` auf den offiziellen GitHub-Modulpfad `github.com/Afrouper/steinel-cam-bridge` zur Aktivierung der automatischen Dokumentations- und Paket-Indexierung auf [pkg.go.dev](https://pkg.go.dev/github.com/Afrouper/steinel-cam-bridge).
