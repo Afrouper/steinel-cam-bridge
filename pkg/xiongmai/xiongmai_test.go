@@ -51,8 +51,8 @@ func TestHashPassword(t *testing.T) {
 
 	pwd := "admin123"
 	got := HashPassword(pwd)
-	if len(got) != 32 {
-		t.Errorf("expected 32-char hex MD5, got %q (len %d)", got, len(got))
+	if len(got) != 8 {
+		t.Errorf("expected 8-char Sofia hash, got %q (len %d)", got, len(got))
 	}
 }
 

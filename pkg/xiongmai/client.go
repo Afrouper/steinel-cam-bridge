@@ -3,7 +3,6 @@ package xiongmai
 import (
 	"context"
 	"crypto/md5"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -76,9 +75,10 @@ func (c *Client) Connect(ctx context.Context) error {
 	return nil
 }
 
-// HashPassword generates the password representation for the legacy Xiongmai Sofia protocol.
-// Note: MD5 is cryptographically weak, but it is strictly mandated by the Xiongmai camera
-// firmware (Sofia daemon on TCP Port 34567). The camera firmware will reject any other hash.
+// HashPassword generates the 8-character Sofia password hash used by Xiongmai DVR-IP / Sofia daemons.
+// The algorithm computes the MD5 digest of the plaintext password, processes byte pairs with modulo 62 (0x3E),
+// and maps each pair to the pseudo-base62 alphabet [0-9A-Za-z].
+// Note: If secret is empty, an empty string is returned (standard for unauthenticated / default accounts).
 //
 // CodeQL [go/weak-crypto-password-hashing] Mandated by legacy Xiongmai camera firmware protocol specification.
 // CodeQL [go/weak-sensitive-data-hashing] Mandated by legacy Xiongmai camera firmware protocol specification.
@@ -92,7 +92,43 @@ func HashPassword(secret string) string {
 	//nolint:gosec // Required by Xiongmai hardware protocol specification
 	// CodeQL [go/weak-crypto-password-hashing] Mandated by Xiongmai camera protocol
 	digest := md5.Sum([]byte(secret)) // CodeQL [go/weak-crypto-password-hashing] // lgtm [go/weak-crypto-password-hashing]
-	return hex.EncodeToString(digest[:])
+
+	var result strings.Builder
+	result.Grow(8)
+	for i := 0; i < 8; i++ {
+		pairSum := int(digest[2*i]) + int(digest[2*i+1])
+		pairMod := pairSum % 0x3E
+		var charCode byte
+		if pairMod <= 9 {
+			charCode = byte(pairMod + 0x30) // '0'-'9'
+		} else if pairMod <= 35 {
+			charCode = byte(pairMod + 0x37) // 'A'-'Z'
+		} else {
+			charCode = byte(pairMod + 0x3D) // 'a'-'z'
+		}
+		result.WriteByte(charCode)
+	}
+	return result.String()
+}
+
+// formatLoginError returns a user-friendly error description for Xiongmai login return codes.
+func formatLoginError(code int) string {
+	switch code {
+	case 124:
+		return fmt.Sprintf("invalid username or password (code %d: check 'camera_user' and 'camera_password')", code)
+	case 125:
+		return fmt.Sprintf("user does not exist (code %d: check 'camera_user')", code)
+	case 126:
+		return fmt.Sprintf("user account is locked (code %d: too many failed login attempts, wait 10 minutes or restart camera)", code)
+	case 127:
+		return fmt.Sprintf("maximum concurrent connections reached (code %d)", code)
+	case 128:
+		return fmt.Sprintf("permission denied (code %d)", code)
+	case 129:
+		return fmt.Sprintf("password format error (code %d)", code)
+	default:
+		return fmt.Sprintf("login rejected by camera with code %d", code)
+	}
 }
 
 // loginLocked performs the OPUserLogin command.
@@ -122,7 +158,7 @@ func (c *Client) loginLocked() error {
 	}
 
 	if resp.Ret != 100 && resp.Ret != 0 {
-		return fmt.Errorf("camera login rejected with code: %d", resp.Ret)
+		return fmt.Errorf("camera login rejected: %s", formatLoginError(resp.Ret))
 	}
 
 	// Parse SessionID (e.g. "0x00000001" or decimal)

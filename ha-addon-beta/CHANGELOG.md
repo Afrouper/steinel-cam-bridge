@@ -2,6 +2,11 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.1.0-beta.2
+
+- 🔐 **Fix Xiongmai Sofia Passwort-Hashing (`Ret: 124`)**: Implementierung des proprietären 8-Zeichen Sofia-Hash-Algorithmus (MD5-Bytepaar-Transformation) zur erfolgreichen Authentifizierung an der Steinel L 620 CAM.
+- 💬 **Präzise Fehlerbeschreibungen**: Menschenlesbare Fehlermeldungen bei Login-Problemen (z. B. falsches Passwort, gesperrter Account).
+
 ## 1.1.0-beta.1
 
 - 📷 **Steinel L 620 CAM / XLED CAM 1 Unterstützung**: Vollständige lokale Integration der älteren Kameragenerationen (Xiongmai Sofia TCP-Protokoll auf Port 34567).
