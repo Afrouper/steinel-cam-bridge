@@ -76,11 +76,14 @@ func (c *Client) Connect(ctx context.Context) error {
 	return nil
 }
 
-// HashPassword generates the password representation for Xiongmai Sofia protocol.
+// HashPassword generates the password representation for the legacy Xiongmai Sofia protocol.
+// Note: MD5 is cryptographically weak, but it is strictly mandated by the Xiongmai camera
+// firmware (Sofia daemon on TCP Port 34567). The camera firmware will reject any other hash.
 func HashPassword(pwd string) string {
 	if pwd == "" {
 		return ""
 	}
+	//nolint:gosec // Required by Xiongmai hardware protocol specification
 	h := md5.New()
 	h.Write([]byte(pwd))
 	return hex.EncodeToString(h.Sum(nil))
