@@ -95,7 +95,7 @@ func DecodeHeader(data []byte) (*Header, error) {
 // Login JSON Request (DVRIP / Sofia standard flat structure on MsgID 1000)
 type LoginReq struct {
 	EncryptType string `json:"EncryptType"`
-	LoginType   string `json:"LoginType"`
+	LoginType   string `json:"LoginType,omitempty"`
 	PassWord    string `json:"PassWord"`
 	UserName    string `json:"UserName"`
 }

@@ -144,31 +144,67 @@ func formatLoginError(code int) string {
 // passwordCandidate represents a login attempt variant.
 type passwordCandidate struct {
 	label       string
+	user        string
 	password    string
 	encryptType string
+	loginType   string
 }
 
 func (c *Client) getPasswordCandidates() []passwordCandidate {
-	if c.password == "" {
-		return []passwordCandidate{
-			{label: "empty password (MD5)", password: "", encryptType: "MD5"},
-			{label: "empty password (NONE)", password: "", encryptType: "NONE"},
+	cleanUser := strings.TrimSpace(c.user)
+	if cleanUser == "" {
+		cleanUser = "admin"
+	}
+	cleanPwd := strings.TrimSpace(c.password)
+
+	var candidates []passwordCandidate
+
+	if cleanPwd != "" {
+		sofiaHash := HashPassword(cleanPwd)
+		//nolint:gosec // Required by Xiongmai hardware protocol specification
+		md5Digest := md5.Sum([]byte(cleanPwd))
+		hexMD5Lower := hex.EncodeToString(md5Digest[:])
+		hexMD5Upper := strings.ToUpper(hexMD5Lower)
+
+		// 1. Sofia 8-char hash with DVRIP-Web, Mobile, MobileDVR, and empty LoginType
+		candidates = append(candidates,
+			passwordCandidate{label: "Sofia 8-char hash (LoginType: DVRIP-Web)", user: cleanUser, password: sofiaHash, encryptType: "MD5", loginType: "DVRIP-Web"},
+			passwordCandidate{label: "Sofia 8-char hash (LoginType: Mobile)", user: cleanUser, password: sofiaHash, encryptType: "MD5", loginType: "Mobile"},
+			passwordCandidate{label: "Sofia 8-char hash (LoginType: MobileDVR)", user: cleanUser, password: sofiaHash, encryptType: "MD5", loginType: "MobileDVR"},
+			passwordCandidate{label: "Sofia 8-char hash (no LoginType)", user: cleanUser, password: sofiaHash, encryptType: "MD5", loginType: ""},
+			// 2. Plaintext password with DVRIP-Web and Mobile
+			passwordCandidate{label: "Plaintext password (LoginType: DVRIP-Web)", user: cleanUser, password: cleanPwd, encryptType: "NONE", loginType: "DVRIP-Web"},
+			passwordCandidate{label: "Plaintext password (LoginType: Mobile)", user: cleanUser, password: cleanPwd, encryptType: "NONE", loginType: "Mobile"},
+			// 3. 32-char Hex MD5 (lower & UPPER)
+			passwordCandidate{label: "32-char Hex MD5 lowercase", user: cleanUser, password: hexMD5Lower, encryptType: "MD5", loginType: "DVRIP-Web"},
+			passwordCandidate{label: "32-char Hex MD5 UPPERCASE", user: cleanUser, password: hexMD5Upper, encryptType: "MD5", loginType: "DVRIP-Web"},
+		)
+	}
+
+	// 4. Empty password variants
+	candidates = append(candidates,
+		passwordCandidate{label: "Empty password (NONE, DVRIP-Web)", user: cleanUser, password: "", encryptType: "NONE", loginType: "DVRIP-Web"},
+		passwordCandidate{label: "Empty password (MD5, DVRIP-Web)", user: cleanUser, password: "", encryptType: "MD5", loginType: "DVRIP-Web"},
+		passwordCandidate{label: "Empty password (NONE, Mobile)", user: cleanUser, password: "", encryptType: "NONE", loginType: "Mobile"},
+		passwordCandidate{label: "Empty password (no LoginType)", user: cleanUser, password: "", encryptType: "NONE", loginType: ""},
+	)
+
+	// 5. Alternate default accounts on Xiongmai hardware
+	if cleanUser == "admin" {
+		candidates = append(candidates,
+			passwordCandidate{label: "User 'default' (empty)", user: "default", password: "", encryptType: "NONE", loginType: "DVRIP-Web"},
+			passwordCandidate{label: "User 'default' (pass: tluafed)", user: "default", password: "tluafed", encryptType: "NONE", loginType: "DVRIP-Web"},
+			passwordCandidate{label: "User 'root' (empty)", user: "root", password: "", encryptType: "NONE", loginType: "DVRIP-Web"},
+		)
+		if cleanPwd != "" {
+			candidates = append(candidates,
+				passwordCandidate{label: "User 'default' (Sofia hash)", user: "default", password: HashPassword(cleanPwd), encryptType: "MD5", loginType: "DVRIP-Web"},
+				passwordCandidate{label: "User 'root' (Sofia hash)", user: "root", password: HashPassword(cleanPwd), encryptType: "MD5", loginType: "DVRIP-Web"},
+			)
 		}
 	}
 
-	sofiaHash := HashPassword(c.password)
-	//nolint:gosec // Required by Xiongmai hardware protocol specification
-	// CodeQL [go/weak-crypto-password-hashing] Mandated by legacy Xiongmai camera firmware protocol specification.
-	md5Digest := md5.Sum([]byte(c.password)) // CodeQL [go/weak-crypto-password-hashing] // lgtm [go/weak-crypto-password-hashing]
-	hexMD5 := hex.EncodeToString(md5Digest[:])
-
-	return []passwordCandidate{
-		{label: "Sofia 8-char hash (EncryptType MD5)", password: sofiaHash, encryptType: "MD5"},
-		{label: "empty password (camera default)", password: "", encryptType: "NONE"},
-		{label: "empty password (MD5)", password: "", encryptType: "MD5"},
-		{label: "32-char Hex MD5 (EncryptType MD5)", password: hexMD5, encryptType: "MD5"},
-		{label: "plaintext password (EncryptType NONE)", password: c.password, encryptType: "NONE"},
-	}
+	return candidates
 }
 
 // loginLocked performs the OPUserLogin command with automated password format fallback.
@@ -176,12 +212,12 @@ func (c *Client) loginLocked() error {
 	candidates := c.getPasswordCandidates()
 	var lastErr error
 
-	for _, cand := range candidates {
+	for i, cand := range candidates {
 		loginReq := LoginReq{
 			EncryptType: cand.encryptType,
-			LoginType:   "DVRIP-Web",
+			LoginType:   cand.loginType,
 			PassWord:    cand.password,
-			UserName:    c.user,
+			UserName:    cand.user,
 		}
 
 		payload, err := json.Marshal(loginReq)
@@ -210,15 +246,15 @@ func (c *Client) loginLocked() error {
 			if cand.password == "" {
 				c.effectivePassword = ""
 			} else {
-				c.effectivePassword = c.password
+				c.effectivePassword = cand.password
 			}
 
 			c.isLoggedIn = true
-			log.Printf("[Xiongmai] 🔑 Authenticated successfully using %s (SessionID: 0x%08X)", cand.label, c.sessionID)
+			log.Printf("[Xiongmai] 🔑 Authenticated successfully using %s (User: %s, SessionID: 0x%08X)", cand.label, cand.user, c.sessionID)
 			return nil
 		}
 
-		log.Printf("[Xiongmai] ℹ️ Auth attempt using %s rejected by camera (Ret: %d)", cand.label, resp.Ret)
+		log.Printf("[Xiongmai] ℹ️ Candidate #%d [%s] rejected by camera (Ret: %d)", i+1, cand.label, resp.Ret)
 		if c.debug {
 			log.Printf("[Xiongmai] 🔍 Raw response payload: %s", string(respData))
 		}
@@ -228,7 +264,7 @@ func (c *Client) loginLocked() error {
 		}
 	}
 
-	log.Printf("[Xiongmai] ❌ All authentication candidates rejected by camera (check username and device password)")
+	log.Printf("[Xiongmai] ❌ All %d authentication candidates rejected by camera (check username and device password)", len(candidates))
 	return lastErr
 }
 

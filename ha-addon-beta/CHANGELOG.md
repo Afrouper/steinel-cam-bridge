@@ -2,6 +2,12 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.1.0-beta.6
+
+- 🔐 **Multi-Client & Multi-LoginType Authentifizierung**: Automatisches Testen aller LoginType-Varianten (`DVRIP-Web`, `Mobile`, `MobileDVR`, omitted) und alternativer Standard-Nutzer (`admin`, `default`, `root`).
+- 🧹 **Automatische Input-Bereinigung**: Automatisches Entfernen von versehentlichen führenden/nachgestellten Leerzeichen oder Umbrüchen in Benutzername und Passwort.
+- 📊 **Nummeriertes Kandidaten-Logging**: Detaillierte Protokollierung jedes einzelnen Authentifizierungsversuchs zur schnellen Analyse.
+
 ## 1.1.0-beta.5
 
 - 🔑 **Fix DVRIP Login-Paketstruktur**: Umstellung der Login-Anfrage (`MsgID 1000`) auf die native flache DVRIP-Struktur (`EncryptType`, `PassWord`, `LoginType`, `UserName`). Behebt `Ret: 124` Fehler durch Vermeidung von verschachtelten JSON-Wrappern.
