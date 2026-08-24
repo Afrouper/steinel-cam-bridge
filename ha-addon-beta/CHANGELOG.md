@@ -2,6 +2,13 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.1.0-beta.5
+
+- 🔑 **Fix DVRIP Login-Paketstruktur**: Umstellung der Login-Anfrage (`MsgID 1000`) auf die native flache DVRIP-Struktur (`EncryptType`, `PassWord`, `LoginType`, `UserName`). Behebt `Ret: 124` Fehler durch Vermeidung von verschachtelten JSON-Wrappern.
+- 📡 **Vollständiger Audit aller DVRIP Message-IDs**: Korrektur der Nachrichten-IDs für Konfigurationsbefehle (`MsgConfigSetReq = 1040`, `MsgConfigGetReq = 1042`) und Heartbeat (`MsgKeepAliveReq = 1006`).
+- 🛡️ **Graceful Logout & Session-Freigabe**: Senden von `OPUserLogout` (`MsgID 1002`) beim Stoppen des Treibers zur sofortigen Freigabe der Verbindung auf der Kamera.
+- 🔍 **Erweitertes Debug-Logging**: Ausgabe der Rohantwort der Kamera im Debug-Modus zur transparenten Diagnose.
+
 ## 1.1.0-beta.4
 
 - 🔄 **RTSP-Passwort-Synchronisation**: Automatische Übergabe des beim Sofia-Login bestätigten wirksamen Gerätepassworts an den internen RTSP-Stream-Client auf Port 554.
