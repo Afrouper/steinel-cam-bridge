@@ -110,7 +110,7 @@ func TestClientLoginAndAutoRTSP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to start mock TCP listener: %v", err)
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 
 	port := listener.Addr().(*net.TCPAddr).Port
 
@@ -119,7 +119,7 @@ func TestClientLoginAndAutoRTSP(t *testing.T) {
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 
 		for {
 			hdrBuf := make([]byte, HeaderLength)
@@ -188,7 +188,7 @@ func TestClientLoginAndAutoRTSP(t *testing.T) {
 	if err := client.Connect(ctx); err != nil {
 		t.Fatalf("failed to connect: %v", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	if client.sessionID != 0x42 {
 		t.Errorf("expected sessionID 0x42, got 0x%08X", client.sessionID)
@@ -224,7 +224,7 @@ func TestTalkAudioPacketForwarding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to start mock TCP listener: %v", err)
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 
 	port := listener.Addr().(*net.TCPAddr).Port
 	receivedAudioFrames := make(chan []byte, 10)
@@ -234,7 +234,7 @@ func TestTalkAudioPacketForwarding(t *testing.T) {
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 
 		for {
 			hdrBuf := make([]byte, HeaderLength)
@@ -251,17 +251,18 @@ func TestTalkAudioPacketForwarding(t *testing.T) {
 				return
 			}
 
-			if hdr.MsgID == MsgLoginReq {
+			switch hdr.MsgID {
+			case MsgLoginReq:
 				resp, _ := json.Marshal(LoginResp{Ret: 100, SessionID: "0x01"})
 				respWithTerm := append(resp, 0x0A, 0x00)
 				respHdr := Header{Magic: HeaderMagic, SessionID: 1, Sequence: hdr.Sequence, MsgID: MsgLoginResp, DataLength: uint32(len(respWithTerm))}
 				_, _ = conn.Write(append(respHdr.Encode(), respWithTerm...))
-			} else if hdr.MsgID == MsgTalkClaimReq {
+			case MsgTalkClaimReq:
 				resp := []byte(`{"Name":"OPTalk","Ret":100}`)
 				respWithTerm := append(resp, 0x0A, 0x00)
 				respHdr := Header{Magic: HeaderMagic, SessionID: 1, Sequence: hdr.Sequence, MsgID: MsgTalkClaimResp, DataLength: uint32(len(respWithTerm))}
 				_, _ = conn.Write(append(respHdr.Encode(), respWithTerm...))
-			} else if hdr.MsgID == MsgTalkSendData {
+			case MsgTalkSendData:
 				receivedAudioFrames <- payload
 			}
 		}
@@ -274,7 +275,7 @@ func TestTalkAudioPacketForwarding(t *testing.T) {
 	if err := client.Connect(ctx); err != nil {
 		t.Fatalf("failed to connect: %v", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	talk := NewTalkClient(client, true)
 

@@ -16,10 +16,10 @@ import (
 // Bytes 14-15: MsgId (uint16 LE)
 // Bytes 16-19: DataLength (uint32 LE)
 const (
-	HeaderMagic  byte   = 0xFF
-	HeaderLength int    = 20
-	DefaultPort  int    = 34567
-	RTSPPort     int    = 554
+	HeaderMagic  byte = 0xFF
+	HeaderLength int  = 20
+	DefaultPort  int  = 34567
+	RTSPPort     int  = 554
 )
 
 // Xiongmai Message IDs

@@ -799,7 +799,7 @@ func main() {
 		if err := xmDriver.Start(ctx); err != nil {
 			log.Printf("[Xiongmai] ⚠️ Driver initialization warning: %v", err)
 		}
-		defer xmDriver.Close()
+		defer func() { _ = xmDriver.Close() }()
 
 		<-ctx.Done()
 	} else {
