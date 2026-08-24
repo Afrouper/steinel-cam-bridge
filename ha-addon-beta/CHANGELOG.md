@@ -2,6 +2,12 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.1.0-beta.7
+
+- 🛡️ **Resilienter RTSP-Fallback-Modus**: Verhindert Startabbrüche bei Sofia-Auth-Mismatches (`Ret: 124`). Startet direkt den nativen 1080p RTSP-Stream auf Port 554 und übernimmt die vergebene SessionID für Licht- und MCU-Steuerungsversuche.
+- ⚡ **Bereinigte Authentifizierungsmatrix**: Reduktion auf die 4 Kern-Authentifizierungsmodi zur Minimierung von Verbindungsverzögerungen.
+- 🔒 **Sicheres Debug-Logging**: Maskierte Ausgabe des konfigurierten Passworts mit Zeichenanzahl (`Lin************* (16 chars)`).
+
 ## 1.1.0-beta.6
 
 - 🔐 **Multi-Client & Multi-LoginType Authentifizierung**: Automatisches Testen aller LoginType-Varianten (`DVRIP-Web`, `Mobile`, `MobileDVR`, omitted) und alternativer Standard-Nutzer (`admin`, `default`, `root`).
