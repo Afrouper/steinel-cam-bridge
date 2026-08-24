@@ -20,12 +20,24 @@ Der QR Code wird initial für das Pairing benötigt. Danach muss er nicht mehr z
 | Option | Typ | Standard | Beschreibung |
 |---|---|---|---|
 | `camera_ip` | String | *(Pflichtfeld)* | Lokale IP-Adresse der Steinel-Kamera im Heimnetz (z. B. `192.168.1.100`) |
-| `qr_code` | String | `""` | QR-Code Payload zum automatischen Pairing (initial) |
+| `camera_type` | Liste | `auto` | Kameramodell: `auto` (automatische Erkennung), `l625` (L 625 CAM SC), `l620` (L 620 CAM / XLED CAM 1) |
+| `camera_user` | String | `admin` | Benutzername für L 620 CAM (Standard: `admin`) |
+| `camera_password` | String | `""` | Geräte-Passwort für L 620 CAM (in der Steinel App vergeben) |
+| `qr_code` | String | `""` | QR-Code Payload zum automatischen Pairing der L 625 CAM SC |
 | `resolution` | Liste | `1080p` | Standardauflösung (`1080p`, `720p`, `360p`) |
 | `audio_codec` | Liste | `aac` | Audio-Codec des RTSP-Streams: `aac` (nativ transkodiert) oder `pcmu` |
 | `rtsp_port` | Port | `8554` | RTSP Server Port |
 | `onvif_port` | Port | `8000` | ONVIF HTTP Service Port |
-| `reset_pairing` | Boolean | `false` | Setzen Sie diese Option auf `true`, um den gespeicherten Schlüssel zu löschen und ein erneutes Pairing mit dem angegebenen `qr_code` zu erzwingen |
+| `reset_pairing` | Boolean | `false` | Setzen Sie diese Option auf `true`, um den gespeicherten Schlüssel zu löschen und ein erneutes Pairing der L 625 mit dem angegebenen `qr_code` zu erzwingen |
+
+---
+
+## 📷 Einrichtung Steinel L 620 CAM (Generation 1)
+Für die Vorgängermodelle **L 620 CAM** und **XLED CAM 1**:
+1. Tragen Sie die **`camera_ip`** ein.
+2. Geben Sie Ihr in der Steinel-App vergebenes **`camera_password`** ein (Benutzer `camera_user` bleibt `admin`).
+3. Setzen Sie optional `camera_type: l620`.
+4. Klicken Sie auf **Speichern** und **Starten**. Die Bridge aktiviert RTSP auf der Kamera vollautomatisch und bindet Video, 2-Wege-Audio und alle MQTT-Entitäten lokal ein!
 
 ---
 
