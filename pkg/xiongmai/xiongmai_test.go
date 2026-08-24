@@ -422,3 +422,25 @@ func TestClientLoginFallback(t *testing.T) {
 		t.Fatalf("expected session ID 0x07, got 0x%08X", client.sessionID)
 	}
 }
+
+func TestMaskPassword(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"", "<empty>"},
+		{"a", "*"},
+		{"ab", "**"},
+		{"abc", "***"},
+		{"abcd", "abc*"},
+		{"secret123", "sec******"},
+		{"superlongpassword", "sup**************"},
+	}
+
+	for _, tc := range tests {
+		got := MaskPassword(tc.input)
+		if got != tc.expected {
+			t.Errorf("MaskPassword(%q) = %q, want %q", tc.input, got, tc.expected)
+		}
+	}
+}

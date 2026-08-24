@@ -207,8 +207,27 @@ func (c *Client) getPasswordCandidates() []passwordCandidate {
 	return candidates
 }
 
+// MaskPassword returns a safely masked representation of a password for debug logging.
+// It shows the first 3 characters followed by asterisks for the remaining characters.
+// If the password has 3 or fewer characters, all characters are masked as asterisks.
+func MaskPassword(pwd string) string {
+	if pwd == "" {
+		return "<empty>"
+	}
+	runes := []rune(pwd)
+	if len(runes) <= 3 {
+		return strings.Repeat("*", len(runes))
+	}
+	return string(runes[:3]) + strings.Repeat("*", len(runes)-3)
+}
+
 // loginLocked performs the OPUserLogin command with automated password format fallback.
 func (c *Client) loginLocked() error {
+	if c.debug {
+		log.Printf("[Xiongmai] 🔍 Login check: user=%q, password=%s (length: %d chars)",
+			c.user, MaskPassword(c.password), len(c.password))
+	}
+
 	candidates := c.getPasswordCandidates()
 	var lastErr error
 
