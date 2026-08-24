@@ -3,6 +3,7 @@ package xiongmai
 import (
 	"context"
 	"crypto/md5"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -131,46 +132,83 @@ func formatLoginError(code int) string {
 	}
 }
 
-// loginLocked performs the OPUserLogin command.
-func (c *Client) loginLocked() error {
-	loginReq := LoginReq{
-		Name: "OPUserLogin",
-		OPUserLogin: OPUserLoginInfo{
-			UserName:  c.user,
-			Password:  HashPassword(c.password),
-			LoginType: "DVRIP-Web",
-		},
-	}
+// passwordCandidate represents a login attempt variant.
+type passwordCandidate struct {
+	label    string
+	password string
+}
 
-	payload, err := json.Marshal(loginReq)
-	if err != nil {
-		return err
-	}
-
-	respData, err := c.sendPacketLocked(MsgLoginReq, payload)
-	if err != nil {
-		return err
-	}
-
-	var resp LoginResp
-	if err := json.Unmarshal(respData, &resp); err != nil {
-		return fmt.Errorf("failed to parse login response: %w (raw: %s)", err, string(respData))
-	}
-
-	if resp.Ret != 100 && resp.Ret != 0 {
-		return fmt.Errorf("camera login rejected: %s", formatLoginError(resp.Ret))
-	}
-
-	// Parse SessionID (e.g. "0x00000001" or decimal)
-	sessionStr := strings.TrimPrefix(resp.SessionID, "0x")
-	if sessionStr != "" {
-		if sID, err := strconv.ParseUint(sessionStr, 16, 32); err == nil {
-			c.sessionID = uint32(sID)
+func (c *Client) getPasswordCandidates() []passwordCandidate {
+	if c.password == "" {
+		return []passwordCandidate{
+			{label: "empty password", password: ""},
 		}
 	}
 
-	c.isLoggedIn = true
-	return nil
+	sofiaHash := HashPassword(c.password)
+	//nolint:gosec // Required by Xiongmai hardware protocol specification
+	// CodeQL [go/weak-crypto-password-hashing] Mandated by legacy Xiongmai camera firmware protocol specification.
+	md5Digest := md5.Sum([]byte(c.password)) // CodeQL [go/weak-crypto-password-hashing] // lgtm [go/weak-crypto-password-hashing]
+	hexMD5 := hex.EncodeToString(md5Digest[:])
+
+	return []passwordCandidate{
+		{label: "Sofia 8-char hash", password: sofiaHash},
+		{label: "empty password (camera default)", password: ""},
+		{label: "32-char Hex MD5", password: hexMD5},
+		{label: "plaintext password", password: c.password},
+	}
+}
+
+// loginLocked performs the OPUserLogin command with automated password format fallback.
+func (c *Client) loginLocked() error {
+	candidates := c.getPasswordCandidates()
+	var lastErr error
+
+	for _, cand := range candidates {
+		loginReq := LoginReq{
+			Name: "OPUserLogin",
+			OPUserLogin: OPUserLoginInfo{
+				UserName:  c.user,
+				Password:  cand.password,
+				LoginType: "DVRIP-Web",
+			},
+		}
+
+		payload, err := json.Marshal(loginReq)
+		if err != nil {
+			return err
+		}
+
+		respData, err := c.sendPacketLocked(MsgLoginReq, payload)
+		if err != nil {
+			return err
+		}
+
+		var resp LoginResp
+		if err := json.Unmarshal(respData, &resp); err != nil {
+			return fmt.Errorf("failed to parse login response: %w (raw: %s)", err, string(respData))
+		}
+
+		if resp.Ret == 100 || resp.Ret == 0 {
+			sessionStr := strings.TrimPrefix(resp.SessionID, "0x")
+			if sessionStr != "" {
+				if sID, err := strconv.ParseUint(sessionStr, 16, 32); err == nil {
+					c.sessionID = uint32(sID)
+				}
+			}
+
+			c.isLoggedIn = true
+			log.Printf("[Xiongmai] 🔑 Authenticated successfully using %s (SessionID: 0x%08X)", cand.label, c.sessionID)
+			return nil
+		}
+
+		lastErr = fmt.Errorf("camera login rejected: %s", formatLoginError(resp.Ret))
+		if resp.Ret != 124 {
+			return lastErr
+		}
+	}
+
+	return lastErr
 }
 
 // EnableRTSP ensures that the internal RTSP server on port 554 is activated on the camera.

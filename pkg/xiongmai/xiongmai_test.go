@@ -341,3 +341,84 @@ func TestSanitizeRTSPURL(t *testing.T) {
 		})
 	}
 }
+
+func TestClientLoginFallback(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to create listener: %v", err)
+	}
+	defer func() { _ = listener.Close() }()
+
+	port := listener.Addr().(*net.TCPAddr).Port
+
+	// Mock server that rejects Sofia hash with 124, but accepts empty password
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+
+		for {
+			hdrBuf := make([]byte, HeaderLength)
+			if _, err := io.ReadFull(conn, hdrBuf); err != nil {
+				return
+			}
+			hdr, err := DecodeHeader(hdrBuf)
+			if err != nil {
+				return
+			}
+			payload := make([]byte, hdr.DataLength)
+			if _, err := io.ReadFull(conn, payload); err != nil {
+				return
+			}
+
+			if hdr.MsgID == MsgLoginReq {
+				var req LoginReq
+				_ = json.Unmarshal(payload, &req)
+
+				var respPayload []byte
+				if req.OPUserLogin.Password == "" {
+					// Accept empty password
+					resp := LoginResp{
+						Name:      "OPUserLogin",
+						Ret:       100,
+						SessionID: "0x00000007",
+					}
+					respPayload, _ = json.Marshal(resp)
+				} else {
+					// Reject others with 124
+					resp := LoginResp{
+						Name: "OPUserLogin",
+						Ret:  124,
+					}
+					respPayload, _ = json.Marshal(resp)
+				}
+
+				respHdr := &Header{
+					Magic:      HeaderMagic,
+					Channel:    1,
+					SessionID:  0,
+					Sequence:   hdr.Sequence,
+					TotalPkt:   1,
+					CurPkt:     0,
+					MsgID:      MsgLoginResp,
+					DataLength: uint32(len(respPayload)),
+				}
+				_, _ = conn.Write(respHdr.Encode())
+				_, _ = conn.Write(respPayload)
+			}
+		}
+	}()
+
+	client := NewClient("127.0.0.1", port, "admin", "someWrongPassword", false)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if err := client.Connect(ctx); err != nil {
+		t.Fatalf("expected fallback to succeed, got error: %v", err)
+	}
+	if client.sessionID != 0x07 {
+		t.Fatalf("expected session ID 0x07, got 0x%08X", client.sessionID)
+	}
+}
