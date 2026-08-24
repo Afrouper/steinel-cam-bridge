@@ -18,26 +18,26 @@ environment:
 options:
   camera_ip: ""
   camera_type: "auto"
-  camera_user: "admin"
-  camera_password: ""
   qr_code: ""
+  reset_pairing: false
+  camera_password: ""
+  camera_user: "admin"
   resolution: "1080p"
   audio_codec: "aac"
   rtsp_port: 8554
   onvif_port: 8000
-  reset_pairing: false
   debug: false
 schema:
   camera_ip: "str"
   camera_type: "list(auto|l625|l620)?"
-  camera_user: "str?"
-  camera_password: "password?"
   qr_code: "str?"
+  reset_pairing: "bool?"
+  camera_password: "password?"
+  camera_user: "str?"
   resolution: "list(1080p|720p|360p)"
   audio_codec: "list(aac|pcmu)"
   rtsp_port: "port"
   onvif_port: "port"
-  reset_pairing: "bool?"
   debug: "bool?"
   mqtt_broker: "str?"
   mqtt_user: "str?"

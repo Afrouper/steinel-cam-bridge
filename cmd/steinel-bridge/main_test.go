@@ -3,11 +3,13 @@ package main
 import (
 	"encoding/json"
 	"flag"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -183,4 +185,22 @@ func TestLayer4_CLIFlagsOverrideAll(t *testing.T) {
 	assert.Equal(t, "secret_cli", cfg.CameraPassword)
 	assert.Equal(t, "1080p", cfg.Resolution)
 	assert.Equal(t, 9000, cfg.RTSPPort)
+}
+
+func TestProbePort(t *testing.T) {
+	// Start mock TCP listener on an ephemeral port
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	assert.NoError(t, err)
+	defer func() { _ = listener.Close() }()
+
+	port := listener.Addr().(*net.TCPAddr).Port
+
+	// Probe listening port -> should return true
+	isOpen := probePort("127.0.0.1", port, 500*time.Millisecond)
+	assert.True(t, isOpen)
+
+	// Probe closed port -> should return false
+	_ = listener.Close()
+	isClosed := probePort("127.0.0.1", port, 100*time.Millisecond)
+	assert.False(t, isClosed)
 }

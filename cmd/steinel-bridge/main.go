@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -609,6 +610,17 @@ func resolveConfig(optionsPath string, fs *flag.FlagSet) *AppConfig {
 	return cfg
 }
 
+// probePort checks if a specific TCP port is open and accepting connections within a given timeout.
+func probePort(ip string, port int, timeout time.Duration) bool {
+	target := net.JoinHostPort(ip, strconv.Itoa(port))
+	conn, err := net.DialTimeout("tcp", target, timeout)
+	if err == nil {
+		_ = conn.Close()
+		return true
+	}
+	return false
+}
+
 func main() {
 	flag.String("qr", "", "Steinel camera QR code string (did=...,pid=...,sct=...,pairPwd=...)")
 	flag.String("ip", "", "Steinel camera local IP address")
@@ -646,8 +658,29 @@ func main() {
 		os.Getenv("IS_BETA") == "1" ||
 		os.Getenv("BETA") == "true"
 
-	isL620 := strings.EqualFold(appCfg.CameraType, "l620") ||
-		(appCfg.CameraPassword != "" && cfg.DeviceID == "" && cfg.SCT == "")
+	if cfg.CameraIP == "" {
+		log.Fatalf("[Config] ❌ Error: Camera IP address is mandatory! Please configure 'camera_ip' in Home Assistant or supply -ip / CAMERA_IP.")
+	}
+
+	// Model Selection: Explicit configuration vs. Auto-Detection via Port 34567 Probe
+	var isL620 bool
+	switch strings.ToLower(strings.TrimSpace(appCfg.CameraType)) {
+	case "l620":
+		isL620 = true
+		log.Printf("[Config] 📷 Camera model configured explicitly: Steinel L 620 CAM / XLED CAM 1 (Xiongmai Sofia)")
+	case "l625":
+		isL620 = false
+		log.Printf("[Config] 📷 Camera model configured explicitly: Steinel L 625 CAM SC (Nabto Edge)")
+	default: // "auto" or unspecified
+		log.Printf("[Config] 🔍 Camera model set to 'auto': Probing %s on Port 34567...", cfg.CameraIP)
+		if probePort(cfg.CameraIP, 34567, 1500*time.Millisecond) {
+			isL620 = true
+			log.Printf("[Config] 🎯 Auto-detected Steinel L 620 CAM / XLED CAM 1 (Port 34567 Xiongmai Sofia is open)")
+		} else {
+			isL620 = false
+			log.Printf("[Config] 🎯 Auto-detected Steinel L 625 CAM SC (Port 34567 closed, selecting Nabto Edge driver)")
+		}
+	}
 
 	modelName := "L 625 CAM SC"
 	if isL620 {
@@ -681,10 +714,6 @@ func main() {
 		} else {
 			log.Printf("[Reset] ✅ Existing key removed. Fresh pairing will be performed on connect.")
 		}
-	}
-
-	if cfg.CameraIP == "" {
-		log.Fatalf("[Config] ❌ Error: Camera IP address is mandatory! Please configure 'camera_ip' in Home Assistant or supply -ip / CAMERA_IP.")
 	}
 
 	if !isL620 && cfg.DeviceID == "" && cfg.SCT == "" {
