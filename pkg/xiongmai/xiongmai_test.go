@@ -303,3 +303,41 @@ func TestTalkAudioPacketForwarding(t *testing.T) {
 		t.Fatalf("timeout waiting for talk audio frame on TCP socket")
 	}
 }
+
+func TestSanitizeRTSPURL(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "With username and password",
+			input:    "rtsp://admin:supersecret@192.168.1.100:554/stream=0",
+			expected: "rtsp://admin:xxxxx@192.168.1.100:554/stream=0",
+		},
+		{
+			name:     "With username only",
+			input:    "rtsp://admin@192.168.1.100:554/stream=0",
+			expected: "rtsp://admin@192.168.1.100:554/stream=0",
+		},
+		{
+			name:     "Without auth",
+			input:    "rtsp://192.168.1.100:554/stream=0",
+			expected: "rtsp://192.168.1.100:554/stream=0",
+		},
+		{
+			name:     "Complex password with special characters",
+			input:    "rtsp://admin:p%40ssw%3Ard@192.168.1.100:554/stream=0",
+			expected: "rtsp://admin:xxxxx@192.168.1.100:554/stream=0",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := SanitizeRTSPURL(tc.input)
+			if got != tc.expected {
+				t.Errorf("SanitizeRTSPURL(%q) = %q, want %q", tc.input, got, tc.expected)
+			}
+		})
+	}
+}

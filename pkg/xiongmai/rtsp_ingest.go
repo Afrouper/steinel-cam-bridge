@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"strings"
+	"net/url"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -17,6 +17,15 @@ import (
 	"github.com/bluenviron/gortsplib/v4/pkg/format"
 	"github.com/pion/rtp"
 )
+
+// SanitizeRTSPURL safely masks password credentials in RTSP URLs using standard URL parsing.
+func SanitizeRTSPURL(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return "[invalid-url]"
+	}
+	return u.Redacted()
+}
 
 // RTSPIngest handles reading the live H.264/G.711 stream from the camera's internal RTSP server (port 554)
 // and feeding it into the local RTSP server and audio transcoder.
@@ -85,14 +94,7 @@ func (ing *RTSPIngest) ingestLoop(ctx context.Context) {
 		}
 
 		if ing.debug {
-			// Mask password in log output
-			logURL := ing.rtspURL
-			if idx := strings.Index(logURL, ":"); idx != -1 {
-				if atIdx := strings.Index(logURL, "@"); atIdx != -1 && atIdx > idx {
-					logURL = logURL[:idx+1] + "***" + logURL[atIdx:]
-				}
-			}
-			log.Printf("[Xiongmai Ingest] 🔌 Connecting to camera RTSP stream at %s", logURL)
+			log.Printf("[Xiongmai Ingest] 🔌 Connecting to camera RTSP stream at %s", SanitizeRTSPURL(ing.rtspURL))
 		}
 
 		err := ing.runSession(ctx)
