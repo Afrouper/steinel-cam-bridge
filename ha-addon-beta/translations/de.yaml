@@ -12,11 +12,11 @@ configuration:
     name: "Pairing-Schlüssel zurücksetzen (nur L 625 CAM SC)"
     description: "Löscht den lokal gespeicherten Schlüssel der L 625 und erzwingt ein neues Pairing mit dem angegebenen QR-Code."
   camera_password:
-    name: "Geräte-Passwort (nur L 620 CAM / XLED)"
-    description: "Das in der Steinel-App vergebene Geräte-Passwort für die L 620 CAM."
+    name: "Lokales Geräte-Passwort (nur L 620 CAM / XLED)"
+    description: "Das lokale Hardware-Passwort der L 620 CAM (ACHTUNG: Nicht das Steinel-Cloud-Konto-Passwort!). Ab Werk ist die Kamera ohne Passwort – bei Werkseinstellung einfach leer lassen."
   camera_user:
-    name: "Benutzername (nur L 620 CAM)"
-    description: "Geräte-Benutzername für die L 620 CAM (Standard: admin)."
+    name: "Lokaler Geräte-Benutzername (nur L 620 CAM)"
+    description: "Lokaler Benutzername auf der L 620 CAM (Standard: admin)."
   resolution:
     name: "Video-Auflösung"
     description: "Auflösung des H.264 Live-Videostreams (1080p, 720p oder 360p)."

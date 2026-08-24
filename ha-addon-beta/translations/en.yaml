@@ -1,0 +1,49 @@
+configuration:
+  camera_ip:
+    name: "Camera IP Address"
+    description: "Local IP address of the Steinel camera on your home network (e.g. 192.168.1.100)."
+  camera_type:
+    name: "Camera Model"
+    description: "Select your model: 'auto' (automatic detection via network port probe), 'l625' (L 625 CAM SC) or 'l620' (L 620 CAM / XLED CAM 1)."
+  qr_code:
+    name: "QR Code Payload (L 625 CAM SC only)"
+    description: "For L 625: The pairing payload from the Steinel App ('Share camera'): did=...,pid=...,sct=...,pairPwd=..."
+  reset_pairing:
+    name: "Reset Pairing Key (L 625 CAM SC only)"
+    description: "Deletes the locally cached pairing key for L 625 and forces a new pairing using the specified QR code."
+  camera_password:
+    name: "Local Device Password (L 620 CAM / XLED only)"
+    description: "Local on-device hardware password of the L 620 CAM (NOTE: Not your Steinel Cloud account password!). By default, the camera has no password — leave blank for factory default."
+  camera_user:
+    name: "Local Device Username (L 620 CAM only)"
+    description: "Local username on the L 620 CAM (default: admin)."
+  resolution:
+    name: "Video Resolution"
+    description: "H.264 live video stream resolution (1080p, 720p, or 360p)."
+  audio_codec:
+    name: "Audio Codec"
+    description: "'aac' (recommended for Apple HomeKit, Scrypted & browsers) or 'pcmu' (raw PCM)."
+  rtsp_port:
+    name: "RTSP Port"
+    description: "Port for local RTSP stream (default: 8554)."
+  onvif_port:
+    name: "ONVIF Port"
+    description: "HTTP port for ONVIF media, discovery, and control services (default: 8000)."
+  debug:
+    name: "Debug Logging"
+    description: "Enables verbose diagnostic logging in the add-on log."
+  mqtt_broker:
+    name: "MQTT Broker URL (optional)"
+    description: "Manual MQTT broker address (e.g. tcp://192.168.1.50:1883). Leave blank if using Home Assistant Mosquitto add-on (auto-discovered)."
+  mqtt_user:
+    name: "MQTT Username (optional)"
+    description: "Username for MQTT broker authentication."
+  mqtt_password:
+    name: "MQTT Password (optional)"
+    description: "Password for MQTT broker authentication."
+  mqtt_topic_prefix:
+    name: "MQTT Topic Prefix"
+    description: "Base topic for MQTT messages (default: steinel)."
+  mqtt_discovery_prefix:
+    name: "Home Assistant Discovery Prefix"
+    description: "MQTT Auto-Discovery prefix (default: homeassistant)."
