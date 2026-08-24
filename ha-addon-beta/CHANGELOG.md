@@ -4,8 +4,8 @@ Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hi
 
 ## 1.1.0-beta.3
 
-- 🔑 **Multi-Varianten Authentifizierungs-Fallback**: Automatisches Durchprobieren aller gängigen Xiongmai Authentifizierungsformate (Sofia-Hash, leeres Hardware-Default-Passwort, 32-Zeichen Hex-MD5, Plaintext) bei Return-Code `124`.
-- 📝 **Informatives Auth-Logging**: Eindeutige Logausgabe der erfolgreich verwendeten Authentifizierungsmethode.
+- 🔑 **Multi-Varianten Authentifizierungs-Fallback**: Automatisches Durchprobieren aller Authentifizierungsformate bei Return-Code `124`. Behebt Login-Probleme, wenn das lokale Kamera-Passwort ab Werk leer ist (`""`), der Nutzer ein App-Cloud-Passwort eingetragen hat oder die Firmware Plaintext/Hex-MD5/Sofia-Hash erwartet.
+- 📝 **Eindeutiges Authentifizierungs-Logging**: Die Bridge loggt transparent im Startlog, welche Authentifizierungsmethode erfolgreich war (`Sofia-Hash`, `empty password`, `Hex-MD5` oder `Plaintext`).
 
 ## 1.1.0-beta.2
 
