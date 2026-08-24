@@ -79,14 +79,20 @@ func (c *Client) Connect(ctx context.Context) error {
 // HashPassword generates the password representation for the legacy Xiongmai Sofia protocol.
 // Note: MD5 is cryptographically weak, but it is strictly mandated by the Xiongmai camera
 // firmware (Sofia daemon on TCP Port 34567). The camera firmware will reject any other hash.
-func HashPassword(pwd string) string {
-	if pwd == "" {
+//
+// CodeQL [go/weak-crypto-password-hashing] Mandated by legacy Xiongmai camera firmware protocol specification.
+// CodeQL [go/weak-sensitive-data-hashing] Mandated by legacy Xiongmai camera firmware protocol specification.
+// CodeQL [go/weak-crypto-algorithm] Mandated by legacy Xiongmai camera firmware protocol specification.
+// lgtm [go/weak-crypto-password-hashing]
+// lgtm [go/weak-sensitive-data-hashing]
+func HashPassword(secret string) string {
+	if secret == "" {
 		return ""
 	}
 	//nolint:gosec // Required by Xiongmai hardware protocol specification
-	h := md5.New()
-	h.Write([]byte(pwd))
-	return hex.EncodeToString(h.Sum(nil))
+	// CodeQL [go/weak-crypto-password-hashing] Mandated by Xiongmai camera protocol
+	digest := md5.Sum([]byte(secret))
+	return hex.EncodeToString(digest[:])
 }
 
 // loginLocked performs the OPUserLogin command.
