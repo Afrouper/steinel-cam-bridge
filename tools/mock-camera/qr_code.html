@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <title>Steinel L 620 CAM — Mock Camera QR Code</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #1a1a1a;
+            color: #ffffff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        .card {
+            background: #2a2a2a;
+            padding: 30px;
+            border-radius: 16px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+            text-align: center;
+            max-width: 480px;
+            width: 100%;
+        }
+        h1 {
+            font-size: 22px;
+            margin-top: 0;
+            color: #00d2ff;
+        }
+        p {
+            font-size: 14px;
+            color: #cccccc;
+            line-height: 1.5;
+        }
+        .qr-container {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            display: inline-block;
+            margin: 20px 0;
+        }
+        .sn-box {
+            background: #111;
+            padding: 10px 16px;
+            border-radius: 8px;
+            font-family: monospace;
+            font-size: 18px;
+            color: #00ff88;
+            letter-spacing: 2px;
+            margin-bottom: 15px;
+            border: 1px solid #333;
+        }
+        input[type="text"] {
+            background: #111;
+            border: 1px solid #444;
+            color: #fff;
+            padding: 10px;
+            border-radius: 6px;
+            width: 80%;
+            text-align: center;
+            font-size: 16px;
+            font-family: monospace;
+            margin-bottom: 10px;
+        }
+        button {
+            background: #00d2ff;
+            color: #000;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            font-weight: bold;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        button:hover {
+            background: #00b0d8;
+        }
+    </style>
+    <!-- Lightweight QR Generator -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+</head>
+<body>
+
+<div class="card">
+    <h1>🎥 Steinel L 620 CAM — Pairing QR-Code</h1>
+    <p>Scanne diesen QR-Code in der Steinel App unter <b>„Gerät hinzufügen“</b> oder <b>„Teilen / Scannen“</b>:</p>
+
+    <div class="qr-container">
+        <div id="qrcode"></div>
+    </div>
+
+    <div class="sn-box" id="sn-display">0011223344556677</div>
+
+    <p style="font-size: 12px; color: #888;">
+        Möchtest du eine andere Seriennummer testen? Trage sie hier ein:
+    </p>
+    <input type="text" id="sn-input" value="0011223344556677" maxlength="32">
+    <br>
+    <button onclick="updateQR()">QR-Code aktualisieren</button>
+</div>
+
+<script>
+    var qrcode = new QRCode(document.getElementById("qrcode"), {
+        text: "0011223344556677",
+        width: 256,
+        height: 256,
+        colorDark : "#000000",
+        colorLight : "#ffffff",
+        correctLevel : QRCode.CorrectLevel.H
+    });
+
+    function updateQR() {
+        var sn = document.getElementById("sn-input").value.trim();
+        if (sn) {
+            qrcode.clear();
+            qrcode.makeCode(sn);
+            document.getElementById("sn-display").innerText = sn;
+        }
+    }
+</script>
+
+</body>
+</html>
