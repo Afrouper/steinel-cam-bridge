@@ -236,16 +236,7 @@ func (c *Client) publishDiscovery(client paho.Client) {
 		"icon":         "mdi:motion-sensor",
 	})
 
-	// 5. Sensor (Lux)
-	publishEntity("sensor", "lux", map[string]interface{}{
-		"name":                "Umgebungshelligkeit",
-		"device_class":        "illuminance",
-		"state_class":         "measurement",
-		"unit_of_measurement": "lx",
-		"state_topic":         fmt.Sprintf("%s/lux/state", c.baseTopic),
-	})
-
-	// 6. Number (PIR Sensitivity: 0 - 100%)
+	// 5. Number (PIR Sensitivity: 0 - 100%)
 	publishEntity("number", "pir_sensitivity", map[string]interface{}{
 		"name":                "PIR Empfindlichkeit",
 		"min":                 0,
@@ -257,7 +248,7 @@ func (c *Client) publishDiscovery(client paho.Client) {
 		"command_topic":       fmt.Sprintf("%s/pir_sensitivity/set", c.baseTopic),
 	})
 
-	// 7. Number (Lux Threshold: 2 - 1000 lx)
+	// 6. Number (Lux Threshold: 2 - 1000 lx)
 	publishEntity("number", "lux_threshold", map[string]interface{}{
 		"name":                "Dämmerungsschwelle",
 		"min":                 2,
@@ -365,7 +356,8 @@ func (c *Client) publishStatus(st events.DeviceStatus) {
 	pub("duration/state", strconv.Itoa(st.HighlightTime))
 	pub("lowlight/state", strconv.Itoa(st.Lowlight))
 
-	// 3. Sensor values
+	// 3. Sensor values & thresholds
+	pub("lux_threshold/state", strconv.Itoa(st.Lux))
 	pub("lux/state", strconv.Itoa(st.Lux))
 	pub("pir_sensitivity/state", strconv.Itoa(st.PIRSensitivity))
 
@@ -430,10 +422,17 @@ func (c *Client) handleCommand(_ paho.Client, msg paho.Message) {
 			}
 		}
 
-	case strings.HasSuffix(topic, "/lux_threshold/set"):
+	case strings.HasSuffix(topic, "/lux_threshold/set"), strings.HasSuffix(topic, "/lux/set"):
 		if val, err := strconv.Atoi(payload); err == nil {
 			if c.cb.SetLuxThreshold != nil {
 				_ = c.cb.SetLuxThreshold(val)
+			}
+			c.mu.RLock()
+			cl := c.client
+			c.mu.RUnlock()
+			if cl != nil && cl.IsConnected() {
+				cl.Publish(fmt.Sprintf("%s/lux_threshold/state", c.baseTopic), 1, true, strconv.Itoa(val))
+				cl.Publish(fmt.Sprintf("%s/lux/state", c.baseTopic), 1, true, strconv.Itoa(val))
 			}
 		}
 

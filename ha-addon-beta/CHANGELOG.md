@@ -2,6 +2,10 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.1.0-beta.11
+
+- 🧹 **Bereinigung Dämmerungsschwelle (L 625)**: Entfernen des irreführenden statischen Sensors `sensor.lux` (*„Umgebungshelligkeit“*). Vollständiges Mapping der Kamera-Schaltschwelle auf den konfigurierbaren Slider `number.lux_threshold` (*„Dämmerungsschwelle“*, 2 - 1000 lx) mit bidirektionaler Zustandsrückmeldung.
+
 ## 1.1.0-beta.10
 
 - 📢 **Fix Home Assistant Sirenen-Steuerung (L 625)**: Unterstützung von JSON-Payloads (`{"state":"ON"}`, `{"state":"ON","volume_level":0.8,"duration":2}`) auf dem MQTT-Topic `siren/set`. Behebt das Problem, dass Home Assistant Sirenen-Befehle fälschlicherweise als `play: false` interpretierte.
