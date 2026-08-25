@@ -2,6 +2,11 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.1.0-beta.10
+
+- 📢 **Fix Home Assistant Sirenen-Steuerung (L 625)**: Unterstützung von JSON-Payloads (`{"state":"ON"}`, `{"state":"ON","volume_level":0.8,"duration":2}`) auf dem MQTT-Topic `siren/set`. Behebt das Problem, dass Home Assistant Sirenen-Befehle fälschlicherweise als `play: false` interpretierte.
+- 🔄 **MQTT Sirenen-Zustandsrückmeldung**: Sofortige Veröffentlichung des aktuellen Sirenen-Status (`ON`/`OFF`) auf `siren/state`.
+
 ## 1.1.0-beta.9
 
 - 🛑 **MQTT Auto-Discovery Pause für L 620**: Temporäres Ausblenden von nicht funktionalen MQTT-Licht- und Sensor-Entitäten in Home Assistant für die Steinel L 620 CAM, bis das Steuerprotokoll finalisiert ist.
