@@ -2,6 +2,15 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.1.0-beta.12
+
+- 🎥 **Volle Steinel L 620 CAM / XLED CAM 1 Unterstützung**: Vollständige native Integration der Generation 1 Kameras über das Xiongmai Sofia Protokoll ohne Cloud-Abhängigkeit.
+- 🔑 **Verifizierter Login-Handshake**: Umstellung auf `DVRIP-Mobile` mit mathematisch bit-genau verifiziertem 8-Zeichen Sofia MD5-Hash (`HashPassword`).
+- 💡 **Steinel MCU Hardwaresteuerung über Home Assistant MQTT**: Steuerung von Hauptlicht (`number.highlight`), Grundlicht (`number.lowlight`), Dämmerungsschwelle (`number.lux_threshold`), Nachlaufzeit (`number.duration`), PIR-Distanz (`number.pir_sensitivity`) und Lampenmodus über den transparenten `OPTrans` RS232-Seriellkanal.
+- 🎙️ **2-Wege-Audio (Gegensprechen)**: Volle Unterstützung des Audio-Backchannels über ONVIF Profile T und RTSP Backchannel (`OPTalk` 1434 / 1430 / 1432 mit G.711 A-law 8kHz).
+- 🌐 **Flexibler RTSP-Server**: Direkte Unterstützung von Root-URLs (`rtsp://<IP>:8554` / `rtsp://<IP>:8554/`) sowie Standard-Pfaden (`/live`, `/steinel`, `/cam/realmonitor`) in VLC, Home Assistant, Scrypted und Frigate.
+- 🛰️ **Automatisches UDP Discovery (`DiscoverDevices`)**: Zuverlässiges Aufspüren von Kameras im LAN über UDP Port 34569 anhand des `NetWork.NetCommon.SN` Schemas.
+
 ## 1.1.0-beta.11
 
 - 🧹 **Bereinigung Dämmerungsschwelle (L 625)**: Entfernen des irreführenden statischen Sensors `sensor.lux` (*„Umgebungshelligkeit“*). Vollständiges Mapping der Kamera-Schaltschwelle auf den konfigurierbaren Slider `number.lux_threshold` (*„Dämmerungsschwelle“*, 2 - 1000 lx) mit bidirektionaler Zustandsrückmeldung.
