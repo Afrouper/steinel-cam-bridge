@@ -373,7 +373,14 @@ func (c *Client) publishStatus(st events.DeviceStatus) {
 	}
 	pub("pir/state", pirState)
 
-	// 4. Resolution
+	// 4. Motion State
+	motionState := "OFF"
+	if st.IsMotion {
+		motionState = "ON"
+	}
+	pub("motion/state", motionState)
+
+	// 5. Resolution
 	if st.Resolution != "" {
 		pub("resolution/state", st.Resolution)
 	}
