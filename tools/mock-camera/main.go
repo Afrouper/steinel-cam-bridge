@@ -73,7 +73,7 @@ func main() {
 	log.Printf("💡 Ready to capture packets from the Steinel macOS / iOS App")
 	log.Printf("═══════════════════════════════════════════════════════════════════")
 
-	listener, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", *port))
+	listener, err := net.Listen("tcp4", fmt.Sprintf("0.0.0.0:%d", *port))
 	if err != nil {
 		log.Fatalf("❌ Failed to listen on TCP port %d: %v", *port, err)
 	}
