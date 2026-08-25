@@ -357,12 +357,16 @@ func startUDPDiscoveryListener(udpPort, tcpPort int, serialNo, customIP string) 
 				"Ret":       100,
 				"Name":      "NetWork.NetCommon",
 				"SessionID": fmt.Sprintf("0x%08X", recvSessionID),
+				"DeviceID":  serialNo,
+				"SerialNo":  serialNo,
 				"NetWork.NetCommon": map[string]interface{}{
+					"DeviceID":      serialNo,
+					"SerialNo":      serialNo,
 					"ChannelNum":    1,
 					"DeviceType":    "IPC",
 					"GateWay":       "192.168.88.1",
 					"HostIP":        localIP,
-					"HostName":      "IPC",
+					"HostName":      "Steinel-L620-CAM",
 					"HttpPort":      80,
 					"MAC":           "00:12:16:a1:b2:c3",
 					"MaxBps":        0,
@@ -411,13 +415,9 @@ func sendUDPPacket(conn *net.UDPConn, packet []byte, remoteAddr *net.UDPAddr, st
 	// 1. Send unicast to source ephemeral port
 	_, err := conn.WriteToUDP(packet, remoteAddr)
 
-	// 2. Send unicast to well-known client discovery ports on the remote device
-	if remoteAddr.IP != nil {
-		for _, p := range []int{standardUDPPort, 34570, 34571, 34568} {
-			if p != remoteAddr.Port {
-				_, _ = conn.WriteToUDP(packet, &net.UDPAddr{IP: remoteAddr.IP, Port: p})
-			}
-		}
+	// 2. Send unicast to standard discovery port if different
+	if remoteAddr.Port != standardUDPPort && remoteAddr.IP != nil {
+		_, _ = conn.WriteToUDP(packet, &net.UDPAddr{IP: remoteAddr.IP, Port: standardUDPPort})
 	}
 	return err
 }
