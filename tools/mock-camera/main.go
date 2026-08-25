@@ -56,15 +56,19 @@ func main() {
 	port := flag.Int("port", 34567, "TCP port to listen on for Xiongmai Sofia protocol")
 	udpPort := flag.Int("udp", 34569, "UDP port for Xiongmai broadcast discovery (0 to disable)")
 	serialNo := flag.String("sn", "0011223344556677", "16-character camera serial number")
+	customIP := flag.String("ip", "", "Custom IP address to announce (leave empty for auto-detection)")
 	flag.Parse()
 
 	log.Printf("═══════════════════════════════════════════════════════════════════")
 	log.Printf("🎥 Steinel L 620 CAM — Mock Sofia Protocol Interception Server")
 	log.Printf("📡 Listening on TCP port :%d (Xiongmai Sofia Daemon)", *port)
 	log.Printf("🔑 Mock Camera SerialNo / DeviceID: %s", *serialNo)
+	if *customIP != "" {
+		log.Printf("🌐 Explicit Announcement IP: %s", *customIP)
+	}
 	if *udpPort > 0 {
 		log.Printf("🛰️ Listening on UDP port :%d (Broadcast Discovery)", *udpPort)
-		go startUDPDiscoveryListener(*udpPort, *port, *serialNo)
+		go startUDPDiscoveryListener(*udpPort, *port, *serialNo, *customIP)
 	}
 	log.Printf("💡 Ready to capture packets from the Steinel macOS / iOS App")
 	log.Printf("═══════════════════════════════════════════════════════════════════")
@@ -185,15 +189,13 @@ func printCapturedPacket(remote string, msgID uint16, sessionID, seq uint32, pay
 		return
 	}
 
-	// Try to format as JSON
+	cleanedPayload := bytes.TrimRight(payload, "\x00\r\n ")
 	var prettyJSON bytes.Buffer
-	if err := json.Indent(&prettyJSON, payload, "   ", "  "); err == nil {
+	if err := json.Indent(&prettyJSON, cleanedPayload, "   ", "  "); err == nil {
 		log.Printf("   📜 JSON Payload:\n   %s", prettyJSON.String())
 	} else {
-		log.Printf("   📝 Text Payload: %s", string(payload))
-		if len(payload) <= 128 {
-			log.Printf("   🔍 Hex Dump:\n%s", hex.Dump(payload))
-		}
+		log.Printf("   📝 Text Payload: %s", string(cleanedPayload))
+		log.Printf("   🔍 Hex Dump:\n%s", hex.Dump(payload))
 	}
 	log.Printf("───────────────────────────────────────────────────────────────────")
 }
@@ -201,35 +203,33 @@ func printCapturedPacket(remote string, msgID uint16, sessionID, seq uint32, pay
 func buildMockResponse(msgID uint16, sessionID uint32, reqPayload []byte) []byte {
 	sessionHex := fmt.Sprintf("0x%08X", sessionID)
 
+	var resp map[string]interface{}
+
 	switch msgID {
 	case 1000: // MsgLoginReq
-		resp := map[string]interface{}{
+		resp = map[string]interface{}{
 			"Ret":           100, // 100 = Success (EE_OK)
 			"SessionID":     sessionHex,
 			"AliveInterval": 30,
 			"ChannelNum":    1,
-			"DeviceType ":   "DVR",
+			"DeviceType":    "DVR",
 			"ExtraChannel":  0,
 			"DataUseAES":    false,
 		}
-		data, _ := json.Marshal(resp)
-		return data
 
 	case 1006: // MsgKeepAliveReq
-		resp := map[string]interface{}{
+		resp = map[string]interface{}{
 			"Ret":       100,
 			"SessionID": sessionHex,
 			"Data":      "KeepAlive",
 		}
-		data, _ := json.Marshal(resp)
-		return data
 
 	case 1042: // MsgConfigGetReq
 		var reqMap map[string]interface{}
-		_ = json.Unmarshal(reqPayload, &reqMap)
+		_ = json.Unmarshal(bytes.TrimRight(reqPayload, "\x00\r\n "), &reqMap)
 		reqName, _ := reqMap["Name"].(string)
 
-		resp := map[string]interface{}{
+		resp = map[string]interface{}{
 			"Ret":       100,
 			"SessionID": sessionHex,
 			"Name":      reqName,
@@ -266,24 +266,19 @@ func buildMockResponse(msgID uint16, sessionID uint32, reqPayload []byte) []byte
 			}
 		}
 
-		data, _ := json.Marshal(resp)
-		return data
-
 	case 1040: // MsgConfigSetReq
 		var reqMap map[string]interface{}
-		_ = json.Unmarshal(reqPayload, &reqMap)
+		_ = json.Unmarshal(bytes.TrimRight(reqPayload, "\x00\r\n "), &reqMap)
 		reqName, _ := reqMap["Name"].(string)
 
-		resp := map[string]interface{}{
+		resp = map[string]interface{}{
 			"Ret":       100,
 			"SessionID": sessionHex,
 			"Name":      reqName,
 		}
-		data, _ := json.Marshal(resp)
-		return data
 
 	case 1410: // MsgTalkClaimReq (2-Way Audio Claim)
-		resp := map[string]interface{}{
+		resp = map[string]interface{}{
 			"Ret":       100,
 			"SessionID": sessionHex,
 			"AudioFormat": map[string]interface{}{
@@ -293,21 +288,20 @@ func buildMockResponse(msgID uint16, sessionID uint32, reqPayload []byte) []byte
 				"EncodeType": "G711_ALAW",
 			},
 		}
-		data, _ := json.Marshal(resp)
-		return data
 
 	default:
-		resp := map[string]interface{}{
+		resp = map[string]interface{}{
 			"Ret":       100,
 			"SessionID": sessionHex,
 		}
-		data, _ := json.Marshal(resp)
-		return data
 	}
+
+	data, _ := json.Marshal(resp)
+	return append(data, 0x0A, 0x00)
 }
 
 // startUDPDiscoveryListener listens for Xiongmai broadcast discovery probes
-func startUDPDiscoveryListener(udpPort, tcpPort int, serialNo string) {
+func startUDPDiscoveryListener(udpPort, tcpPort int, serialNo, customIP string) {
 	addr := net.UDPAddr{
 		Port: udpPort,
 		IP:   net.ParseIP("0.0.0.0"),
@@ -339,7 +333,9 @@ func startUDPDiscoveryListener(udpPort, tcpPort int, serialNo string) {
 
 			// Determine local IP on the network that reached the client
 			localIP := "127.0.0.1"
-			if connAddr, err := net.Dial("udp", remoteAddr.String()); err == nil {
+			if customIP != "" {
+				localIP = customIP
+			} else if connAddr, err := net.Dial("udp", remoteAddr.String()); err == nil {
 				if lAddr, ok := connAddr.LocalAddr().(*net.UDPAddr); ok {
 					localIP = lAddr.IP.String()
 				}
@@ -375,6 +371,7 @@ func startUDPDiscoveryListener(udpPort, tcpPort int, serialNo string) {
 				},
 			}
 			jsonPayload, _ := json.Marshal(respData)
+			jsonPayload = append(jsonPayload, 0x0A, 0x00)
 
 			respHeader := make([]byte, HeaderLength)
 			respHeader[0] = HeaderMagic
