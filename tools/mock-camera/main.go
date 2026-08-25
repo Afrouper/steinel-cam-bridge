@@ -373,32 +373,71 @@ func startUDPDiscoveryListener(udpPort, tcpPort int, serialNo, customIP string) 
 			jsonPayload, _ := json.Marshal(respData)
 			jsonPayload = append(jsonPayload, 0x0A, 0x00)
 
-			respHeader := make([]byte, HeaderLength)
-			respHeader[0] = HeaderMagic
-			respHeader[1] = 0x00
-			binary.LittleEndian.PutUint32(respHeader[4:8], recvSessionID)
-			binary.LittleEndian.PutUint32(respHeader[8:12], recvSeq)
-			respMsgID := msgID + 1
-			if respMsgID == 1 {
-				respMsgID = 1531
-			}
-			binary.LittleEndian.PutUint16(respHeader[14:16], respMsgID)
-			binary.LittleEndian.PutUint32(respHeader[16:20], uint32(len(jsonPayload)))
+			// 1. JSON Discovery Response
+			jsonPacket := buildSofiaPacket(1531, recvSessionID, recvSeq, jsonPayload)
+			_ = sendUDPPacket(conn, jsonPacket, remoteAddr, udpPort)
 
-			packet := append(respHeader, jsonPayload...)
-			if _, err := conn.WriteToUDP(packet, remoteAddr); err != nil {
-				log.Printf("⚠️ Failed to reply to UDP probe: %v", err)
-			} else {
-				log.Printf("   📤 Sent Discovery Response to %s (DeviceID: %s, Announced IP: %s, TCP Port: %d)", remoteAddr.String(), serialNo, localIP, tcpPort)
-			}
+			// 2. Binary NetCommon V2 Struct (260 bytes) Response (for FunSDK native parser)
+			binV2Payload := buildBinaryNetCommonV2(serialNo, localIP, tcpPort)
+			binV2Packet := buildSofiaPacket(1531, recvSessionID, recvSeq, binV2Payload)
+			_ = sendUDPPacket(conn, binV2Packet, remoteAddr, udpPort)
 
-			// Also send to remote client's port 34569 if different
-			if remoteAddr.Port != udpPort && remoteAddr.IP != nil {
-				clientUDPPortAddr := &net.UDPAddr{IP: remoteAddr.IP, Port: udpPort}
-				_, _ = conn.WriteToUDP(packet, clientUDPPortAddr)
-			}
+			log.Printf("   📤 Sent Discovery Responses (JSON + BinV2) to %s (DeviceID: %s, Announced IP: %s, TCP Port: %d)", remoteAddr.String(), serialNo, localIP, tcpPort)
 		} else {
 			log.Printf("🛰️ [UDP Discovery] Received %d bytes from %s (Hex: %x)", n, remoteAddr.String(), buf[:n])
 		}
 	}
+}
+
+func buildSofiaPacket(msgID uint16, sessionID, seq uint32, payload []byte) []byte {
+	respHeader := make([]byte, HeaderLength)
+	respHeader[0] = HeaderMagic
+	respHeader[1] = 0x00
+	binary.LittleEndian.PutUint32(respHeader[4:8], sessionID)
+	binary.LittleEndian.PutUint32(respHeader[8:12], seq)
+	binary.LittleEndian.PutUint16(respHeader[14:16], msgID)
+	binary.LittleEndian.PutUint32(respHeader[16:20], uint32(len(payload)))
+	return append(respHeader, payload...)
+}
+
+func sendUDPPacket(conn *net.UDPConn, packet []byte, remoteAddr *net.UDPAddr, standardUDPPort int) error {
+	// Send to source address
+	_, err := conn.WriteToUDP(packet, remoteAddr)
+
+	// Send to client's port 34569 if different
+	if remoteAddr.Port != standardUDPPort && remoteAddr.IP != nil {
+		_, _ = conn.WriteToUDP(packet, &net.UDPAddr{IP: remoteAddr.IP, Port: standardUDPPort})
+	}
+	return err
+}
+
+func buildBinaryNetCommonV2(serialNo, hostIP string, tcpPort int) []byte {
+	buf := make([]byte, 260)
+	copy(buf[0:80], []byte("Steinel-L620-CAM"))
+
+	ip := net.ParseIP(hostIP).To4()
+	if ip == nil {
+		ip = net.IPv4(127, 0, 0, 1).To4()
+	}
+	copy(buf[80:84], ip)
+	copy(buf[84:88], []byte{255, 255, 255, 0})
+	copy(buf[88:92], []byte{192, 168, 88, 1})
+
+	binary.LittleEndian.PutUint32(buf[92:96], 80)               // HttpPort
+	binary.LittleEndian.PutUint32(buf[96:100], uint32(tcpPort)) // TCPPort
+	binary.LittleEndian.PutUint32(buf[100:104], 8443)           // SSLPort
+	binary.LittleEndian.PutUint32(buf[104:108], 34568)          // UDPPort
+	binary.LittleEndian.PutUint32(buf[108:112], 10)             // MaxConn
+	binary.LittleEndian.PutUint32(buf[112:116], 0)              // MonMode
+	binary.LittleEndian.PutUint32(buf[116:120], 0)              // MaxBps
+	binary.LittleEndian.PutUint32(buf[120:124], 0)              // TransferPlan
+	buf[124] = 0                                                // bUseHSDownLoad
+
+	copy(buf[128:160], []byte("00:12:16:a1:b2:c3")) // sMac
+	copy(buf[160:192], []byte(serialNo))            // sSn (32 bytes) -> Serial Number!
+	binary.LittleEndian.PutUint32(buf[192:196], 0)  // DeviceType
+	binary.LittleEndian.PutUint32(buf[196:200], 1)  // ChannelNum
+	binary.LittleEndian.PutUint32(buf[200:204], 0)  // DeviceTypeV2
+
+	return buf
 }
