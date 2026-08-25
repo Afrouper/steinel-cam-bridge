@@ -326,9 +326,9 @@ func TestSanitizeRTSPURL(t *testing.T) {
 			expected: "rtsp://192.168.1.100:554/stream=0",
 		},
 		{
-			name:     "Complex password with special characters",
-			input:    "rtsp://admin:p%40ssw%3Ard@192.168.1.100:554/stream=0",
-			expected: "rtsp://admin:xxxxx@192.168.1.100:554/stream=0",
+			name:     "Steinel path format with password in query",
+			input:    "rtsp://192.168.178.5:554/user=admin_password=supersecret_channel=1_stream=0.sdp?real_stream",
+			expected: "rtsp://192.168.178.5:554/user=admin_password=***_channel=1_stream=0.sdp?real_stream",
 		},
 	}
 

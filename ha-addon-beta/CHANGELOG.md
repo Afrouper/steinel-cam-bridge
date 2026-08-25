@@ -2,6 +2,12 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.1.0-beta.8
+
+- 🎥 **Natives Steinel / MotionEye RTSP-Pfad-Format**: Umstellung des RTSP-Stream-Clients auf das von der Steinel L 620 CAM erwartete Pfadformat (`/user=admin_password=<pwd>_channel=1_stream=0.sdp?real_stream`). Behebt `no authentication methods available` Fehler durch direkte Pfad-Authentifizierung.
+- 🔄 **Multi-Pfad Ingest Fallback**: Automatisches Durchprobieren von HD (`stream=0`), SD (`stream=1`) und alternativen RTSP-URIs.
+- 🛡️ **Erweiterte RTSP-URL-Maskierung**: Maskiert Passwörter auch in query-basierten RTSP-Pfaden zuverlässig in den Logs.
+
 ## 1.1.0-beta.7
 
 - 🛡️ **Resilienter RTSP-Fallback-Modus**: Verhindert Startabbrüche bei Sofia-Auth-Mismatches (`Ret: 124`). Startet direkt den nativen 1080p RTSP-Stream auf Port 554 und übernimmt die vergebene SessionID für Licht- und MCU-Steuerungsversuche.
