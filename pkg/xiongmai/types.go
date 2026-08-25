@@ -24,28 +24,34 @@ const (
 
 // Xiongmai Message IDs
 const (
-	MsgLoginReq         uint16 = 1000
-	MsgLoginResp        uint16 = 1001
-	MsgLogoutReq        uint16 = 1002
-	MsgKeepAliveReq     uint16 = 1006
-	MsgKeepAliveResp    uint16 = 1007
-	MsgSysManagerReq    uint16 = 1020
-	MsgSysManagerResp   uint16 = 1021
-	MsgConfigSetReq     uint16 = 1040
-	MsgConfigSetResp    uint16 = 1041
-	MsgConfigGetReq     uint16 = 1042
-	MsgConfigGetResp    uint16 = 1043
-	MsgTalkClaimReq     uint16 = 1410
-	MsgTalkClaimResp    uint16 = 1411
-	MsgTalkSendData     uint16 = 1412
-	MsgAlarmReq         uint16 = 1500
-	MsgAlarmResp        uint16 = 1501
-	MsgSearchDeviceReq  uint16 = 1530
-	MsgSearchDeviceResp uint16 = 1531
-	MsgTransSendData    uint16 = 1572
-	MsgTransSendResp    uint16 = 1573
-	MsgTransStartReq    uint16 = 1578
-	MsgTransStartResp   uint16 = 1579
+	MsgLoginReq          uint16 = 1000
+	MsgLoginResp         uint16 = 1001
+	MsgLogoutReq         uint16 = 1002
+	MsgKeepAliveReq      uint16 = 1006
+	MsgKeepAliveResp     uint16 = 1007
+	MsgSysManagerReq     uint16 = 1020
+	MsgSysManagerResp    uint16 = 1021
+	MsgConfigSetReq      uint16 = 1040
+	MsgConfigSetResp     uint16 = 1041
+	MsgConfigGetReq      uint16 = 1042
+	MsgConfigGetResp     uint16 = 1043
+	MsgTalkClaimReq      uint16 = 1410
+	MsgTalkClaimResp     uint16 = 1411
+	MsgTalkSendData      uint16 = 1412
+	MsgTalkControlReq    uint16 = 1430
+	MsgTalkControlResp   uint16 = 1431
+	MsgTalkAudioData     uint16 = 1432
+	MsgTalkAudioDataResp uint16 = 1433
+	MsgTalkClaimV2Req    uint16 = 1434
+	MsgTalkClaimV2Resp   uint16 = 1435
+	MsgAlarmReq          uint16 = 1500
+	MsgAlarmResp         uint16 = 1501
+	MsgSearchDeviceReq   uint16 = 1530
+	MsgSearchDeviceResp  uint16 = 1531
+	MsgTransSendData     uint16 = 1572
+	MsgTransSendResp     uint16 = 1573
+	MsgTransStartReq     uint16 = 1578
+	MsgTransStartResp    uint16 = 1579
 )
 
 // Header represents the 20-byte Sofia protocol message header.

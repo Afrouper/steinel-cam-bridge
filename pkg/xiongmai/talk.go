@@ -28,44 +28,12 @@ func NewTalkClient(client *Client, debug bool) *TalkClient {
 	}
 }
 
-// StartTalk sends the OPTalk Start claim to the camera to open the speaker audio channel.
+// StartTalk sends the OPTalk claim and start control message to the camera to open the speaker audio channel.
 func (t *TalkClient) StartTalk() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	if t.talkActive {
-		return nil
-	}
-
-	req := OPTalkReq{
-		Name: "OPTalk",
-		OPTalk: OPTalkInfo{
-			Action: "Start",
-		},
-		SessionID: fmt.Sprintf("0x%08X", t.client.sessionID),
-	}
-
-	payload, err := json.Marshal(req)
-	if err != nil {
-		return err
-	}
-
-	if t.debug {
-		log.Printf("[Xiongmai Talk] 🎙️ Claiming audio talk channel (OPTalk Start)...")
-	}
-
-	respData, err := t.client.sendPacketLocked(MsgTalkClaimReq, payload)
-	if err != nil {
-		return fmt.Errorf("failed to claim talk channel: %w", err)
-	}
-
-	if t.debug {
-		log.Printf("[Xiongmai Talk] ✅ Audio channel opened: %s", string(respData))
-	}
-
-	t.talkActive = true
-	t.lastAudio = time.Now()
-	return nil
+	return t.startTalkLocked()
 }
 
 // SendAudioPacket converts an incoming RTP G.711 audio packet from the RTSP Backchannel
@@ -87,14 +55,14 @@ func (t *TalkClient) SendAudioPacket(pkt *rtp.Packet) error {
 
 	t.lastAudio = time.Now()
 
-	// Wrap audio payload in Sofia talk data message (MsgTalkSendData = 1412)
+	// Wrap audio payload in Sofia talk data message (MsgTalkAudioData = 1432 / 1412)
 	// Xiongmai audio frames contain raw G.711 (PCMA/PCMU) samples
 	hdr := Header{
 		Magic:      HeaderMagic,
 		Channel:    0,
 		SessionID:  t.client.sessionID,
 		Sequence:   t.client.sequence + 1,
-		MsgID:      MsgTalkSendData,
+		MsgID:      MsgTalkAudioData,
 		DataLength: uint32(len(pkt.Payload)),
 	}
 	t.client.sequence++
@@ -111,19 +79,44 @@ func (t *TalkClient) SendAudioPacket(pkt *rtp.Packet) error {
 }
 
 func (t *TalkClient) startTalkLocked() error {
-	req := OPTalkReq{
+	if t.talkActive {
+		return nil
+	}
+
+	if t.debug {
+		log.Printf("[Xiongmai Talk] 🎙️ Claiming audio talk channel (MsgTalkClaimReq)...")
+	}
+
+	// 1. Claim talk channel (MsgID 1434 / 1410)
+	claimReq := OPTalkReq{
+		Name: "OPTalk",
+		OPTalk: OPTalkInfo{
+			Action: "Claim",
+		},
+		SessionID: fmt.Sprintf("0x%08X", t.client.sessionID),
+	}
+	claimPayload, _ := json.Marshal(claimReq)
+	_, err := t.client.sendPacketLocked(MsgTalkClaimV2Req, claimPayload)
+	if err != nil {
+		// Fallback to MsgTalkClaimReq (1410) for older firmware
+		if _, errFallback := t.client.sendPacketLocked(MsgTalkClaimReq, claimPayload); errFallback != nil {
+			return fmt.Errorf("failed to claim talk channel: %w", err)
+		}
+	}
+
+	// 2. Start talk upload (MsgID 1430)
+	startReq := OPTalkReq{
 		Name: "OPTalk",
 		OPTalk: OPTalkInfo{
 			Action: "Start",
 		},
 		SessionID: fmt.Sprintf("0x%08X", t.client.sessionID),
 	}
-	payload, _ := json.Marshal(req)
-	_, err := t.client.sendPacketLocked(MsgTalkClaimReq, payload)
-	if err != nil {
-		return fmt.Errorf("failed to open talk channel: %w", err)
-	}
+	startPayload, _ := json.Marshal(startReq)
+	_, _ = t.client.sendPacketLocked(MsgTalkControlReq, startPayload)
+
 	t.talkActive = true
+	t.lastAudio = time.Now()
 	log.Printf("[Xiongmai Talk] 🎙️ Two-way audio active: forwarding to camera speaker (Port %d)", DefaultPort)
 	return nil
 }
@@ -145,7 +138,7 @@ func (t *TalkClient) StopTalk() error {
 		SessionID: fmt.Sprintf("0x%08X", t.client.sessionID),
 	}
 	payload, _ := json.Marshal(req)
-	_, _ = t.client.sendPacketLocked(MsgTalkClaimReq, payload)
+	_, _ = t.client.sendPacketLocked(MsgTalkControlReq, payload)
 	t.talkActive = false
 	if t.debug {
 		log.Printf("[Xiongmai Talk] ⏹️ Audio channel closed")

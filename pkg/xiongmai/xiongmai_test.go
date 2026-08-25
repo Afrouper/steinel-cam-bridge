@@ -262,12 +262,17 @@ func TestTalkAudioPacketForwarding(t *testing.T) {
 				respWithTerm := append(resp, 0x0A, 0x00)
 				respHdr := Header{Magic: HeaderMagic, SessionID: 1, Sequence: hdr.Sequence, MsgID: MsgLoginResp, DataLength: uint32(len(respWithTerm))}
 				_, _ = conn.Write(append(respHdr.Encode(), respWithTerm...))
-			case MsgTalkClaimReq:
+			case MsgTalkClaimReq, MsgTalkClaimV2Req:
 				resp := []byte(`{"Name":"OPTalk","Ret":100}`)
 				respWithTerm := append(resp, 0x0A, 0x00)
-				respHdr := Header{Magic: HeaderMagic, SessionID: 1, Sequence: hdr.Sequence, MsgID: MsgTalkClaimResp, DataLength: uint32(len(respWithTerm))}
+				respHdr := Header{Magic: HeaderMagic, SessionID: 1, Sequence: hdr.Sequence, MsgID: hdr.MsgID + 1, DataLength: uint32(len(respWithTerm))}
 				_, _ = conn.Write(append(respHdr.Encode(), respWithTerm...))
-			case MsgTalkSendData:
+			case MsgTalkControlReq:
+				resp := []byte(`{"Name":"OPTalk","Ret":100}`)
+				respWithTerm := append(resp, 0x0A, 0x00)
+				respHdr := Header{Magic: HeaderMagic, SessionID: 1, Sequence: hdr.Sequence, MsgID: MsgTalkControlResp, DataLength: uint32(len(respWithTerm))}
+				_, _ = conn.Write(append(respHdr.Encode(), respWithTerm...))
+			case MsgTalkSendData, MsgTalkAudioData:
 				receivedAudioFrames <- payload
 			}
 		}
