@@ -53,3 +53,39 @@ func TestHandleHighlightCommand(t *testing.T) {
 		t.Errorf("Expected highlight 75, got %d", highlightVal)
 	}
 }
+
+func TestHandleSirenCommand(t *testing.T) {
+	tests := []struct {
+		name     string
+		payload  string
+		expected bool
+	}{
+		{"Plain ON", "ON", true},
+		{"Plain OFF", "OFF", false},
+		{"JSON ON", `{"state":"ON"}`, true},
+		{"JSON OFF", `{"state":"OFF"}`, false},
+		{"JSON with volume and duration", `{"state":"ON","volume_level":0.8,"duration":2}`, true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var sirenVal bool
+			cb := Callbacks{
+				SetSiren: func(on bool) error {
+					sirenVal = on
+					return nil
+				},
+			}
+			c := NewClient(Config{DeviceID: "de-test"}, cb)
+			msg := &mockMessage{
+				topic:   "steinel/de-test/siren/set",
+				payload: []byte(tc.payload),
+			}
+			c.handleCommand(nil, msg)
+
+			if sirenVal != tc.expected {
+				t.Errorf("Payload %q: expected siren %v, got %v", tc.payload, tc.expected, sirenVal)
+			}
+		})
+	}
+}
