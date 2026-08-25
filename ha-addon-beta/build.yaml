@@ -1,3 +1,3 @@
 build_from:
-  aarch64: "ghcr.io/afrouper/steinel-cam-bridge:1.1.0-beta.9"
-  amd64: "ghcr.io/afrouper/steinel-cam-bridge:1.1.0-beta.9"
+  aarch64: "ghcr.io/afrouper/steinel-cam-bridge:1.1.0-beta.10"
+  amd64: "ghcr.io/afrouper/steinel-cam-bridge:1.1.0-beta.10"

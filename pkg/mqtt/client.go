@@ -452,9 +452,29 @@ func (c *Client) handleCommand(_ paho.Client, msg paho.Message) {
 		}
 
 	case strings.HasSuffix(topic, "/siren/set"):
-		on := strings.EqualFold(payload, "ON") || payload == "1" || strings.EqualFold(payload, "true")
+		var on bool
+		if strings.HasPrefix(payload, "{") {
+			var sirenCmd struct {
+				State string `json:"state"`
+			}
+			if err := json.Unmarshal([]byte(payload), &sirenCmd); err == nil {
+				on = strings.EqualFold(sirenCmd.State, "ON") || sirenCmd.State == "1" || strings.EqualFold(sirenCmd.State, "true")
+			}
+		} else {
+			on = strings.EqualFold(payload, "ON") || payload == "1" || strings.EqualFold(payload, "true")
+		}
 		if c.cb.SetSiren != nil {
 			_ = c.cb.SetSiren(on)
+		}
+		stateStr := "OFF"
+		if on {
+			stateStr = "ON"
+		}
+		c.mu.RLock()
+		cl := c.client
+		c.mu.RUnlock()
+		if cl != nil && cl.IsConnected() {
+			cl.Publish(fmt.Sprintf("%s/siren/state", c.baseTopic), 1, true, stateStr)
 		}
 
 	case strings.HasSuffix(topic, "/resolution/set"):
