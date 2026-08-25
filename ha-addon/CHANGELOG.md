@@ -2,6 +2,14 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge** Add-on werden hier dokumentiert.
 
+## 1.0.2
+
+- 📢 **Fix Home Assistant Sirenen-Steuerung**: Unterstützung von JSON-Payloads (`{"state":"ON"}`, `{"state":"ON","volume_level":0.8,"duration":2}`) auf dem MQTT-Topic `siren/set` für zuverlässiges Auslösen des Alarms und sofortige Zustandsrückmeldung auf `siren/state`.
+- 🧹 **Bereinigung Dämmerungsschwelle**: Entfernen des irreführenden statischen Sensors `sensor.lux` (*„Umgebungshelligkeit“*). Vollständiges Mapping der Kamera-Schaltschwelle auf den konfigurierbaren Slider `number.lux_threshold` (*„Dämmerungsschwelle“*, 2 – 1000 lx) mit bidirektionaler Zustandsrückmeldung.
+- 🗂️ **Strukturierte Home Assistant Dashboard-Kategorien**: Einstellungsregler (`lux_threshold`, `pir_sensitivity`, `duration`, `lowlight`, `resolution`) in die Kategorie **„Konfiguration“** verschoben; `pir_status` als **„Diagnose“** deklariert.
+- 🧹 **Bereinigung Bewegungssensor**: Entfernen der unversorgten Entität `binary_sensor.motion` zur Vermeidung des Status *„Unbekannt“*.
+- 🚨 **Echtzeit-Überwachung DataChannel**: Automatische Erkennung und Protokollierung eingehender Alarm- oder Bewegungs-Events über den lokalen WebRTC-DataChannel.
+
 ## 1.0.1
 
 - ⚡ **Native CGo Cross-Compilation**: Optimiertes Multi-Arch Docker-Build mit nativem Debian-Cross-Compiler (`aarch64-linux-gnu-gcc`) zur Beschleunigung des GitHub Actions Builds von ~9 Minuten auf unter 1 Minute (ohne langsame QEMU-Emulation).
