@@ -230,10 +230,11 @@ func (c *Client) publishDiscovery(client paho.Client) {
 
 	// 4. Binary Sensor (PIR Status)
 	publishEntity("binary_sensor", "pir_status", map[string]interface{}{
-		"name":         "PIR Sensor aktiv",
-		"device_class": "running",
-		"state_topic":  fmt.Sprintf("%s/pir/state", c.baseTopic),
-		"icon":         "mdi:motion-sensor",
+		"name":            "PIR Sensor aktiv",
+		"device_class":    "running",
+		"entity_category": "diagnostic",
+		"state_topic":     fmt.Sprintf("%s/pir/state", c.baseTopic),
+		"icon":            "mdi:motion-sensor",
 	})
 
 	// 5. Number (PIR Sensitivity: 0 - 100%)
@@ -244,6 +245,7 @@ func (c *Client) publishDiscovery(client paho.Client) {
 		"step":                1,
 		"unit_of_measurement": "%",
 		"icon":                "mdi:tune",
+		"entity_category":     "config",
 		"state_topic":         fmt.Sprintf("%s/pir_sensitivity/state", c.baseTopic),
 		"command_topic":       fmt.Sprintf("%s/pir_sensitivity/set", c.baseTopic),
 	})
@@ -256,6 +258,7 @@ func (c *Client) publishDiscovery(client paho.Client) {
 		"step":                5,
 		"unit_of_measurement": "lx",
 		"icon":                "mdi:weather-sunset",
+		"entity_category":     "config",
 		"state_topic":         fmt.Sprintf("%s/lux_threshold/state", c.baseTopic),
 		"command_topic":       fmt.Sprintf("%s/lux_threshold/set", c.baseTopic),
 	})
@@ -268,6 +271,7 @@ func (c *Client) publishDiscovery(client paho.Client) {
 		"step":                5,
 		"unit_of_measurement": "s",
 		"icon":                "mdi:timer-outline",
+		"entity_category":     "config",
 		"state_topic":         fmt.Sprintf("%s/duration/state", c.baseTopic),
 		"command_topic":       fmt.Sprintf("%s/duration/set", c.baseTopic),
 	})
@@ -280,6 +284,7 @@ func (c *Client) publishDiscovery(client paho.Client) {
 		"step":                5,
 		"unit_of_measurement": "%",
 		"icon":                "mdi:lightbulb-night",
+		"entity_category":     "config",
 		"state_topic":         fmt.Sprintf("%s/lowlight/state", c.baseTopic),
 		"command_topic":       fmt.Sprintf("%s/lowlight/set", c.baseTopic),
 	})
@@ -294,11 +299,12 @@ func (c *Client) publishDiscovery(client paho.Client) {
 
 	// 11. Select (Video Auflösung)
 	publishEntity("select", "resolution", map[string]interface{}{
-		"name":          "Video Auflösung",
-		"options":       []string{"1080p", "720p", "360p"},
-		"icon":          "mdi:video-vintage",
-		"state_topic":   fmt.Sprintf("%s/resolution/state", c.baseTopic),
-		"command_topic": fmt.Sprintf("%s/resolution/set", c.baseTopic),
+		"name":            "Video Auflösung",
+		"options":         []string{"1080p", "720p", "360p"},
+		"icon":            "mdi:video-vintage",
+		"entity_category": "config",
+		"state_topic":     fmt.Sprintf("%s/resolution/state", c.baseTopic),
+		"command_topic":   fmt.Sprintf("%s/resolution/set", c.baseTopic),
 	})
 
 	log.Printf("[MQTT] 📢 Published Home Assistant Auto-Discovery entities for %s under %s", c.nodeID, c.cfg.DiscoveryPrefix)
