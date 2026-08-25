@@ -321,15 +321,15 @@ func startUDPDiscoveryListener(udpPort, tcpPort int, serialNo, customIP string) 
 		}
 
 		if n >= HeaderLength && buf[0] == HeaderMagic {
+			msgID := binary.LittleEndian.Uint16(buf[14:16])
+			// Only handle discovery requests (MsgSearchDeviceReq = 1530)
+			if msgID != 1530 {
+				continue
+			}
+
 			recvSessionID := binary.LittleEndian.Uint32(buf[4:8])
 			recvSeq := binary.LittleEndian.Uint32(buf[8:12])
-			msgID := binary.LittleEndian.Uint16(buf[14:16])
 			dataLen := binary.LittleEndian.Uint32(buf[16:20])
-
-			log.Printf("🛰️ [UDP Discovery] Received %s (MsgID: %d, Session: 0x%08X, Seq: %d, DataLen: %d) from %s", getMsgName(msgID), msgID, recvSessionID, recvSeq, dataLen, remoteAddr.String())
-			if dataLen > 0 && n >= HeaderLength+int(dataLen) {
-				log.Printf("   📜 Probe Payload: %s", string(buf[HeaderLength:HeaderLength+int(dataLen)]))
-			}
 
 			// Determine local IP on the network that reached the client
 			localIP := "127.0.0.1"
@@ -340,6 +340,16 @@ func startUDPDiscoveryListener(udpPort, tcpPort int, serialNo, customIP string) 
 					localIP = lAddr.IP.String()
 				}
 				_ = connAddr.Close()
+			}
+
+			// Ignore probes from our own machine
+			if remoteAddr.IP.String() == localIP || remoteAddr.IP.IsLoopback() {
+				continue
+			}
+
+			log.Printf("🛰️ [UDP Discovery] Received %s (MsgID: %d, Session: 0x%08X, Seq: %d) from %s", getMsgName(msgID), msgID, recvSessionID, recvSeq, remoteAddr.String())
+			if dataLen > 0 && n >= HeaderLength+int(dataLen) {
+				log.Printf("   📜 Probe Payload: %s", string(buf[HeaderLength:HeaderLength+int(dataLen)]))
 			}
 
 			respData := map[string]interface{}{
@@ -401,17 +411,13 @@ func buildSofiaPacket(msgID uint16, sessionID, seq uint32, payload []byte) []byt
 }
 
 func sendUDPPacket(conn *net.UDPConn, packet []byte, remoteAddr *net.UDPAddr, standardUDPPort int) error {
-	// 1. Send to source address
+	// 1. Send unicast to source address
 	_, err := conn.WriteToUDP(packet, remoteAddr)
 
-	// 2. Send to client's port 34569 if different
+	// 2. Send unicast to client's port 34569 if ephemeral port was used
 	if remoteAddr.Port != standardUDPPort && remoteAddr.IP != nil {
 		_, _ = conn.WriteToUDP(packet, &net.UDPAddr{IP: remoteAddr.IP, Port: standardUDPPort})
 	}
-
-	// 3. Send subnet broadcast & general broadcast
-	_, _ = conn.WriteToUDP(packet, &net.UDPAddr{IP: net.ParseIP("255.255.255.255"), Port: standardUDPPort})
-	_, _ = conn.WriteToUDP(packet, &net.UDPAddr{IP: net.ParseIP("192.168.88.255"), Port: standardUDPPort})
 	return err
 }
 
