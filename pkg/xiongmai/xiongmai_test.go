@@ -49,6 +49,11 @@ func TestHashPassword(t *testing.T) {
 		t.Errorf("empty password hash should be empty, got %q", got)
 	}
 
+	// Real-world test vector verified against Steinel iOS App packet capture
+	if got := HashPassword("12345678A"); got != "EAyIB8vx" {
+		t.Errorf("expected Sofia hash 'EAyIB8vx' for '12345678A', got %q", got)
+	}
+
 	pwd := "admin123"
 	got := HashPassword(pwd)
 	if len(got) != 8 {

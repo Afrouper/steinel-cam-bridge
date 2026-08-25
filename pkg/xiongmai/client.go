@@ -164,18 +164,21 @@ func (c *Client) getPasswordCandidates() []passwordCandidate {
 
 	if cleanPwd != "" {
 		sofiaHash := HashPassword(cleanPwd)
-		// 1. Sofia 8-char hash (standard DVRIP-Web & Mobile app modes)
+		// 1. Sofia 8-char hash (standard DVRIP-Mobile & DVRIP-Web modes)
 		candidates = append(candidates,
+			passwordCandidate{label: "Sofia 8-char hash (LoginType: DVRIP-Mobile)", user: cleanUser, password: sofiaHash, encryptType: "MD5", loginType: "DVRIP-Mobile"},
 			passwordCandidate{label: "Sofia 8-char hash (LoginType: DVRIP-Web)", user: cleanUser, password: sofiaHash, encryptType: "MD5", loginType: "DVRIP-Web"},
 			passwordCandidate{label: "Sofia 8-char hash (LoginType: Mobile)", user: cleanUser, password: sofiaHash, encryptType: "MD5", loginType: "Mobile"},
 			// 2. Plaintext password
-			passwordCandidate{label: "Plaintext password", user: cleanUser, password: cleanPwd, encryptType: "NONE", loginType: "DVRIP-Web"},
+			passwordCandidate{label: "Plaintext password (LoginType: DVRIP-Mobile)", user: cleanUser, password: cleanPwd, encryptType: "NONE", loginType: "DVRIP-Mobile"},
+			passwordCandidate{label: "Plaintext password (LoginType: DVRIP-Web)", user: cleanUser, password: cleanPwd, encryptType: "NONE", loginType: "DVRIP-Web"},
 		)
 	}
 
 	// 3. Empty password (unconfigured / default factory cameras)
 	candidates = append(candidates,
-		passwordCandidate{label: "Empty password (default)", user: cleanUser, password: "", encryptType: "NONE", loginType: "DVRIP-Web"},
+		passwordCandidate{label: "Empty password (LoginType: DVRIP-Mobile)", user: cleanUser, password: "", encryptType: "NONE", loginType: "DVRIP-Mobile"},
+		passwordCandidate{label: "Empty password (LoginType: DVRIP-Web)", user: cleanUser, password: "", encryptType: "NONE", loginType: "DVRIP-Web"},
 	)
 
 	return candidates
@@ -533,4 +536,111 @@ func (c *Client) Close() error {
 		return err
 	}
 	return nil
+}
+
+// DiscoveredDevice holds network and identification details of a detected camera.
+type DiscoveredDevice struct {
+	SerialNo string `json:"sn"`
+	IP       string `json:"ip"`
+	Port     int    `json:"port"`
+	HostName string `json:"host_name"`
+	MAC      string `json:"mac"`
+}
+
+// DiscoverDevices sends a UDP broadcast probe (1530) to port 34569 and collects discovery responses (1531).
+func DiscoverDevices(timeout time.Duration) ([]DiscoveredDevice, error) {
+	if timeout <= 0 {
+		timeout = 2 * time.Second
+	}
+
+	laddr, err := net.ResolveUDPAddr("udp4", ":0")
+	if err != nil {
+		return nil, err
+	}
+	conn, err := net.ListenUDP("udp4", laddr)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = conn.Close() }()
+
+	bcastAddr, err := net.ResolveUDPAddr("udp4", "255.255.255.255:34569")
+	if err != nil {
+		return nil, err
+	}
+
+	// 20-byte Sofia Header for MsgSearchDeviceReq (1530)
+	hdr := Header{
+		Magic:      HeaderMagic,
+		Channel:    0x00,
+		TotalPkt:   0,
+		CurPkt:     0,
+		MsgID:      MsgSearchDeviceReq,
+		DataLength: 0,
+	}
+	probePkt := hdr.Encode()
+
+	if _, err := conn.WriteToUDP(probePkt, bcastAddr); err != nil {
+		return nil, err
+	}
+
+	_ = conn.SetReadDeadline(time.Now().Add(timeout))
+	var devices []DiscoveredDevice
+	seen := make(map[string]bool)
+	buf := make([]byte, 2048)
+
+	for {
+		n, _, err := conn.ReadFrom(buf)
+		if err != nil {
+			break // Timeout or read error
+		}
+		if n < HeaderLength {
+			continue
+		}
+		hdr, err := DecodeHeader(buf[:HeaderLength])
+		if err != nil || hdr.MsgID != MsgSearchDeviceResp {
+			continue
+		}
+
+		payload := strings.TrimRight(string(buf[HeaderLength:n]), "\x00\r\n ")
+		var respMap map[string]interface{}
+		if err := json.Unmarshal([]byte(payload), &respMap); err != nil {
+			continue
+		}
+
+		var sn, ip, hostName, mac string
+		port := DefaultPort
+
+		if netCommon, ok := respMap["NetWork.NetCommon"].(map[string]interface{}); ok {
+			if s, ok := netCommon["SN"].(string); ok && s != "" {
+				sn = s
+			} else if s, ok := netCommon["SerialNo"].(string); ok && s != "" {
+				sn = s
+			}
+			if s, ok := netCommon["HostIP"].(string); ok {
+				ip = s
+			}
+			if s, ok := netCommon["HostName"].(string); ok {
+				hostName = s
+			}
+			if s, ok := netCommon["MAC"].(string); ok {
+				mac = s
+			}
+			if p, ok := netCommon["TCPPort"].(float64); ok && p > 0 {
+				port = int(p)
+			}
+		}
+
+		if ip != "" && !seen[ip] {
+			seen[ip] = true
+			devices = append(devices, DiscoveredDevice{
+				SerialNo: sn,
+				IP:       ip,
+				Port:     port,
+				HostName: hostName,
+				MAC:      mac,
+			})
+		}
+	}
+
+	return devices, nil
 }
