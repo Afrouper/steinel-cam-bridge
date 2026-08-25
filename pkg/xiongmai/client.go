@@ -259,7 +259,7 @@ func (c *Client) loginLocked() error {
 	if fallbackSessionID != 0 {
 		c.sessionID = fallbackSessionID
 		c.effectivePassword = strings.TrimSpace(c.password)
-		c.isLoggedIn = true
+		c.isLoggedIn = false
 		log.Printf("[Xiongmai] ⚠️ Sofia login returned code 124 (EE_ACCOUNT_PWD_ENCRYPT_ERROR: auth subsystem inactive or password mismatch)")
 		log.Printf("[Xiongmai] 📡 Proceeding in Resilient Streaming Mode with assigned SessionID 0x%08X (RTSP Port 554 active)", c.sessionID)
 		return nil
@@ -267,6 +267,13 @@ func (c *Client) loginLocked() error {
 
 	log.Printf("[Xiongmai] ❌ All %d authentication candidates rejected by camera (check username and device password)", len(candidates))
 	return lastErr
+}
+
+// IsLoggedIn returns whether a fully authenticated session exists on port 34567.
+func (c *Client) IsLoggedIn() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.isLoggedIn
 }
 
 // EnableRTSP ensures that the internal RTSP server on port 554 is activated on the camera.
