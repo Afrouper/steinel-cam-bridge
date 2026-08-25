@@ -221,14 +221,7 @@ func (c *Client) publishDiscovery(client paho.Client) {
 		"icon":          "mdi:theme-light-dark",
 	})
 
-	// 3. Binary Sensor (Motion)
-	publishEntity("binary_sensor", "motion", map[string]interface{}{
-		"name":         "Bewegung",
-		"device_class": "motion",
-		"state_topic":  fmt.Sprintf("%s/motion/state", c.baseTopic),
-	})
-
-	// 4. Binary Sensor (PIR Status)
+	// 3. Binary Sensor (PIR Status)
 	publishEntity("binary_sensor", "pir_status", map[string]interface{}{
 		"name":            "PIR Sensor aktiv",
 		"device_class":    "running",
@@ -373,14 +366,7 @@ func (c *Client) publishStatus(st events.DeviceStatus) {
 	}
 	pub("pir/state", pirState)
 
-	// 4. Motion State
-	motionState := "OFF"
-	if st.IsMotion {
-		motionState = "ON"
-	}
-	pub("motion/state", motionState)
-
-	// 5. Resolution
+	// 4. Resolution
 	if st.Resolution != "" {
 		pub("resolution/state", st.Resolution)
 	}
