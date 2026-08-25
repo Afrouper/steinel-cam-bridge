@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 )
 
 // Sofia Header constants
@@ -57,18 +58,20 @@ func main() {
 	udpPort := flag.Int("udp", 34569, "UDP port for Xiongmai broadcast discovery (0 to disable)")
 	serialNo := flag.String("sn", "0011223344556677", "16-character camera serial number")
 	customIP := flag.String("ip", "", "Custom IP address to announce (leave empty for auto-detection)")
+	discMode := flag.String("mode", "json", "Discovery response format: json (default), bin, or both")
 	flag.Parse()
 
 	log.Printf("═══════════════════════════════════════════════════════════════════")
 	log.Printf("🎥 Steinel L 620 CAM — Mock Sofia Protocol Interception Server")
 	log.Printf("📡 Listening on TCP port :%d (Xiongmai Sofia Daemon)", *port)
 	log.Printf("🔑 Mock Camera SerialNo / DeviceID: %s", *serialNo)
+	log.Printf("📦 Discovery Mode: %s", *discMode)
 	if *customIP != "" {
 		log.Printf("🌐 Explicit Announcement IP: %s", *customIP)
 	}
 	if *udpPort > 0 {
 		log.Printf("🛰️ Listening on UDP port :%d (Broadcast Discovery)", *udpPort)
-		go startUDPDiscoveryListener(*udpPort, *port, *serialNo, *customIP)
+		go startUDPDiscoveryListener(*udpPort, *port, *serialNo, *customIP, *discMode)
 	}
 	log.Printf("💡 Ready to capture packets from the Steinel macOS / iOS App")
 	log.Printf("═══════════════════════════════════════════════════════════════════")
@@ -301,7 +304,7 @@ func buildMockResponse(msgID uint16, sessionID uint32, reqPayload []byte) []byte
 }
 
 // startUDPDiscoveryListener listens for Xiongmai broadcast discovery probes
-func startUDPDiscoveryListener(udpPort, tcpPort int, serialNo, customIP string) {
+func startUDPDiscoveryListener(udpPort, tcpPort int, serialNo, customIP, discMode string) {
 	addr := net.UDPAddr{
 		Port: udpPort,
 		IP:   net.ParseIP("0.0.0.0"),
@@ -384,16 +387,21 @@ func startUDPDiscoveryListener(udpPort, tcpPort int, serialNo, customIP string) 
 			jsonPayload, _ := json.Marshal(respData)
 			jsonPayload = append(jsonPayload, 0x0A, 0x00)
 
-			// 1. Binary NetCommon V2 Struct (260 bytes) Response (for FunSDK native C parser)
-			binV2Payload := buildBinaryNetCommonV2(serialNo, localIP, tcpPort)
-			binV2Packet := buildSofiaPacketWithChannel(buf[1], 1531, recvSessionID, recvSeq, binV2Payload)
-			_ = sendUDPPacket(conn, binV2Packet, remoteAddr, udpPort)
+			if discMode == "bin" || discMode == "both" {
+				binV2Payload := buildBinaryNetCommonV2(serialNo, localIP, tcpPort)
+				binV2Packet := buildSofiaPacketWithChannel(buf[1], 1531, recvSessionID, recvSeq, binV2Payload)
+				_ = sendUDPPacket(conn, binV2Packet, remoteAddr, udpPort)
+				if discMode == "both" {
+					time.Sleep(10 * time.Millisecond)
+				}
+			}
 
-			// 2. JSON Discovery Response (for Java / Swift / HTTP layers)
-			jsonPacket := buildSofiaPacketWithChannel(buf[1], 1531, recvSessionID, recvSeq, jsonPayload)
-			_ = sendUDPPacket(conn, jsonPacket, remoteAddr, udpPort)
+			if discMode == "json" || discMode == "both" {
+				jsonPacket := buildSofiaPacketWithChannel(buf[1], 1531, recvSessionID, recvSeq, jsonPayload)
+				_ = sendUDPPacket(conn, jsonPacket, remoteAddr, udpPort)
+			}
 
-			log.Printf("   📤 Sent Discovery Responses (BinV2 + JSON) to %s (DeviceID: %s, Announced IP: %s, TCP Port: %d)", remoteAddr.String(), serialNo, localIP, tcpPort)
+			log.Printf("   📤 Sent Discovery Response (%s) to %s (DeviceID: %s, Announced IP: %s, TCP Port: %d)", discMode, remoteAddr.String(), serialNo, localIP, tcpPort)
 		} else {
 			log.Printf("🛰️ [UDP Discovery] Received %d bytes from %s (Hex: %x)", n, remoteAddr.String(), buf[:n])
 		}
