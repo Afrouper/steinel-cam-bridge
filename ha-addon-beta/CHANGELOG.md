@@ -2,6 +2,11 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.1.0-beta.9
+
+- 🛑 **MQTT Auto-Discovery Pause für L 620**: Temporäres Ausblenden von nicht funktionalen MQTT-Licht- und Sensor-Entitäten in Home Assistant für die Steinel L 620 CAM, bis das Steuerprotokoll finalisiert ist.
+- 🎯 **Fokus auf stabilen RTSP & ONVIF Stream**: Bereitstellung von Video und Ton über RTSP Port 8554 und ONVIF Port 8000.
+
 ## 1.1.0-beta.8
 
 - 🎥 **Natives Steinel / MotionEye RTSP-Pfad-Format**: Umstellung des RTSP-Stream-Clients auf das von der Steinel L 620 CAM erwartete Pfadformat (`/user=admin_password=<pwd>_channel=1_stream=0.sdp?real_stream`). Behebt `no authentication methods available` Fehler durch direkte Pfad-Authentifizierung.

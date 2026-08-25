@@ -785,36 +785,40 @@ func main() {
 		log.Printf("[!] Warning: Could not start ONVIF server: %v", err)
 	}
 
-	// 3. Start MQTT Client (Optional)
+	// 3. Start MQTT Client (Optional — paused for L 620 until control protocol is finalized)
 	if appCfg.MQTTBroker != "" {
-		mqttClient := mqtt.NewClient(mqtt.Config{
-			Broker:          appCfg.MQTTBroker,
-			Username:        appCfg.MQTTUser,
-			Password:        appCfg.MQTTPassword,
-			TopicPrefix:     appCfg.MQTTTopic,
-			DiscoveryPrefix: appCfg.MQTTDiscovery,
-			DeviceID:        cfg.DeviceID,
-			ProductID:       cfg.ProductID,
-			Model:           modelName,
-			BridgeHTTPURL:   fmt.Sprintf("http://%s:%d", cfg.CameraIP, appCfg.ONVIFPort),
-		}, mqtt.Callbacks{
-			SetLampMode:       bridgeMgr.SetLampState,
-			SetHighlight:      bridgeMgr.SetHighlight,
-			SetHighlightTime:  bridgeMgr.SetHighlightTime,
-			SetLowlight:       bridgeMgr.SetLowlight,
-			SetLowlightTime:   bridgeMgr.SetLowlightTime,
-			SetPIRSensitivity: bridgeMgr.SetPIRSensitivity,
-			SetLuxThreshold:   bridgeMgr.SetLuxThreshold,
-			SetSiren:          bridgeMgr.SetSiren,
-			SetResolution:     bridgeMgr.SetResolution,
-		})
-		defer mqttClient.Close()
+		if isL620 {
+			log.Printf("[MQTT] ℹ️ MQTT Auto-Discovery entities for Steinel L 620 CAM are paused (video/audio provided directly via RTSP & ONVIF)")
+		} else {
+			mqttClient := mqtt.NewClient(mqtt.Config{
+				Broker:          appCfg.MQTTBroker,
+				Username:        appCfg.MQTTUser,
+				Password:        appCfg.MQTTPassword,
+				TopicPrefix:     appCfg.MQTTTopic,
+				DiscoveryPrefix: appCfg.MQTTDiscovery,
+				DeviceID:        cfg.DeviceID,
+				ProductID:       cfg.ProductID,
+				Model:           modelName,
+				BridgeHTTPURL:   fmt.Sprintf("http://%s:%d", cfg.CameraIP, appCfg.ONVIFPort),
+			}, mqtt.Callbacks{
+				SetLampMode:       bridgeMgr.SetLampState,
+				SetHighlight:      bridgeMgr.SetHighlight,
+				SetHighlightTime:  bridgeMgr.SetHighlightTime,
+				SetLowlight:       bridgeMgr.SetLowlight,
+				SetLowlightTime:   bridgeMgr.SetLowlightTime,
+				SetPIRSensitivity: bridgeMgr.SetPIRSensitivity,
+				SetLuxThreshold:   bridgeMgr.SetLuxThreshold,
+				SetSiren:          bridgeMgr.SetSiren,
+				SetResolution:     bridgeMgr.SetResolution,
+			})
+			defer mqttClient.Close()
 
-		go func() {
-			if err := mqttClient.Start(ctx); err != nil {
-				log.Printf("[MQTT] ⚠️ MQTT client error: %v", err)
-			}
-		}()
+			go func() {
+				if err := mqttClient.Start(ctx); err != nil {
+					log.Printf("[MQTT] ⚠️ MQTT client error: %v", err)
+				}
+			}()
+		}
 	}
 
 	// 4. Branch: Xiongmai Sofia Driver (L 620 CAM) vs. Nabto WebRTC Driver (L 625 CAM SC)
