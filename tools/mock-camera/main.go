@@ -41,6 +41,8 @@ var msgNames = map[uint16]string{
 	1421: "MsgMonitorResp",
 	1500: "MsgAlarmReq",
 	1501: "MsgAlarmResp",
+	1530: "MsgSearchDeviceReq",
+	1531: "MsgSearchDeviceResp",
 }
 
 func getMsgName(msgID uint16) string {
@@ -326,8 +328,12 @@ func startUDPDiscoveryListener(port int) {
 			recvSessionID := binary.LittleEndian.Uint32(buf[4:8])
 			recvSeq := binary.LittleEndian.Uint32(buf[8:12])
 			msgID := binary.LittleEndian.Uint16(buf[14:16])
+			dataLen := binary.LittleEndian.Uint32(buf[16:20])
 
-			log.Printf("🛰️ [UDP Discovery] Received %s (MsgID: %d, Session: 0x%08X, Seq: %d) from %s", getMsgName(msgID), msgID, recvSessionID, recvSeq, remoteAddr.String())
+			log.Printf("🛰️ [UDP Discovery] Received %s (MsgID: %d, Session: 0x%08X, Seq: %d, DataLen: %d) from %s", getMsgName(msgID), msgID, recvSessionID, recvSeq, dataLen, remoteAddr.String())
+			if dataLen > 0 && n >= HeaderLength+int(dataLen) {
+				log.Printf("   📜 Probe Payload: %s", string(buf[HeaderLength:HeaderLength+int(dataLen)]))
+			}
 
 			// Determine local IP on the network that reached the client
 			localIP := "127.0.0.1"
