@@ -78,7 +78,11 @@ func (c *Client) Connect(ctx context.Context) error {
 	}
 
 	if c.debug {
-		log.Printf("[Xiongmai] ✅ Successfully connected and logged in to %s (SessionID: 0x%08X)", c.addr, c.sessionID)
+		if c.isLoggedIn {
+			log.Printf("[Xiongmai] ✅ Successfully connected and authenticated on %s (SessionID: 0x%08X)", c.addr, c.sessionID)
+		} else {
+			log.Printf("[Xiongmai] 📡 TCP connection active on %s in Resilient Streaming Mode (SessionID: 0x%08X)", c.addr, c.sessionID)
+		}
 	}
 
 	return nil

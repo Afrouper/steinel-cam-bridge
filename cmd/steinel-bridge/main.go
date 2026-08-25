@@ -52,12 +52,16 @@ func (m *BridgeManager) SetXMDriver(d *xiongmai.Driver) {
 func (m *BridgeManager) SetResolution(res string) error {
 	m.mu.RLock()
 	b := m.currentBridge
+	d := m.currentXMDriver
 	m.mu.RUnlock()
 
-	if b == nil {
-		return nil
+	if b != nil {
+		return b.SetResolution(res)
 	}
-	return b.SetResolution(res)
+	if d != nil {
+		return d.SetResolution(res)
+	}
+	return nil
 }
 
 func (m *BridgeManager) SetLampState(mode string) error {
@@ -826,7 +830,7 @@ func main() {
 		log.Printf("[Bridge] 🚀 [ONLINE] Steinel L 620 CAM stream ready at rtsp://0.0.0.0:%d/%s", appCfg.RTSPPort, appCfg.RTSPPath)
 		log.Printf("[Bridge] 🛰️ [ONVIF] Endpoints active at http://0.0.0.0:%d/onvif/device_service", appCfg.ONVIFPort)
 
-		xmDriver := xiongmai.NewDriver(cfg.CameraIP, appCfg.CameraUser, appCfg.CameraPassword, rtspServer, events.GlobalBus, appCfg.Debug)
+		xmDriver := xiongmai.NewDriver(cfg.CameraIP, appCfg.CameraUser, appCfg.CameraPassword, appCfg.Resolution, rtspServer, events.GlobalBus, appCfg.Debug)
 		bridgeMgr.SetXMDriver(xmDriver)
 
 		if err := xmDriver.Start(ctx); err != nil {

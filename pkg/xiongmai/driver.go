@@ -20,6 +20,7 @@ type Driver struct {
 	cameraIP   string
 	user       string
 	password   string
+	resolution string
 	rtspServer *rtsp.Server
 	eventBus   *events.Bus
 	client     *Client
@@ -31,21 +32,33 @@ type Driver struct {
 }
 
 // NewDriver creates a new driver instance for a Steinel L 620 CAM.
-func NewDriver(cameraIP string, user, password string, rtspServer *rtsp.Server, eventBus *events.Bus, debug bool) *Driver {
+func NewDriver(cameraIP string, user, password string, resolution string, rtspServer *rtsp.Server, eventBus *events.Bus, debug bool) *Driver {
 	if user == "" {
 		user = "admin"
 	}
 	if eventBus == nil {
 		eventBus = events.GlobalBus
 	}
+
+	streamSubtype := 0 // 720p HD (Main stream)
+	resNormalized := "720p"
+	if strings.EqualFold(resolution, "360p") {
+		streamSubtype = 1 // 360p SD (Sub stream)
+		resNormalized = "360p"
+	} else if strings.EqualFold(resolution, "1080p") {
+		log.Printf("[Config] ℹ️ Steinel L 620 CAM sensor supports max 720p HD (mapping '1080p' configuration to native 720p Main Stream channel=1_stream=0)")
+		resNormalized = "720p"
+	}
+
 	client := NewClient(cameraIP, DefaultPort, user, password, debug)
 	talk := NewTalkClient(client, debug)
-	ingest := NewRTSPIngest(cameraIP, RTSPPort, user, password, 0, rtspServer, debug)
+	ingest := NewRTSPIngest(cameraIP, RTSPPort, user, password, streamSubtype, rtspServer, debug)
 
 	return &Driver{
 		cameraIP:   cameraIP,
 		user:       user,
 		password:   password,
+		resolution: resNormalized,
 		rtspServer: rtspServer,
 		eventBus:   eventBus,
 		client:     client,
@@ -89,7 +102,11 @@ func (d *Driver) Start(ctx context.Context) error {
 	if effectivePwd == "" && d.password != "" {
 		effectivePwd = d.password
 	}
-	d.ingest = NewRTSPIngest(d.cameraIP, RTSPPort, d.user, effectivePwd, 0, d.rtspServer, d.debug)
+	streamSubtype := 0
+	if d.resolution == "360p" {
+		streamSubtype = 1
+	}
+	d.ingest = NewRTSPIngest(d.cameraIP, RTSPPort, d.user, effectivePwd, streamSubtype, d.rtspServer, d.debug)
 	if err := d.ingest.Start(ctx); err != nil {
 		log.Printf("[Xiongmai Driver] ⚠️ Failed to start RTSP Ingest: %v", err)
 	}
@@ -105,7 +122,7 @@ func (d *Driver) syncInitialState() {
 	}
 
 	st := d.eventBus.GetStatus()
-	st.Resolution = "1080p"
+	st.Resolution = d.resolution
 	st.FirmwareVer = "Xiongmai-Sofia"
 
 	// Query Light Switch
@@ -290,6 +307,40 @@ func (d *Driver) SetNightlightDuration(val string) error {
 		d.eventBus.UpdateStatus(st)
 	}
 	return err
+}
+
+// SetResolution switches between 720p (stream 0) and 360p (stream 1) for the Steinel L 620 CAM.
+func (d *Driver) SetResolution(res string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	streamSubtype := 0
+	resNormalized := "720p"
+	if strings.EqualFold(res, "360p") {
+		streamSubtype = 1
+		resNormalized = "360p"
+	} else if strings.EqualFold(res, "1080p") {
+		log.Printf("[Xiongmai] ℹ️ Steinel L 620 CAM sensor supports max 720p HD (clamping resolution to 720p)")
+		resNormalized = "720p"
+	}
+
+	d.resolution = resNormalized
+	if d.eventBus != nil {
+		st := d.eventBus.GetStatus()
+		st.Resolution = resNormalized
+		d.eventBus.UpdateStatus(st)
+	}
+
+	if d.ingest != nil {
+		effectivePwd := d.client.GetEffectivePassword()
+		if effectivePwd == "" && d.password != "" {
+			effectivePwd = d.password
+		}
+		_ = d.ingest.Close()
+		d.ingest = NewRTSPIngest(d.cameraIP, RTSPPort, d.user, effectivePwd, streamSubtype, d.rtspServer, d.debug)
+		return d.ingest.Start(context.Background())
+	}
+	return nil
 }
 
 // Close shuts down all driver connections and streams.
