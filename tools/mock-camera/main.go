@@ -76,7 +76,6 @@ func main() {
 	go func() {
 		<-sigChan
 		log.Println("\n🛑 Shutting down mock server...")
-		_ = listener.Close()
 		os.Exit(0)
 	}()
 
@@ -322,9 +321,61 @@ func startUDPDiscoveryListener(port int) {
 		if err != nil {
 			return
 		}
-		log.Printf("🛰️ [UDP Discovery] Received %d bytes probe from %s", n, remoteAddr.String())
-		if n > 0 {
-			log.Printf("   Payload: %s", string(buf[:n]))
+
+		if n >= HeaderLength && buf[0] == HeaderMagic {
+			recvSessionID := binary.LittleEndian.Uint32(buf[4:8])
+			recvSeq := binary.LittleEndian.Uint32(buf[8:12])
+			msgID := binary.LittleEndian.Uint16(buf[14:16])
+
+			log.Printf("🛰️ [UDP Discovery] Received %s (MsgID: %d, Session: 0x%08X, Seq: %d) from %s", getMsgName(msgID), msgID, recvSessionID, recvSeq, remoteAddr.String())
+
+			// Determine local IP on the network that reached the client
+			localIP := "127.0.0.1"
+			if connAddr, err := net.Dial("udp", remoteAddr.String()); err == nil {
+				if lAddr, ok := connAddr.LocalAddr().(*net.UDPAddr); ok {
+					localIP = lAddr.IP.String()
+				}
+				_ = connAddr.Close()
+			}
+
+			respData := map[string]interface{}{
+				"Ret": 100,
+				"NetWork.NetCommon": map[string]interface{}{
+					"HostIP":     localIP,
+					"TCPPort":    34567,
+					"UDPPort":    34568,
+					"HttpPort":   80,
+					"HostName":   "Steinel-L620-CAM",
+					"MAC":        "00:12:16:a1:b2:c3",
+					"MonMode":    "TCP",
+					"Submask":    "255.255.255.0",
+					"GateWay":    "192.168.88.1",
+					"DeviceType": "DVR",
+					"ChannelNum": 1,
+				},
+			}
+			jsonPayload, _ := json.Marshal(respData)
+
+			respHeader := make([]byte, HeaderLength)
+			respHeader[0] = HeaderMagic
+			respHeader[1] = 0x00
+			binary.LittleEndian.PutUint32(respHeader[4:8], recvSessionID)
+			binary.LittleEndian.PutUint32(respHeader[8:12], recvSeq)
+			respMsgID := msgID + 1
+			if respMsgID == 1 {
+				respMsgID = 1531
+			}
+			binary.LittleEndian.PutUint16(respHeader[14:16], respMsgID)
+			binary.LittleEndian.PutUint32(respHeader[16:20], uint32(len(jsonPayload)))
+
+			packet := append(respHeader, jsonPayload...)
+			if _, err := conn.WriteToUDP(packet, remoteAddr); err != nil {
+				log.Printf("⚠️ Failed to reply to UDP probe: %v", err)
+			} else {
+				log.Printf("   📤 Sent Discovery Response to %s (Announced IP: %s, TCP Port: 34567)", remoteAddr.String(), localIP)
+			}
+		} else {
+			log.Printf("🛰️ [UDP Discovery] Received %d bytes from %s (Hex: %x)", n, remoteAddr.String(), buf[:n])
 		}
 	}
 }
