@@ -38,6 +38,11 @@ var msgNames = map[uint16]string{
 	1410: "MsgTalkClaimReq",
 	1411: "MsgTalkClaimResp",
 	1412: "MsgTalkSendData",
+	1413: "MsgMonitorClaimReq",
+	1414: "MsgMonitorClaimResp",
+	1415: "MsgMonitorData",
+	1416: "MsgMonitorClaimStopReq",
+	1417: "MsgMonitorClaimStopResp",
 	1420: "MsgMonitorReq",
 	1421: "MsgMonitorResp",
 	1500: "MsgAlarmReq",
@@ -161,7 +166,7 @@ func handleClient(conn net.Conn) {
 		respHeader[0] = HeaderMagic
 		respHeader[1] = 0x00
 		binary.LittleEndian.PutUint32(respHeader[4:8], sessionID)
-		binary.LittleEndian.PutUint32(respHeader[8:12], seq)
+		binary.LittleEndian.PutUint32(respHeader[8:12], recvSeq) // Echo request sequence number
 		seq++
 		respHeader[12] = 0 // TotalPacket
 		respHeader[13] = 0 // CurPacket
@@ -244,7 +249,7 @@ func buildMockResponse(msgID uint16, sessionID uint32, reqPayload []byte) []byte
 			resp["SystemInfo"] = map[string]interface{}{
 				"DeviceModel":     "Steinel-L620-CAM",
 				"SerialNo":        "0011223344556677",
-				"SoftWareVersion": "V4.02.R12.00012345.10001",
+				"SoftWareVersion": "V4.02.R12.D4806531.10002.142100.00000",
 				"BuildTime":       "2023-01-01 12:00:00",
 				"HardwareVersion": "L620_V1.0",
 				"ChannelNum":      1,
@@ -257,6 +262,17 @@ func buildMockResponse(msgID uint16, sessionID uint32, reqPayload []byte) []byte
 				"TalkInChannel":   1,
 				"TalkOutChannel":  1,
 				"AudioInChannel":  1,
+			}
+		case "SystemFunction":
+			resp["SystemFunction"] = map[string]interface{}{
+				"BlindDetect":    true,
+				"LossDetect":     true,
+				"MotionDetect":   true,
+				"NetServer":      true,
+				"NewVideoConfig": true,
+				"SoundAlarm":     true,
+				"Talk":           true,
+				"Wifi":           true,
 			}
 		case "NetWork.RTSP":
 			resp["NetWork.RTSP"] = map[string]interface{}{
@@ -283,6 +299,7 @@ func buildMockResponse(msgID uint16, sessionID uint32, reqPayload []byte) []byte
 	case 1410: // MsgTalkClaimReq (2-Way Audio Claim)
 		resp = map[string]interface{}{
 			"Ret":       100,
+			"Name":      "OPTalk",
 			"SessionID": sessionHex,
 			"AudioFormat": map[string]interface{}{
 				"BitRate":    64,
@@ -292,10 +309,37 @@ func buildMockResponse(msgID uint16, sessionID uint32, reqPayload []byte) []byte
 			},
 		}
 
+	case 1413: // MsgMonitorClaimReq (OPMonitor Claim)
+		var reqMap map[string]interface{}
+		_ = json.Unmarshal(bytes.TrimRight(reqPayload, "\x00\r\n "), &reqMap)
+		reqName, _ := reqMap["Name"].(string)
+		if reqName == "" {
+			reqName = "OPMonitor"
+		}
+		resp = map[string]interface{}{
+			"Ret":       100,
+			"Name":      reqName,
+			"SessionID": sessionHex,
+		}
+
+	case 1416: // MsgMonitorClaimStopReq
+		resp = map[string]interface{}{
+			"Ret":       100,
+			"Name":      "OPMonitor",
+			"SessionID": sessionHex,
+		}
+
 	default:
+		var reqMap map[string]interface{}
+		_ = json.Unmarshal(bytes.TrimRight(reqPayload, "\x00\r\n "), &reqMap)
+		reqName, _ := reqMap["Name"].(string)
+
 		resp = map[string]interface{}{
 			"Ret":       100,
 			"SessionID": sessionHex,
+		}
+		if reqName != "" {
+			resp["Name"] = reqName
 		}
 	}
 
