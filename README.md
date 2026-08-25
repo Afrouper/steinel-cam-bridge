@@ -20,30 +20,37 @@ Das Schwestermodell **XLED CAM2 SC** konnte nicht verprobt werden, könnte aber 
 
 ---
 
-## ✨ Features
+## ✨ Features & Home Assistant Integration
 
-- **🏠 Home Assistant MQTT Auto-Discovery**:
-  - **Hauptlicht (`number`)**: Maximale Helligkeit des Hauptlichts (`10`–`100 %`).
-  - **Betriebsmodus (`select`)**: Umschalten zwischen `Sensor (Automatik)`, `Dauerlicht` und `Aus`.
-  - **Helligkeitssensor (`sensor`)**: Live-Dämmerungswert in Lux (`lx`).
-  - **Bewegungsmelder (`binary_sensor`)**: Hardware-PIR Bewegungserkennung (`motion`).
-  - **PIR-Status (`binary_sensor`)**: Zeigt an, ob der PIR-Sensor aktiv/scharf ist.
-  - **Schieberegler (`number`)**:
-    - PIR-Empfindlichkeit (`0`–`100 %`)
-    - Dämmerungsschwelle (`2`–`1000 lx`)
-    - Nachlaufzeit des Hauptlichts (`5`–`900 s`)
-    - Grundlicht Helligkeit (`0`–`50 %`)
-  - **Alarmsirene (`siren`)**: Akustischer Alarm der Außenleuchte.
-  - **Videoauflösung (`select`)**: Live-Umschaltung (`1080p`, `720p`, `360p`).
+- **🏠 Home Assistant MQTT Auto-Discovery (Strukturierte Gerätesteuerung)**:
+  - **🎮 Steuerung (Hauptansicht)**:
+    - **Betriebsmodus (`select.mode`)**: Umschalten zwischen `Sensor (Automatik)`, `Dauerlicht` und `Aus`.
+    - **Alarmsirene (`siren.siren`)**: Sofortiges Auslösen und Stoppen des akustischen Alarms der Außenleuchte mit Live-Zustandsrückmeldung (`ON` / `OFF`).
+  - **⚙️ Konfiguration (Einstellungsbereich)**:
+    - **Dämmerungsschwelle (`number.lux_threshold`)**: Schaltschwelle in Lux (`2`–`1000 lx`), ab welcher Umgebungsdunkelheit das Licht bei Bewegung schaltet.
+    - **Hauptlicht Helligkeit (`number.highlight`)**: Maximale Leuchtstärke des Flutlichts (`10`–`100 %`).
+    - **Grundlicht Helligkeit (`number.lowlight`)**: Dauerhafte Nachtlicht-Helligkeit (`0`–`50 %`).
+    - **Nachlaufzeit (`number.duration`)**: Einschaltdauer des Hauptlichts nach Bewegung (`5`–`900 s`).
+    - **PIR-Empfindlichkeit (`number.pir_sensitivity`)**: Reichweite / Sensitivität des Bewegungsmelders (`0`–`100 %`).
+    - **Videoauflösung (`select.resolution`)**: Live-Umschaltung der Kameraauflösung (`1080p`, `720p`, `360p`).
+  - **🩺 Diagnose**:
+    - **PIR-Status (`binary_sensor.pir_status`)**: Zeigt den Betriebszustand des PIR-Sensors an (`running`).
+
+- **💡 Hinweise zu Hardware-Grenzen & Bewegungserkennung**:
+  - **Kein kontinuierlicher Luxmeter-Sensor (`sensor.lux`)**: Die Steinel-Kamera besitzt keinen digitalen Helligkeitsmesser (wie eine Wetterstation), sondern einen analogen Photowiderstand (LDR), der lediglich mit der eingestellten Dämmerungsschwelle abgeglichen wird.
+  - **Kein lokaler Hardware-PIR-Push (`binary_sensor.motion`)**: Die Kamera-Firmware meldet Bewegungsevents ab Werk ausschließlich über das Cloud-Gateway des Herstellers an die Steinel-Smartphone-App. Auf der lokalen Schnittstelle wird der 1080p-Live-Stream bereitgestellt.
+  - **Bewegungserkennung & Apple HomeKit Secure Video (HKSV)**: Die Bewegungserkennung wird in Smart-Home-Umgebungen standardmäßig per Video-Bildanalyse realisiert:
+    - **In Home Assistant**: Über **Frigate** oder **MotionEye** für präzise KI-Objekterkennung (Personen, Fahrzeuge, Tiere).
+    - **In Scrypted**: Über das offizielle Plugin **`OpenCV Motion Detector`** (`@scrypted/opencv`) für latenzfreie HomeKit-Mitteilungen und HKSV-Cloud-Aufzeichnungen.
+
 - **Standardisierter ONVIF Profile S & Profile T Server**:
   - **WS-Discovery (UDP 3702)**: Automatische Erkennung im lokalen Netzwerk.
   - **Native Live-Snapshots**: NVRs und Clients (z. B. Scrypted Prebuffer, Home Assistant) generieren hochauflösende Live-Standbilder direkt aus dem H.264-Videostream ohne Dummy-Platzhalter.
+
 - **🔊 Volles 2-Way Audio (Gegensprechen) & Natives AAC-Audio**:
-  - **Natives AAC-Audio (Standard)**: Automatisches Realtime-Transcoding des Kamera-Mikrofons (G.711u 8 kHz $\rightarrow$ AAC-LC 16 kHz). Keine extra extra Konfiguration für transcoding des Audiosignals. Wahlweise umschaltbar: `AUDIO_CODEC="aac"` (Standard) oder `AUDIO_CODEC="pcmu"` (Raw Passthrough).
+  - **Natives AAC-Audio (Standard)**: Automatisches Realtime-Transcoding des Kamera-Mikrofons (G.711u 8 kHz $\rightarrow$ AAC-LC 16 kHz). Keine extra Konfiguration für Transcoding des Audiosignals erforderlich. Wahlweise umschaltbar: `AUDIO_CODEC="aac"` (Standard) oder `AUDIO_CODEC="pcmu"` (Raw Passthrough).
   - **RTSP Audio Backchannel**: Durchleitung von HomeKit/Scrypted-Sprachdaten direkt an den Lautsprecher der Steinel-Leuchte (PCMU / G.711u 8000 Hz).
-- **Bewegungserkennung & Apple HomeKit Secure Video (HKSV)**:
-  - **Hersteller-Architektur**: Die Steinel-Kamera übermittelt Bewegungsevents ab Werk ausschließlich an das Cloud-Push-Gateway des Herstellers (für Push-Nachrichten der Steinel App) und stellt lokal im P2P-Modus den reinen Live-Stream bereit.
-  - **Lokale HKSV-Aufnahme**: In Scrypted wird über das offizielle Plugin **`OpenCV Motion Detector`** (`@scrypted/opencv`) eine latenzfreie Pixelanalyse des 1080p-RTSP-Streams durchgeführt. Bewegungen von Personen, Fahrzeugen oder Tieren lösen entsprechende Events aus.
+
 - **Autarkes Single-Binary**: Kein Python, kein Node.js und kein separater MediaMTX-Server erforderlich.
   - Im Betrieb als HomeAssistant AddOn Image mit minimalsten Abhängigkeiten.
 - **24/7 Resilienz & Watchdog**: RTP-Silence Watchdog, 30s Cooldown, mDNS-Wakeup.
