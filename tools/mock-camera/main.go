@@ -348,61 +348,58 @@ func startUDPDiscoveryListener(udpPort, tcpPort int, serialNo, customIP string) 
 			}
 
 			log.Printf("🛰️ [UDP Discovery] Received %s (MsgID: %d, Session: 0x%08X, Seq: %d) from %s", getMsgName(msgID), msgID, recvSessionID, recvSeq, remoteAddr.String())
+			log.Printf("   🔍 Raw Request Header (20 bytes):\n%s", hex.Dump(buf[:HeaderLength]))
 			if dataLen > 0 && n >= HeaderLength+int(dataLen) {
-				log.Printf("   📜 Probe Payload: %s", string(buf[HeaderLength:HeaderLength+int(dataLen)]))
+				log.Printf("   📜 Probe Payload (%d bytes): %s", dataLen, string(buf[HeaderLength:HeaderLength+int(dataLen)]))
 			}
 
 			respData := map[string]interface{}{
 				"Ret":       100,
 				"Name":      "NetWork.NetCommon",
 				"SessionID": fmt.Sprintf("0x%08X", recvSessionID),
-				"DeviceID":  serialNo,
-				"SerialNo":  serialNo,
 				"NetWork.NetCommon": map[string]interface{}{
-					"DeviceID":      serialNo,
-					"SerialNo":      serialNo,
+					"ChannelNum":    1,
+					"DeviceType":    "IPC",
+					"GateWay":       "192.168.88.1",
 					"HostIP":        localIP,
-					"TCPPort":       tcpPort,
-					"UDPPort":       34568,
+					"HostName":      "IPC",
 					"HttpPort":      80,
-					"SSLPort":       8443,
-					"HostName":      "Steinel-L620-CAM",
 					"MAC":           "00:12:16:a1:b2:c3",
+					"MaxBps":        0,
 					"MonMode":       "TCP",
+					"SSLPort":       8443,
 					"Submask":       "255.255.255.0",
 					"SubMask":       "255.255.255.0",
-					"GateWay":       "192.168.88.1",
-					"DeviceType":    "DVR",
-					"ChannelNum":    1,
-					"MaxBps":        0,
 					"TCPMaxConn":    10,
+					"TCPPort":       tcpPort,
 					"TransferPlan":  "Auto",
+					"UDPPort":       34568,
 					"UseHSDownLoad": false,
 				},
 			}
 			jsonPayload, _ := json.Marshal(respData)
 			jsonPayload = append(jsonPayload, 0x0A, 0x00)
 
-			// 1. JSON Discovery Response
-			jsonPacket := buildSofiaPacket(1531, recvSessionID, recvSeq, jsonPayload)
-			_ = sendUDPPacket(conn, jsonPacket, remoteAddr, udpPort)
-
-			// 2. Binary NetCommon V2 Struct (260 bytes) Response (for FunSDK native parser)
+			// 1. Binary NetCommon V2 Struct (260 bytes) Response (for FunSDK native C parser)
 			binV2Payload := buildBinaryNetCommonV2(serialNo, localIP, tcpPort)
-			binV2Packet := buildSofiaPacket(1531, recvSessionID, recvSeq, binV2Payload)
+			binV2Packet := buildSofiaPacketWithChannel(buf[1], 1531, recvSessionID, recvSeq, binV2Payload)
 			_ = sendUDPPacket(conn, binV2Packet, remoteAddr, udpPort)
 
-			log.Printf("   📤 Sent Discovery Responses (JSON + BinV2) to %s (DeviceID: %s, Announced IP: %s, TCP Port: %d)", remoteAddr.String(), serialNo, localIP, tcpPort)
+			// 2. JSON Discovery Response (for Java / Swift / HTTP layers)
+			jsonPacket := buildSofiaPacketWithChannel(buf[1], 1531, recvSessionID, recvSeq, jsonPayload)
+			_ = sendUDPPacket(conn, jsonPacket, remoteAddr, udpPort)
+
+			log.Printf("   📤 Sent Discovery Responses (BinV2 + JSON) to %s (DeviceID: %s, Announced IP: %s, TCP Port: %d)", remoteAddr.String(), serialNo, localIP, tcpPort)
 		} else {
 			log.Printf("🛰️ [UDP Discovery] Received %d bytes from %s (Hex: %x)", n, remoteAddr.String(), buf[:n])
 		}
 	}
 }
 
-func buildSofiaPacket(msgID uint16, sessionID, seq uint32, payload []byte) []byte {
+func buildSofiaPacketWithChannel(channel byte, msgID uint16, sessionID, seq uint32, payload []byte) []byte {
 	respHeader := make([]byte, HeaderLength)
 	respHeader[0] = HeaderMagic
-	respHeader[1] = 0x00
+	respHeader[1] = channel
 	binary.LittleEndian.PutUint32(respHeader[4:8], sessionID)
 	binary.LittleEndian.PutUint32(respHeader[8:12], seq)
 	binary.LittleEndian.PutUint16(respHeader[14:16], msgID)
@@ -411,12 +408,16 @@ func buildSofiaPacket(msgID uint16, sessionID, seq uint32, payload []byte) []byt
 }
 
 func sendUDPPacket(conn *net.UDPConn, packet []byte, remoteAddr *net.UDPAddr, standardUDPPort int) error {
-	// 1. Send unicast to source address
+	// 1. Send unicast to source ephemeral port
 	_, err := conn.WriteToUDP(packet, remoteAddr)
 
-	// 2. Send unicast to client's port 34569 if ephemeral port was used
-	if remoteAddr.Port != standardUDPPort && remoteAddr.IP != nil {
-		_, _ = conn.WriteToUDP(packet, &net.UDPAddr{IP: remoteAddr.IP, Port: standardUDPPort})
+	// 2. Send unicast to well-known client discovery ports on the remote device
+	if remoteAddr.IP != nil {
+		for _, p := range []int{standardUDPPort, 34570, 34571, 34568} {
+			if p != remoteAddr.Port {
+				_, _ = conn.WriteToUDP(packet, &net.UDPAddr{IP: remoteAddr.IP, Port: p})
+			}
+		}
 	}
 	return err
 }
