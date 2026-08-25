@@ -35,6 +35,8 @@ var msgNames = map[uint16]string{
 	1041: "MsgConfigSetResp",
 	1042: "MsgConfigGetReq",
 	1043: "MsgConfigGetResp",
+	1360: "MsgSysFunctionReq",
+	1361: "MsgSysFunctionResp",
 	1410: "MsgTalkClaimReq",
 	1411: "MsgTalkClaimResp",
 	1412: "MsgTalkSendData",
@@ -45,10 +47,24 @@ var msgNames = map[uint16]string{
 	1417: "MsgMonitorClaimStopResp",
 	1420: "MsgMonitorReq",
 	1421: "MsgMonitorResp",
+	1430: "MsgTalkControlReq",
+	1431: "MsgTalkControlResp",
+	1432: "MsgTalkAudioData",
+	1433: "MsgTalkAudioDataResp",
+	1434: "MsgTalkClaimReq",
+	1435: "MsgTalkClaimResp",
+	1452: "MsgTimeQueryReq",
+	1453: "MsgTimeQueryResp",
 	1500: "MsgAlarmReq",
 	1501: "MsgAlarmResp",
 	1530: "MsgSearchDeviceReq",
 	1531: "MsgSearchDeviceResp",
+	1572: "MsgTransSendData",
+	1573: "MsgTransSendResp",
+	1578: "MsgTransStartReq",
+	1579: "MsgTransStartResp",
+	2000: "MsgVersionListReq",
+	2001: "MsgVersionListResp",
 }
 
 func getMsgName(msgID uint16) string {
@@ -243,7 +259,7 @@ func buildMockResponse(msgID uint16, sessionID uint32, reqPayload []byte) []byte
 			"Name":      reqName,
 		}
 
-		// Provide mock answers for common config queries
+		// Provide mock answers for all config queries
 		switch reqName {
 		case "SystemInfo":
 			resp["SystemInfo"] = map[string]interface{}{
@@ -279,8 +295,83 @@ func buildMockResponse(msgID uint16, sessionID uint32, reqPayload []byte) []byte
 				"IsServer": true,
 				"Port":     554,
 			}
+		case "fVideo.AudioSupportType":
+			resp["fVideo.AudioSupportType"] = map[string]interface{}{
+				"AudioIn":      true,
+				"AudioOut":     true,
+				"AudioInMode":  "Single",
+				"AudioOutMode": "Single",
+			}
+		case "fVideo.Volume", "fVideo.Volume.[0]":
+			resp[reqName] = map[string]interface{}{
+				"AudioMode":   "Single",
+				"LeftVolume":  80,
+				"RightVolume": 80,
+			}
+		case "fVideo.InVolume", "fVideo.InVolume.[0]":
+			resp[reqName] = map[string]interface{}{
+				"AudioMode":   "Single",
+				"LeftVolume":  80,
+				"RightVolume": 80,
+			}
+		case "Simplify.Encode":
+			resp["Simplify.Encode"] = []map[string]interface{}{
+				{
+					"MainFormat": map[string]interface{}{
+						"AudioEnable":    true,
+						"BitRate":        2048,
+						"BitRateControl": "VBR",
+						"Compression":    "H.264",
+						"FPS":            25,
+						"GOP":            50,
+						"Quality":        4,
+						"Resolution":     "1080P",
+						"VideoEnable":    true,
+					},
+					"ExtraFormat": map[string]interface{}{
+						"AudioEnable":    true,
+						"BitRate":        512,
+						"BitRateControl": "VBR",
+						"Compression":    "H.264",
+						"FPS":            25,
+						"GOP":            50,
+						"Quality":        4,
+						"Resolution":     "D1",
+						"VideoEnable":    true,
+					},
+				},
+			}
+		case "Camera.Param.[0]", "Camera.Param":
+			resp[reqName] = map[string]interface{}{
+				"ElecLevel":   50,
+				"EsLevel":     0,
+				"Gain":        50,
+				"IrcutSwap":   0,
+				"NightScene":  0,
+				"WhiteBlance": "Auto",
+			}
+		case "Detect.MotionDetect.[0]", "Detect.MotionDetect":
+			resp[reqName] = map[string]interface{}{
+				"Enable": true,
+				"Level":  3,
+				"Grid":   []string{"0xFFFFFFFF", "0xFFFFFFFF", "0xFFFFFFFF", "0xFFFFFFFF"},
+			}
+		case "System.TimeZone":
+			resp["System.TimeZone"] = map[string]interface{}{
+				"FirstUserDate": "2023-01-01 00:00:00",
+				"TimeZone":      60,
+				"timeMin":       60,
+			}
+		case "General.Location":
+			resp["General.Location"] = map[string]interface{}{
+				"Language":      "German",
+				"VideoFormat":   "PAL",
+				"DateFormat":    "YYYY-MM-DD",
+				"DateSeparator": "-",
+				"TimeFormat":    "24",
+			}
 		default:
-			resp["Data"] = map[string]interface{}{
+			resp[reqName] = map[string]interface{}{
 				"Status": "OK",
 			}
 		}
@@ -296,7 +387,24 @@ func buildMockResponse(msgID uint16, sessionID uint32, reqPayload []byte) []byte
 			"Name":      reqName,
 		}
 
-	case 1410: // MsgTalkClaimReq (2-Way Audio Claim)
+	case 1360: // MsgSysFunctionReq
+		resp = map[string]interface{}{
+			"Ret":       100,
+			"Name":      "SystemFunction",
+			"SessionID": sessionHex,
+			"SystemFunction": map[string]interface{}{
+				"BlindDetect":    true,
+				"LossDetect":     true,
+				"MotionDetect":   true,
+				"NetServer":      true,
+				"NewVideoConfig": true,
+				"SoundAlarm":     true,
+				"Talk":           true,
+				"Wifi":           true,
+			},
+		}
+
+	case 1410, 1434: // MsgTalkClaimReq (2-Way Audio Claim)
 		resp = map[string]interface{}{
 			"Ret":       100,
 			"Name":      "OPTalk",
@@ -327,6 +435,54 @@ func buildMockResponse(msgID uint16, sessionID uint32, reqPayload []byte) []byte
 			"Ret":       100,
 			"Name":      "OPMonitor",
 			"SessionID": sessionHex,
+		}
+
+	case 1430: // MsgTalkControlReq (OPTalk Start/PauseUpload/ResumeUpload/Stop)
+		var reqMap map[string]interface{}
+		_ = json.Unmarshal(bytes.TrimRight(reqPayload, "\x00\r\n "), &reqMap)
+		reqName, _ := reqMap["Name"].(string)
+		if reqName == "" {
+			reqName = "OPTalk"
+		}
+		resp = map[string]interface{}{
+			"Ret":       100,
+			"Name":      reqName,
+			"SessionID": sessionHex,
+		}
+
+	case 1432: // MsgTalkAudioData
+		resp = map[string]interface{}{
+			"Ret":       100,
+			"SessionID": sessionHex,
+		}
+
+	case 1452: // MsgTimeQueryReq (OPTimeQuery)
+		resp = map[string]interface{}{
+			"Ret":         100,
+			"Name":        "OPTimeQuery",
+			"SessionID":   sessionHex,
+			"OPTimeQuery": time.Now().Format("2006-01-02 15:04:05"),
+		}
+
+	case 1572: // MsgTransSendData (RS232 MCU Serial Data)
+		resp = map[string]interface{}{
+			"Ret":       100,
+			"SessionID": sessionHex,
+		}
+
+	case 1578: // MsgTransStartReq (OPTrans Start)
+		resp = map[string]interface{}{
+			"Ret":       100,
+			"Name":      "OPTrans",
+			"SessionID": sessionHex,
+		}
+
+	case 2000: // MsgVersionListReq (OPVersionList)
+		resp = map[string]interface{}{
+			"Ret":           100,
+			"Name":          "OPVersionList",
+			"SessionID":     sessionHex,
+			"OPVersionList": []interface{}{},
 		}
 
 	default:
