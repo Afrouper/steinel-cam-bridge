@@ -667,6 +667,18 @@ func (b *Bridge) handleDataChannelMessage(data []byte) {
 				return
 			}
 
+			// Check and log for any Motion, PIR, Alarm or Event notifications from camera
+			lowerStr := strings.ToLower(str)
+			if strings.Contains(lowerStr, "alarm") ||
+				strings.Contains(lowerStr, "motion") ||
+				strings.Contains(lowerStr, "pir") ||
+				strings.Contains(lowerStr, "event") ||
+				strings.Contains(lowerStr, "doorbell") {
+				log.Printf("[DataChannel] 🚨 Motion / Event notification received from camera: %s", str)
+			} else if b.debug {
+				log.Printf("[DataChannel] 📩 Received JSON message: %s", str)
+			}
+
 			return
 		}
 	}

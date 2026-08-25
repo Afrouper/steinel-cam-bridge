@@ -221,31 +221,16 @@ func (c *Client) publishDiscovery(client paho.Client) {
 		"icon":          "mdi:theme-light-dark",
 	})
 
-	// 3. Binary Sensor (Motion)
-	publishEntity("binary_sensor", "motion", map[string]interface{}{
-		"name":         "Bewegung",
-		"device_class": "motion",
-		"state_topic":  fmt.Sprintf("%s/motion/state", c.baseTopic),
-	})
-
-	// 4. Binary Sensor (PIR Status)
+	// 3. Binary Sensor (PIR Status)
 	publishEntity("binary_sensor", "pir_status", map[string]interface{}{
-		"name":         "PIR Sensor aktiv",
-		"device_class": "running",
-		"state_topic":  fmt.Sprintf("%s/pir/state", c.baseTopic),
-		"icon":         "mdi:motion-sensor",
+		"name":            "PIR Sensor aktiv",
+		"device_class":    "running",
+		"entity_category": "diagnostic",
+		"state_topic":     fmt.Sprintf("%s/pir/state", c.baseTopic),
+		"icon":            "mdi:motion-sensor",
 	})
 
-	// 5. Sensor (Lux)
-	publishEntity("sensor", "lux", map[string]interface{}{
-		"name":                "Umgebungshelligkeit",
-		"device_class":        "illuminance",
-		"state_class":         "measurement",
-		"unit_of_measurement": "lx",
-		"state_topic":         fmt.Sprintf("%s/lux/state", c.baseTopic),
-	})
-
-	// 6. Number (PIR Sensitivity: 0 - 100%)
+	// 5. Number (PIR Sensitivity: 0 - 100%)
 	publishEntity("number", "pir_sensitivity", map[string]interface{}{
 		"name":                "PIR Empfindlichkeit",
 		"min":                 0,
@@ -253,11 +238,12 @@ func (c *Client) publishDiscovery(client paho.Client) {
 		"step":                1,
 		"unit_of_measurement": "%",
 		"icon":                "mdi:tune",
+		"entity_category":     "config",
 		"state_topic":         fmt.Sprintf("%s/pir_sensitivity/state", c.baseTopic),
 		"command_topic":       fmt.Sprintf("%s/pir_sensitivity/set", c.baseTopic),
 	})
 
-	// 7. Number (Lux Threshold: 2 - 1000 lx)
+	// 6. Number (Lux Threshold: 2 - 1000 lx)
 	publishEntity("number", "lux_threshold", map[string]interface{}{
 		"name":                "Dämmerungsschwelle",
 		"min":                 2,
@@ -265,6 +251,7 @@ func (c *Client) publishDiscovery(client paho.Client) {
 		"step":                5,
 		"unit_of_measurement": "lx",
 		"icon":                "mdi:weather-sunset",
+		"entity_category":     "config",
 		"state_topic":         fmt.Sprintf("%s/lux_threshold/state", c.baseTopic),
 		"command_topic":       fmt.Sprintf("%s/lux_threshold/set", c.baseTopic),
 	})
@@ -277,6 +264,7 @@ func (c *Client) publishDiscovery(client paho.Client) {
 		"step":                5,
 		"unit_of_measurement": "s",
 		"icon":                "mdi:timer-outline",
+		"entity_category":     "config",
 		"state_topic":         fmt.Sprintf("%s/duration/state", c.baseTopic),
 		"command_topic":       fmt.Sprintf("%s/duration/set", c.baseTopic),
 	})
@@ -289,6 +277,7 @@ func (c *Client) publishDiscovery(client paho.Client) {
 		"step":                5,
 		"unit_of_measurement": "%",
 		"icon":                "mdi:lightbulb-night",
+		"entity_category":     "config",
 		"state_topic":         fmt.Sprintf("%s/lowlight/state", c.baseTopic),
 		"command_topic":       fmt.Sprintf("%s/lowlight/set", c.baseTopic),
 	})
@@ -303,11 +292,12 @@ func (c *Client) publishDiscovery(client paho.Client) {
 
 	// 11. Select (Video Auflösung)
 	publishEntity("select", "resolution", map[string]interface{}{
-		"name":          "Video Auflösung",
-		"options":       []string{"1080p", "720p", "360p"},
-		"icon":          "mdi:video-vintage",
-		"state_topic":   fmt.Sprintf("%s/resolution/state", c.baseTopic),
-		"command_topic": fmt.Sprintf("%s/resolution/set", c.baseTopic),
+		"name":            "Video Auflösung",
+		"options":         []string{"1080p", "720p", "360p"},
+		"icon":            "mdi:video-vintage",
+		"entity_category": "config",
+		"state_topic":     fmt.Sprintf("%s/resolution/state", c.baseTopic),
+		"command_topic":   fmt.Sprintf("%s/resolution/set", c.baseTopic),
 	})
 
 	log.Printf("[MQTT] 📢 Published Home Assistant Auto-Discovery entities for %s under %s", c.nodeID, c.cfg.DiscoveryPrefix)
@@ -365,7 +355,8 @@ func (c *Client) publishStatus(st events.DeviceStatus) {
 	pub("duration/state", strconv.Itoa(st.HighlightTime))
 	pub("lowlight/state", strconv.Itoa(st.Lowlight))
 
-	// 3. Sensor values
+	// 3. Sensor values & thresholds
+	pub("lux_threshold/state", strconv.Itoa(st.Lux))
 	pub("lux/state", strconv.Itoa(st.Lux))
 	pub("pir_sensitivity/state", strconv.Itoa(st.PIRSensitivity))
 
@@ -430,10 +421,17 @@ func (c *Client) handleCommand(_ paho.Client, msg paho.Message) {
 			}
 		}
 
-	case strings.HasSuffix(topic, "/lux_threshold/set"):
+	case strings.HasSuffix(topic, "/lux_threshold/set"), strings.HasSuffix(topic, "/lux/set"):
 		if val, err := strconv.Atoi(payload); err == nil {
 			if c.cb.SetLuxThreshold != nil {
 				_ = c.cb.SetLuxThreshold(val)
+			}
+			c.mu.RLock()
+			cl := c.client
+			c.mu.RUnlock()
+			if cl != nil && cl.IsConnected() {
+				cl.Publish(fmt.Sprintf("%s/lux_threshold/state", c.baseTopic), 1, true, strconv.Itoa(val))
+				cl.Publish(fmt.Sprintf("%s/lux/state", c.baseTopic), 1, true, strconv.Itoa(val))
 			}
 		}
 
@@ -452,9 +450,29 @@ func (c *Client) handleCommand(_ paho.Client, msg paho.Message) {
 		}
 
 	case strings.HasSuffix(topic, "/siren/set"):
-		on := strings.EqualFold(payload, "ON") || payload == "1" || strings.EqualFold(payload, "true")
+		var on bool
+		if strings.HasPrefix(payload, "{") {
+			var sirenCmd struct {
+				State string `json:"state"`
+			}
+			if err := json.Unmarshal([]byte(payload), &sirenCmd); err == nil {
+				on = strings.EqualFold(sirenCmd.State, "ON") || sirenCmd.State == "1" || strings.EqualFold(sirenCmd.State, "true")
+			}
+		} else {
+			on = strings.EqualFold(payload, "ON") || payload == "1" || strings.EqualFold(payload, "true")
+		}
 		if c.cb.SetSiren != nil {
 			_ = c.cb.SetSiren(on)
+		}
+		stateStr := "OFF"
+		if on {
+			stateStr = "ON"
+		}
+		c.mu.RLock()
+		cl := c.client
+		c.mu.RUnlock()
+		if cl != nil && cl.IsConnected() {
+			cl.Publish(fmt.Sprintf("%s/siren/state", c.baseTopic), 1, true, stateStr)
 		}
 
 	case strings.HasSuffix(topic, "/resolution/set"):
