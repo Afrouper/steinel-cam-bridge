@@ -383,6 +383,28 @@ func startUDPDiscoveryListener(udpPort, tcpPort int, serialNo, customIP, discMod
 					"UDPPort":       34568,
 					"UseHSDownLoad": false,
 				},
+				"SystemInfo": map[string]interface{}{
+					"AlarmInChannel":  1,
+					"AlarmOutChannel": 1,
+					"AudioInChannel":  1,
+					"BuildTime":       "2023-01-01 00:00:00",
+					"CombineSwitch":   0,
+					"DeviceRunTime":   "0x00001D66",
+					"DeviceType":      0,
+					"DigChannel":      0,
+					"EncryptVersion":  "Unknown",
+					"ExtraChannel":    0,
+					"HardWare":        "Steinel-L620-CAM",
+					"HardWareVersion": "V1.0",
+					"SerialNo":        serialNo,
+					"SoftWareVersion": "V4.02.R12.D4806531.10002.142100.00000",
+					"TalkInChannel":   1,
+					"TalkOutChannel":  1,
+					"UpdataTime":      "",
+					"UpdataType":      "0x00000000",
+					"VideoInChannel":  1,
+					"VideoOutChannel": 1,
+				},
 			}
 			jsonPayload, _ := json.Marshal(respData)
 			jsonPayload = append(jsonPayload, 0x0A, 0x00)
