@@ -55,14 +55,16 @@ func getMsgName(msgID uint16) string {
 func main() {
 	port := flag.Int("port", 34567, "TCP port to listen on for Xiongmai Sofia protocol")
 	udpPort := flag.Int("udp", 34569, "UDP port for Xiongmai broadcast discovery (0 to disable)")
+	serialNo := flag.String("sn", "0011223344556677", "16-character camera serial number")
 	flag.Parse()
 
 	log.Printf("═══════════════════════════════════════════════════════════════════")
 	log.Printf("🎥 Steinel L 620 CAM — Mock Sofia Protocol Interception Server")
 	log.Printf("📡 Listening on TCP port :%d (Xiongmai Sofia Daemon)", *port)
+	log.Printf("🔑 Mock Camera SerialNo / DeviceID: %s", *serialNo)
 	if *udpPort > 0 {
 		log.Printf("🛰️ Listening on UDP port :%d (Broadcast Discovery)", *udpPort)
-		go startUDPDiscoveryListener(*udpPort)
+		go startUDPDiscoveryListener(*udpPort, *port, *serialNo)
 	}
 	log.Printf("💡 Ready to capture packets from the Steinel macOS / iOS App")
 	log.Printf("═══════════════════════════════════════════════════════════════════")
@@ -305,14 +307,14 @@ func buildMockResponse(msgID uint16, sessionID uint32, reqPayload []byte) []byte
 }
 
 // startUDPDiscoveryListener listens for Xiongmai broadcast discovery probes
-func startUDPDiscoveryListener(port int) {
+func startUDPDiscoveryListener(udpPort, tcpPort int, serialNo string) {
 	addr := net.UDPAddr{
-		Port: port,
+		Port: udpPort,
 		IP:   net.ParseIP("0.0.0.0"),
 	}
 	conn, err := net.ListenUDP("udp", &addr)
 	if err != nil {
-		log.Printf("⚠️ UDP discovery listener failed on port %d: %v", port, err)
+		log.Printf("⚠️ UDP discovery listener failed on port %d: %v", udpPort, err)
 		return
 	}
 	defer func() { _ = conn.Close() }()
@@ -345,19 +347,31 @@ func startUDPDiscoveryListener(port int) {
 			}
 
 			respData := map[string]interface{}{
-				"Ret": 100,
+				"Ret":       100,
+				"Name":      "NetWork.NetCommon",
+				"SessionID": fmt.Sprintf("0x%08X", recvSessionID),
+				"DeviceID":  serialNo,
+				"SerialNo":  serialNo,
 				"NetWork.NetCommon": map[string]interface{}{
-					"HostIP":     localIP,
-					"TCPPort":    34567,
-					"UDPPort":    34568,
-					"HttpPort":   80,
-					"HostName":   "Steinel-L620-CAM",
-					"MAC":        "00:12:16:a1:b2:c3",
-					"MonMode":    "TCP",
-					"Submask":    "255.255.255.0",
-					"GateWay":    "192.168.88.1",
-					"DeviceType": "DVR",
-					"ChannelNum": 1,
+					"DeviceID":      serialNo,
+					"SerialNo":      serialNo,
+					"HostIP":        localIP,
+					"TCPPort":       tcpPort,
+					"UDPPort":       34568,
+					"HttpPort":      80,
+					"SSLPort":       8443,
+					"HostName":      "Steinel-L620-CAM",
+					"MAC":           "00:12:16:a1:b2:c3",
+					"MonMode":       "TCP",
+					"Submask":       "255.255.255.0",
+					"SubMask":       "255.255.255.0",
+					"GateWay":       "192.168.88.1",
+					"DeviceType":    "DVR",
+					"ChannelNum":    1,
+					"MaxBps":        0,
+					"TCPMaxConn":    10,
+					"TransferPlan":  "Auto",
+					"UseHSDownLoad": false,
 				},
 			}
 			jsonPayload, _ := json.Marshal(respData)
@@ -378,7 +392,13 @@ func startUDPDiscoveryListener(port int) {
 			if _, err := conn.WriteToUDP(packet, remoteAddr); err != nil {
 				log.Printf("⚠️ Failed to reply to UDP probe: %v", err)
 			} else {
-				log.Printf("   📤 Sent Discovery Response to %s (Announced IP: %s, TCP Port: 34567)", remoteAddr.String(), localIP)
+				log.Printf("   📤 Sent Discovery Response to %s (DeviceID: %s, Announced IP: %s, TCP Port: %d)", remoteAddr.String(), serialNo, localIP, tcpPort)
+			}
+
+			// Also send to remote client's port 34569 if different
+			if remoteAddr.Port != udpPort && remoteAddr.IP != nil {
+				clientUDPPortAddr := &net.UDPAddr{IP: remoteAddr.IP, Port: udpPort}
+				_, _ = conn.WriteToUDP(packet, clientUDPPortAddr)
 			}
 		} else {
 			log.Printf("🛰️ [UDP Discovery] Received %d bytes from %s (Hex: %x)", n, remoteAddr.String(), buf[:n])
