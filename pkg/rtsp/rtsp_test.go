@@ -36,6 +36,30 @@ func TestServerStartClose(t *testing.T) {
 	}
 }
 
+func TestCheckPath(t *testing.T) {
+	srv, err := NewServer(8559, "steinel", "aac")
+	assert.NoError(t, err)
+	defer srv.Close()
+
+	// Should match root / empty URL
+	assert.True(t, srv.checkPath(""))
+	assert.True(t, srv.checkPath("/"))
+
+	// Should match canonical and standard alias paths
+	assert.True(t, srv.checkPath("steinel"))
+	assert.True(t, srv.checkPath("/steinel"))
+	assert.True(t, srv.checkPath("live"))
+	assert.True(t, srv.checkPath("/live"))
+	assert.True(t, srv.checkPath("cam/realmonitor"))
+	assert.True(t, srv.checkPath("/cam/realmonitor?channel=1&subtype=0"))
+	assert.True(t, srv.checkPath("steinel/main"))
+	assert.True(t, srv.checkPath("live/sub"))
+
+	// Should reject unrelated paths
+	assert.False(t, srv.checkPath("unknown_stream"))
+	assert.False(t, srv.checkPath("/other/path"))
+}
+
 func TestServerBackchannelPacketHandling(t *testing.T) {
 	srv, err := NewServer(8560, "test", "pcmu")
 	assert.NoError(t, err)
