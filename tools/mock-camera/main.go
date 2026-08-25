@@ -423,9 +423,18 @@ func sendUDPPacket(conn *net.UDPConn, packet []byte, remoteAddr *net.UDPAddr, st
 	// 1. Send unicast to source ephemeral port
 	_, err := conn.WriteToUDP(packet, remoteAddr)
 
-	// 2. Send unicast to standard discovery port if different
+	// 2. Send unicast to standard discovery port on client if different
 	if remoteAddr.Port != standardUDPPort && remoteAddr.IP != nil {
 		_, _ = conn.WriteToUDP(packet, &net.UDPAddr{IP: remoteAddr.IP, Port: standardUDPPort})
+	}
+
+	// 3. Send general broadcast & subnet broadcast
+	_, _ = conn.WriteToUDP(packet, &net.UDPAddr{IP: net.ParseIP("255.255.255.255"), Port: standardUDPPort})
+	if remoteAddr.IP != nil {
+		if ip := remoteAddr.IP.To4(); ip != nil {
+			subnetBcast := net.IPv4(ip[0], ip[1], ip[2], 255)
+			_, _ = conn.WriteToUDP(packet, &net.UDPAddr{IP: subnetBcast, Port: standardUDPPort})
+		}
 	}
 	return err
 }
