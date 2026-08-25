@@ -401,43 +401,53 @@ func buildSofiaPacket(msgID uint16, sessionID, seq uint32, payload []byte) []byt
 }
 
 func sendUDPPacket(conn *net.UDPConn, packet []byte, remoteAddr *net.UDPAddr, standardUDPPort int) error {
-	// Send to source address
+	// 1. Send to source address
 	_, err := conn.WriteToUDP(packet, remoteAddr)
 
-	// Send to client's port 34569 if different
+	// 2. Send to client's port 34569 if different
 	if remoteAddr.Port != standardUDPPort && remoteAddr.IP != nil {
 		_, _ = conn.WriteToUDP(packet, &net.UDPAddr{IP: remoteAddr.IP, Port: standardUDPPort})
 	}
+
+	// 3. Send subnet broadcast & general broadcast
+	_, _ = conn.WriteToUDP(packet, &net.UDPAddr{IP: net.ParseIP("255.255.255.255"), Port: standardUDPPort})
+	_, _ = conn.WriteToUDP(packet, &net.UDPAddr{IP: net.ParseIP("192.168.88.255"), Port: standardUDPPort})
 	return err
 }
 
 func buildBinaryNetCommonV2(serialNo, hostIP string, tcpPort int) []byte {
 	buf := make([]byte, 260)
-	copy(buf[0:80], []byte("Steinel-L620-CAM"))
+	copy(buf[0:80], []byte("Steinel-L620-CAM")) // st_00_HostName (0..80)
 
 	ip := net.ParseIP(hostIP).To4()
 	if ip == nil {
 		ip = net.IPv4(127, 0, 0, 1).To4()
 	}
-	copy(buf[80:84], ip)
-	copy(buf[84:88], []byte{255, 255, 255, 0})
-	copy(buf[88:92], []byte{192, 168, 88, 1})
+	copy(buf[80:84], ip)                       // st_01_HostIP (80..84)
+	copy(buf[84:88], []byte{255, 255, 255, 0}) // st_02_Submask (84..88)
+	copy(buf[88:92], []byte{192, 168, 88, 1})  // st_03_Gateway (88..92)
 
-	binary.LittleEndian.PutUint32(buf[92:96], 80)               // HttpPort
-	binary.LittleEndian.PutUint32(buf[96:100], uint32(tcpPort)) // TCPPort
-	binary.LittleEndian.PutUint32(buf[100:104], 8443)           // SSLPort
-	binary.LittleEndian.PutUint32(buf[104:108], 34568)          // UDPPort
-	binary.LittleEndian.PutUint32(buf[108:112], 10)             // MaxConn
-	binary.LittleEndian.PutUint32(buf[112:116], 0)              // MonMode
-	binary.LittleEndian.PutUint32(buf[116:120], 0)              // MaxBps
-	binary.LittleEndian.PutUint32(buf[120:124], 0)              // TransferPlan
-	buf[124] = 0                                                // bUseHSDownLoad
+	binary.LittleEndian.PutUint32(buf[92:96], 80)               // st_04_HttpPort (92..96)
+	binary.LittleEndian.PutUint32(buf[96:100], uint32(tcpPort)) // st_05_TCPPort (96..100)
+	binary.LittleEndian.PutUint32(buf[100:104], 8443)           // st_06_SSLPort (100..104)
+	binary.LittleEndian.PutUint32(buf[104:108], 34568)          // st_07_UDPPort (104..108)
+	binary.LittleEndian.PutUint32(buf[108:112], 10)             // st_08_MaxConn (108..112)
+	binary.LittleEndian.PutUint32(buf[112:116], 0)              // st_09_MonMode (112..116)
+	binary.LittleEndian.PutUint32(buf[116:120], 0)              // st_10_MaxBps (116..120)
+	binary.LittleEndian.PutUint32(buf[120:124], 0)              // st_11_TransferPlan (120..124)
+	buf[124] = 0                                                // st_12_bUseHSDownLoad (124..125)
 
-	copy(buf[128:160], []byte("00:12:16:a1:b2:c3")) // sMac
-	copy(buf[160:192], []byte(serialNo))            // sSn (32 bytes) -> Serial Number!
-	binary.LittleEndian.PutUint32(buf[192:196], 0)  // DeviceType
-	binary.LittleEndian.PutUint32(buf[196:200], 1)  // ChannelNum
-	binary.LittleEndian.PutUint32(buf[200:204], 0)  // DeviceTypeV2
+	copy(buf[125:157], []byte("00:12:16:a1:b2:c3")) // st_13_sMac (125..157)
+	copy(buf[157:189], []byte(serialNo))            // st_14_sSn (157..189) -> Exact Serial Number!
+	// buf[189:192] is st_151_arg0 (3 bytes padding: 189..192)
+
+	binary.LittleEndian.PutUint32(buf[192:196], 0) // st_15_DeviceType (192..196)
+	binary.LittleEndian.PutUint32(buf[196:200], 1) // st_16_ChannelNum (196..200)
+	binary.LittleEndian.PutUint32(buf[200:204], 0) // st_17_DeviceTypeV2 (200..204)
+	// buf[204:212] st_18_sRandomUser
+	// buf[212:220] st_19_sRandomPwd
+	// buf[220:244] st_20_sPid
+	// buf[244:260] st_21_sResume
 
 	return buf
 }
