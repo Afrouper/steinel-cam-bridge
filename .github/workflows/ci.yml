@@ -65,4 +65,4 @@ jobs:
             APP_VERSION=test
           tags: steinel-cam-bridge:test
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=min

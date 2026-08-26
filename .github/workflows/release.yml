@@ -2,7 +2,7 @@ name: Multi-Arch Release & Docker Publish
 
 on:
   push:
-    tags: [ "v*.*.*" ]
+    tags: [ "v*" ]
   workflow_dispatch:
 
 env:
@@ -56,7 +56,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=min
 
       - name: Create GitHub Release (if tag pushed)
         if: startsWith(github.ref, 'refs/tags/v')
