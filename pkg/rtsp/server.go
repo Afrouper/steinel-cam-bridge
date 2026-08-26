@@ -270,8 +270,14 @@ func (s *Server) readUDPBackchannelLoop(conn *net.UDPConn) {
 
 func (s *Server) checkPath(p string) bool {
 	p = strings.TrimPrefix(p, "/")
+	if idx := strings.Index(p, "?"); idx != -1 {
+		p = p[:idx]
+	}
 	cleanPath := strings.TrimPrefix(s.pathName, "/")
-	return p == cleanPath || p == cleanPath+"/main" || p == cleanPath+"/sub"
+	return p == "" || p == cleanPath || p == "live" || p == "steinel" ||
+		p == cleanPath+"/main" || p == cleanPath+"/sub" ||
+		p == "live/main" || p == "live/sub" ||
+		p == "cam/realmonitor"
 }
 
 // WriteVideoPacket forwards a raw H.264 RTP packet to all connected RTSP clients

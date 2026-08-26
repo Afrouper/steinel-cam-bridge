@@ -1,6 +1,6 @@
 name: "Steinel CAM Bridge Beta"
-description: "Standalone ONVIF, 2-Way Audio & MQTT Bridge für Steinel L 625 CAM SC"
-version: "1.1.0-beta.12"
+description: "Standalone ONVIF, 2-Way Audio & MQTT Bridge für Steinel CAM Leuchten (L 625 CAM SC / L 620 CAM)"
+version: "1.1.0"
 slug: "steinel_cam_bridge_beta"
 url: "https://github.com/Afrouper/steinel-cam-bridge"
 panel_icon: "mdi:cctv"

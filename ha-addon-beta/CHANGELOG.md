@@ -2,14 +2,21 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
-## 1.1.0-beta.12
+## 1.1.0
 
-- 🎥 **Volle Steinel L 620 CAM / XLED CAM 1 Unterstützung**: Vollständige native Integration der Generation 1 Kameras über das Xiongmai Sofia Protokoll ohne Cloud-Abhängigkeit.
-- 🔑 **Verifizierter Login-Handshake**: Umstellung auf `DVRIP-Mobile` mit mathematisch bit-genau verifiziertem 8-Zeichen Sofia MD5-Hash (`HashPassword`).
-- 💡 **Steinel MCU Hardwaresteuerung über Home Assistant MQTT**: Steuerung von Hauptlicht (`number.highlight`), Grundlicht (`number.lowlight`), Dämmerungsschwelle (`number.lux_threshold`), Nachlaufzeit (`number.duration`), PIR-Distanz (`number.pir_sensitivity`) und Lampenmodus über den transparenten `OPTrans` RS232-Seriellkanal.
-- 🎙️ **2-Wege-Audio (Gegensprechen)**: Volle Unterstützung des Audio-Backchannels über ONVIF Profile T und RTSP Backchannel (`OPTalk` 1434 / 1430 / 1432 mit G.711 A-law 8kHz).
-- 🌐 **Flexibler RTSP-Server**: Direkte Unterstützung von Root-URLs (`rtsp://<IP>:8554` / `rtsp://<IP>:8554/`) sowie Standard-Pfaden (`/live`, `/steinel`, `/cam/realmonitor`) in VLC, Home Assistant, Scrypted und Frigate.
-- 🛰️ **Automatisches UDP Discovery (`DiscoverDevices`)**: Zuverlässiges Aufspüren von Kameras im LAN über UDP Port 34569 anhand des `NetWork.NetCommon.SN` Schemas.
+### 🎥 Steinel L 620 CAM & XLED CAM 1 Unterstützung (Initial Support)
+- **RTSP Streaming Proxy & Audio-Transcoding**: Die Bridge fungiert nun als lokaler Streaming-Proxy für die **Steinel L 620 CAM** (Generation 1, Xiongmai-Architektur).
+- **Signal-Multiplexing**: Das Kamerasignal wird von der Kamera abgegriffen und stabil für mehrere parallele Clients (z. B. Home Assistant, VLC, Frigate, Scrypted) über den integrierten RTSP-Server bereitgestellt.
+- **Audio-Transcoding**: Automatische Enkodierung und Aufbereitung der Tonspur in AAC / PCMU.
+- **Automatische Modellerkennung (`camera_type: auto`)**: Erkennt beim Start anhand der Netzwerkports selbstständig, ob eine L 620 (Port 34567) oder L 625 angesprochen wird (manuelle Auswahl über `camera_type: "l620"` oder `"l625"` möglich).
+- 🧪 **Experimentelle Funktionen für L 620 CAM (Feedback erwünscht)**:
+  - **Home Assistant MQTT Entitäten (Experimentell)**: Erste Implementierung zur Steuerung von Licht, Grundlicht, Dämmerungsschwelle, Nachlaufzeit und PIR-Distanz über den internen MCU-Seriellkanal (`OPTrans` RS232).
+  - **2-Wege-Audio / Gegensprechen (Experimentell)**: Erste Unterstützung für den Audio-Rückkanal über RTSP / ONVIF Profile T an den Kameralautsprecher via `OPTalk`.
+  - **UDP LAN-Discovery (Experimentell)**: Automatisches Auffinden von L 620 Kameras im lokalen Subnetz über UDP-Port 34569.
+
+### 🚀 Allgemeine Verbesserungen & Fixes
+- 🌐 **Flexibler RTSP-Server & Player-Kompatibilität**: Der integrierte RTSP-Server akzeptiert nun auch direkte Verbindungen **ohne Pfad** (`rtsp://<IP>:8554` / `rtsp://<IP>:8554/`) sowie Standard-Pfade (`/live`, `/steinel`, `/cam/realmonitor`). Behebt `404 Not Found`-Abbrüche in VLC, Frigate, go2rtc und QuickTime.
+- 🛡️ **Sicherheit & Logging**: Zuverlässige Maskierung von Passwörtern und Authentifizierungs-Tokens in allen Log-Ausgaben und RTSP-Pfaden.
 
 ## 1.1.0-beta.11
 

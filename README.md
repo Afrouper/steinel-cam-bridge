@@ -1,4 +1,4 @@
-# Bridge für Steinel L 625 CAM SC auf ONVIF, 2-Way Audio & Home Assistant
+# Bridge für Steinel CAM Leuchten auf ONVIF, 2-Way Audio & Home Assistant
 
 [![Latest Release](https://img.shields.io/github/v/release/Afrouper/steinel-cam-bridge?logo=github)](https://github.com/Afrouper/steinel-cam-bridge/releases)
 [![CI Test & Build](https://github.com/Afrouper/steinel-cam-bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/Afrouper/steinel-cam-bridge/actions/workflows/ci.yml)
@@ -10,8 +10,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Go Version](https://img.shields.io/badge/Go-1.27-00ADD8?logo=go)](https://go.dev)
 
-Die Anwendung ist als hochperformanter, 100 % autarker **Go-Daemon**.
-Es soll die **Steinel L 625 CAM SC** Außenleuchte (und ggf. baugleiche Modelle) in eine standardkonforme **ONVIF Profile S/T Kamera** mit **RTSP-Streaming**, **2-Wege-Audio (Gegensprechen)** und vollständiger **MQTT Home Assistant Auto-Discovery** verwandelt – zur nahtlosen Integration in **Home Assistant**, **Scrypted / Apple HomeKit Secure Video (HKSV)** und weitere.
+Die Anwendung ist ein hochperformanter, 100 % autarker **Go-Daemon**.
+Sie verwandelt **Steinel CAM Außenleuchten** (**L 625 CAM SC**, **L 620 CAM**, **XLED CAM 1/2**, **Spot CAM**) in standardkonforme **ONVIF Profile S/T Kameras** mit **RTSP-Streaming**, **2-Wege-Audio (Gegensprechen)** und vollständiger **MQTT Home Assistant Auto-Discovery** – zur nahtlosen Integration in **Home Assistant**, **Scrypted / Apple HomeKit Secure Video (HKSV)**, **Frigate** und weitere.
 
 Das Schwestermodell **XLED CAM2 SC** konnte nicht verprobt werden, könnte aber ebenfalls funktionieren. Über Rückmeldungen würde ich mich freuen.
 
