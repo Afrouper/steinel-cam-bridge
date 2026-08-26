@@ -2,6 +2,13 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.2.0-beta.3
+
+### 🔧 Fix Initialer SD-Aufnahme-Sync & Event-Typen
+- **Epoch-0 Lookback**: Abfrage der neuesten Aufnahmen ohne 24h-Zeitbeschränkung, damit auch ältere Aufnahmen oder bei Zeitzonenunterschieden zuverlässig gefunden werden.
+- **Erweiterte Event-Typen**: Unterstützung für `["motion", "manual", "alarm", "record", "plan", "all"]` bei der Home Assistant `event`-Entität.
+- **Detailliertes Sync-Logging**: Protokollierung von gefundenen und publizierten SD-Karten-Aufnahmen im Add-on-Log.
+
 ## 1.2.0-beta.2
 
 ### 🔄 Automatischer MicroSD Recording Sync & Sofort-Trigger
