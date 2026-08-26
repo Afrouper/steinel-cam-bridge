@@ -675,6 +675,7 @@ func (b *Bridge) handleDataChannelMessage(data []byte) {
 				strings.Contains(lowerStr, "event") ||
 				strings.Contains(lowerStr, "doorbell") {
 				log.Printf("[DataChannel] 🚨 Motion / Event notification received from camera: %s", str)
+				events.GlobalBus.SetMotion(true)
 			} else if b.debug {
 				log.Printf("[DataChannel] 📩 Received JSON message: %s", str)
 			}

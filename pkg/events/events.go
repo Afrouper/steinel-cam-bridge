@@ -103,3 +103,13 @@ func (b *Bus) GetStatus() DeviceStatus {
 	defer b.mu.RUnlock()
 	return b.status
 }
+
+func (b *Bus) SubscribeMotion(fn func(isMotion bool)) {
+	b.Subscribe(func(evt EventType, data interface{}) {
+		if evt == EventMotion {
+			if m, ok := data.(MotionEvent); ok {
+				fn(m.IsMotion)
+			}
+		}
+	})
+}

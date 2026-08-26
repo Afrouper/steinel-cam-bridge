@@ -2,6 +2,13 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.2.0-beta.2
+
+### 🔄 Automatischer MicroSD Recording Sync & Sofort-Trigger
+- **Initialer Sync beim Start**: Lädt beim Start der Bridge sofort die neueste existierende Aufnahme von der MicroSD-Karte und veröffentlicht sie per MQTT nach Home Assistant (behebt den Status *„Unbekannt“* bei der Entität `event.letzte_sd_aufnahme`).
+- **Hintergrund-Sync (20s Intervall)**: Erkennt neu auf die SD-Karte geschriebene Aufnahmen automatisch und pusht sie zuverlässig innerhalb weniger Sekunden nach Home Assistant.
+- **Sofort-Trigger bei Bewegung/Alarm**: Verknüpfung mit Bewegungsmeldungen (DataChannel / MCU / ONVIF) für unmittelbare Abfrage nach Abschluss des Schreibvorgangs.
+
 ## 1.2.0-beta.1
 
 ### 💾 Lokaler MicroSD-Speicherabruf & Wiedergabe (#17)

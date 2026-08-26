@@ -817,13 +817,25 @@ func main() {
 			SetSiren:          bridgeMgr.SetSiren,
 			SetResolution:     bridgeMgr.SetResolution,
 		})
-		defer mqttClient.Close()
-
 		go func() {
 			if err := mqttClient.Start(ctx); err != nil {
 				log.Printf("[MQTT] ⚠️ MQTT client error: %v", err)
 			}
 		}()
+
+		// Start background recording sync engine (initial sync + 20s polling + motion trigger)
+		recordingSyncer := storage.NewRecordingSyncer(
+			bridgeMgr.GetRecordingProvider,
+			mqttClient.PublishRecordingEvent,
+			20*time.Second,
+		)
+		go recordingSyncer.Start(ctx)
+
+		events.GlobalBus.SubscribeMotion(func(isMotion bool) {
+			if isMotion {
+				recordingSyncer.TriggerSync()
+			}
+		})
 	}
 
 	// 4. Branch: Xiongmai Sofia Driver (L 620 CAM) vs. Nabto WebRTC Driver (L 625 CAM SC)
