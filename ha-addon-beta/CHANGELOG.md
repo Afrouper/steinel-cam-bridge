@@ -2,6 +2,24 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.2.0-beta.1
+
+### 💾 Lokaler MicroSD-Speicherabruf & Wiedergabe (#17)
+- **Unified Storage Engine**: Einheitliche Schnittstelle zum Abruf von Event-Listen, Metadaten, Snapshots und Videos von der lokalen MicroSD-Karte.
+- **REST API Endpunkte**:
+  - `GET /api/sdcard/events`: Liefert Liste aller erfassten Bewegungs- und Alarmaufnahmen als JSON.
+  - `GET /api/sdcard/events/{id}`: Metadaten einer einzelnen Aufnahme.
+  - `GET /api/sdcard/events/{id}/thumbnail.jpg`: Direktes Streaming des JPEG-Vorschaubilds.
+  - `GET /api/sdcard/events/{id}/video.mp4`: Direktes Streaming des MP4-Videos mit `Content-Length`.
+- **ONVIF Profile G Services**:
+  - Vollständige Implementierung von Search (`/onvif/search_service`), Replay (`/onvif/replay_service`) und Recording (`/onvif/recording_service`).
+  - Unterstützung für NVR-Systeme (Synology Surveillance Station, QNAP, Milestone, Frigate).
+- **Home Assistant MQTT Event-Entität**:
+  - Auto-Discovery der Entität `event.steinel_<deviceID>_recording` mit direkten Download- und Thumbnail-Links bei jeder neuen Aufnahme.
+- **Kamera-Treiber Unterstützung**:
+  - Steinel L 625 CAM SC (Nabto WebRTC Engine)
+  - Steinel L 620 CAM / XLED CAM 1 (Xiongmai Sofia Engine via `OPFileQuery`)
+
 ## 1.1.0
 
 ### 🎥 Steinel L 620 CAM & XLED CAM 1 Unterstützung (Initial Support)
