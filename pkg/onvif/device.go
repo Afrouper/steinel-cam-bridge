@@ -74,6 +74,9 @@ func (h *DeviceHandler) getCapabilities(host string) string {
 	mediaURL := fmt.Sprintf("http://%s:%d/onvif/media_service", ip, h.onvifPort)
 	eventURL := fmt.Sprintf("http://%s:%d/onvif/event_service", ip, h.onvifPort)
 	deviceIOURL := fmt.Sprintf("http://%s:%d/onvif/deviceio_service", ip, h.onvifPort)
+	searchURL := fmt.Sprintf("http://%s:%d/onvif/search_service", ip, h.onvifPort)
+	replayURL := fmt.Sprintf("http://%s:%d/onvif/replay_service", ip, h.onvifPort)
+	recordingURL := fmt.Sprintf("http://%s:%d/onvif/recording_service", ip, h.onvifPort)
 
 	return fmt.Sprintf(`<tds:GetCapabilitiesResponse xmlns:tds="%s" xmlns:tt="%s">
   <tds:Capabilities>
@@ -112,6 +115,19 @@ func (h *DeviceHandler) getCapabilities(host string) string {
         <tt:RTP_RTSP_TCP>true</tt:RTP_RTSP_TCP>
       </tt:StreamingCapabilities>
     </tt:Media>
+    <tt:Search>
+      <tt:XAddr>%s</tt:XAddr>
+      <tt:MetadataSearch>false</tt:MetadataSearch>
+    </tt:Search>
+    <tt:Replay>
+      <tt:XAddr>%s</tt:XAddr>
+    </tt:Replay>
+    <tt:Recording>
+      <tt:XAddr>%s</tt:XAddr>
+      <tt:ReceiverSource>false</tt:ReceiverSource>
+      <tt:MediaProfileSource>true</tt:MediaProfileSource>
+      <tt:DynamicRecordings>false</tt:DynamicRecordings>
+    </tt:Recording>
     <tt:Extension>
       <tt:DeviceIO>
         <tt:XAddr>%s</tt:XAddr>
@@ -123,7 +139,7 @@ func (h *DeviceHandler) getCapabilities(host string) string {
       </tt:DeviceIO>
     </tt:Extension>
   </tds:Capabilities>
-</tds:GetCapabilitiesResponse>`, NS_TDS, NS_TT, deviceURL, eventURL, mediaURL, deviceIOURL)
+</tds:GetCapabilitiesResponse>`, NS_TDS, NS_TT, deviceURL, eventURL, mediaURL, searchURL, replayURL, recordingURL, deviceIOURL)
 }
 
 func (h *DeviceHandler) getServices(host string) string {
@@ -132,6 +148,9 @@ func (h *DeviceHandler) getServices(host string) string {
 	mediaURL := fmt.Sprintf("http://%s:%d/onvif/media_service", ip, h.onvifPort)
 	eventURL := fmt.Sprintf("http://%s:%d/onvif/event_service", ip, h.onvifPort)
 	deviceIOURL := fmt.Sprintf("http://%s:%d/onvif/deviceio_service", ip, h.onvifPort)
+	searchURL := fmt.Sprintf("http://%s:%d/onvif/search_service", ip, h.onvifPort)
+	replayURL := fmt.Sprintf("http://%s:%d/onvif/replay_service", ip, h.onvifPort)
+	recordingURL := fmt.Sprintf("http://%s:%d/onvif/recording_service", ip, h.onvifPort)
 
 	return fmt.Sprintf(`<tds:GetServicesResponse xmlns:tds="%s" xmlns:tt="%s">
   <tds:Service>
@@ -154,7 +173,29 @@ func (h *DeviceHandler) getServices(host string) string {
     <tds:XAddr>%s</tds:XAddr>
     <tds:Version><tt:Major>2</tt:Major><tt:Minor>0</tt:Minor></tds:Version>
   </tds:Service>
-</tds:GetServicesResponse>`, NS_TDS, NS_TT, NS_TDS, deviceURL, NS_TRT, mediaURL, NS_TEV, eventURL, NS_TIO, deviceIOURL)
+  <tds:Service>
+    <tds:Namespace>%s</tds:Namespace>
+    <tds:XAddr>%s</tds:XAddr>
+    <tds:Version><tt:Major>2</tt:Major><tt:Minor>0</tt:Minor></tds:Version>
+  </tds:Service>
+  <tds:Service>
+    <tds:Namespace>%s</tds:Namespace>
+    <tds:XAddr>%s</tds:XAddr>
+    <tds:Version><tt:Major>2</tt:Major><tt:Minor>0</tt:Minor></tds:Version>
+  </tds:Service>
+  <tds:Service>
+    <tds:Namespace>%s</tds:Namespace>
+    <tds:XAddr>%s</tds:XAddr>
+    <tds:Version><tt:Major>2</tt:Major><tt:Minor>0</tt:Minor></tds:Version>
+  </tds:Service>
+</tds:GetServicesResponse>`, NS_TDS, NS_TT,
+		NS_TDS, deviceURL,
+		NS_TRT, mediaURL,
+		NS_TEV, eventURL,
+		NS_TIO, deviceIOURL,
+		NS_TSE, searchURL,
+		NS_TRP, replayURL,
+		NS_TRC, recordingURL)
 }
 
 func (h *DeviceHandler) getSystemDateAndTime() string {

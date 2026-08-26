@@ -50,6 +50,9 @@ const (
 	NS_TT       = "http://www.onvif.org/ver10/schema"
 	NS_TEV      = "http://www.onvif.org/ver10/events/wsdl"
 	NS_TIO      = "http://www.onvif.org/ver10/deviceIO/wsdl"
+	NS_TSE      = "http://www.onvif.org/ver10/search/wsdl"
+	NS_TRP      = "http://www.onvif.org/ver10/replay/wsdl"
+	NS_TRC      = "http://www.onvif.org/ver10/recording/wsdl"
 	NS_WSNT     = "http://docs.oasis-open.org/wsn/b-2"
 	NS_WSRF_R   = "http://docs.oasis-open.org/wsrf/r-2"
 )

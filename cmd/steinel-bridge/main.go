@@ -25,6 +25,7 @@ import (
 	"github.com/Afrouper/steinel-cam-bridge/pkg/nabto"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/onvif"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/rtsp"
+	"github.com/Afrouper/steinel-cam-bridge/pkg/storage"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/webrtc"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/xiongmai"
 )
@@ -223,15 +224,19 @@ func (m *BridgeManager) RequestKeyframe() {
 	}
 }
 
-func (m *BridgeManager) GetSDCardManager() *webrtc.SDCardManager {
+func (m *BridgeManager) GetRecordingProvider() storage.RecordingProvider {
 	m.mu.RLock()
 	b := m.currentBridge
+	d := m.currentXMDriver
 	m.mu.RUnlock()
 
-	if b == nil {
-		return nil
+	if b != nil {
+		return b.GetSDCardManager()
 	}
-	return b.GetSDCardManager()
+	if d != nil {
+		return d.GetSDCardManager()
+	}
+	return nil
 }
 
 func (m *BridgeManager) WriteAudioBackchannel(pkt *rtp.Packet) error {
@@ -781,7 +786,7 @@ func main() {
 		},
 		bridgeMgr.SetLampState,
 		bridgeMgr.SetSiren,
-		bridgeMgr.GetSDCardManager,
+		bridgeMgr.GetRecordingProvider,
 	)
 	defer onvifServer.Close()
 

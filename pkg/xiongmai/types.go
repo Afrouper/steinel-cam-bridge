@@ -44,6 +44,10 @@ const (
 	MsgTalkAudioDataResp uint16 = 1433
 	MsgTalkClaimV2Req    uint16 = 1434
 	MsgTalkClaimV2Resp   uint16 = 1435
+	MsgFileSearchReq     uint16 = 1440
+	MsgFileSearchResp    uint16 = 1441
+	MsgFilePlayReq       uint16 = 1442
+	MsgFilePlayResp      uint16 = 1443
 	MsgAlarmReq          uint16 = 1500
 	MsgAlarmResp         uint16 = 1501
 	MsgSearchDeviceReq   uint16 = 1530

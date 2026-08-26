@@ -26,6 +26,7 @@ type Driver struct {
 	client     *Client
 	ingest     *RTSPIngest
 	talk       *TalkClient
+	sdcard     *SDCardManager
 	debug      bool
 	mu         sync.Mutex
 	running    bool
@@ -53,6 +54,7 @@ func NewDriver(cameraIP string, user, password string, resolution string, rtspSe
 	client := NewClient(cameraIP, DefaultPort, user, password, debug)
 	talk := NewTalkClient(client, debug)
 	ingest := NewRTSPIngest(cameraIP, RTSPPort, user, password, streamSubtype, rtspServer, debug)
+	sdcard := NewSDCardManager(client, cameraIP, user, password)
 
 	return &Driver{
 		cameraIP:   cameraIP,
@@ -64,8 +66,15 @@ func NewDriver(cameraIP string, user, password string, resolution string, rtspSe
 		client:     client,
 		talk:       talk,
 		ingest:     ingest,
+		sdcard:     sdcard,
 		debug:      debug,
 	}
+}
+
+func (d *Driver) GetSDCardManager() *SDCardManager {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.sdcard
 }
 
 // Start connects to the camera, activates RTSP, queries state, and starts streaming and keepalive loops.

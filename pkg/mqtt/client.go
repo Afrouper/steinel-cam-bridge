@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Afrouper/steinel-cam-bridge/pkg/events"
+	"github.com/Afrouper/steinel-cam-bridge/pkg/storage"
 
 	paho "github.com/eclipse/paho.mqtt.golang"
 )
@@ -300,7 +301,41 @@ func (c *Client) publishDiscovery(client paho.Client) {
 		"command_topic":   fmt.Sprintf("%s/resolution/set", c.baseTopic),
 	})
 
+	// 12. Event (Letzte SD-Aufnahme)
+	publishEntity("event", "recording", map[string]interface{}{
+		"name":        "Letzte SD-Aufnahme",
+		"icon":        "mdi:video-box",
+		"state_topic": fmt.Sprintf("%s/event/recording", c.baseTopic),
+		"event_types": []string{"motion", "manual", "alarm"},
+	})
+
 	log.Printf("[MQTT] 📢 Published Home Assistant Auto-Discovery entities for %s under %s", c.nodeID, c.cfg.DiscoveryPrefix)
+}
+
+// PublishRecordingEvent publishes a new recording event to Home Assistant MQTT
+func (c *Client) PublishRecordingEvent(item storage.RecordingItem) {
+	c.mu.RLock()
+	cl := c.client
+	c.mu.RUnlock()
+
+	if cl == nil || !cl.IsConnected() {
+		return
+	}
+
+	payload := map[string]interface{}{
+		"event_type":      item.EventType,
+		"id":              item.ID,
+		"timestamp":       item.StartTime.Format(time.RFC3339),
+		"duration_sec":    item.DurationSeconds,
+		"file_size_bytes": item.FileSizeBytes,
+		"thumbnail_url":   fmt.Sprintf("%s%s", c.cfg.BridgeHTTPURL, item.ThumbnailURL),
+		"video_url":       fmt.Sprintf("%s%s", c.cfg.BridgeHTTPURL, item.VideoURL),
+	}
+
+	data, err := json.Marshal(payload)
+	if err == nil {
+		cl.Publish(fmt.Sprintf("%s/event/recording", c.baseTopic), 1, false, data)
+	}
 }
 
 // --- State Publication ---

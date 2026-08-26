@@ -7,8 +7,11 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"strconv"
 	"sync"
 	"time"
+
+	"github.com/Afrouper/steinel-cam-bridge/pkg/storage"
 )
 
 var (
@@ -117,14 +120,133 @@ func (m *SDCardManager) GetEventList(ctx context.Context, startTime, endTime int
 	}
 }
 
+// ListRecordings implements storage.RecordingProvider
+func (m *SDCardManager) ListRecordings(ctx context.Context, start, end time.Time, page, limit int, eventType string) (*storage.RecordingListResponse, error) {
+	var startUnix, endUnix int64
+	if !start.IsZero() {
+		startUnix = start.Unix()
+	}
+	if !end.IsZero() {
+		endUnix = end.Unix()
+	}
+
+	rawResp, err := m.GetEventList(ctx, startUnix, endUnix, page, limit)
+	if err != nil {
+		if errors.Is(err, ErrSDCardBusy) {
+			return nil, storage.ErrStorageBusy
+		}
+		if errors.Is(err, ErrSDCardTimeout) {
+			return nil, storage.ErrStorageTimeout
+		}
+		return nil, err
+	}
+
+	items := make([]storage.RecordingItem, 0, len(rawResp.List))
+	for _, raw := range rawResp.List {
+		st := time.Unix(raw.TimeTag, 0).UTC()
+		et := st.Add(time.Duration(raw.RecordTime) * time.Second)
+		id := strconv.FormatInt(raw.TimeTag, 10)
+		name := raw.Name
+		if name == "" {
+			name = fmt.Sprintf("event_%s.mp4", id)
+		}
+		eType := raw.Type
+		if eType == "" {
+			eType = "motion"
+		}
+		items = append(items, storage.RecordingItem{
+			ID:              id,
+			StartTime:       st,
+			EndTime:         et,
+			DurationSeconds: raw.RecordTime,
+			EventType:       eType,
+			FileSizeBytes:   raw.FileSize,
+			FileName:        name,
+			ThumbnailURL:    fmt.Sprintf("/api/sdcard/events/%s/thumbnail.jpg", id),
+			VideoURL:        fmt.Sprintf("/api/sdcard/events/%s/video.mp4", id),
+		})
+	}
+
+	return &storage.RecordingListResponse{
+		Count: len(items),
+		Total: rawResp.Total,
+		List:  items,
+	}, nil
+}
+
+// GetRecording implements storage.RecordingProvider
+func (m *SDCardManager) GetRecording(ctx context.Context, id string) (*storage.RecordingItem, error) {
+	ts, err := strconv.ParseInt(id, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid recording ID: %w", err)
+	}
+
+	listResp, err := m.ListRecordings(ctx, time.Unix(ts-1, 0), time.Unix(ts+1, 0), 0, 10, "")
+	if err != nil {
+		return nil, err
+	}
+
+	for _, item := range listResp.List {
+		if item.ID == id {
+			return &item, nil
+		}
+	}
+
+	// Synthesize if not in list response
+	st := time.Unix(ts, 0).UTC()
+	return &storage.RecordingItem{
+		ID:              id,
+		StartTime:       st,
+		EndTime:         st.Add(30 * time.Second),
+		DurationSeconds: 30,
+		EventType:       "motion",
+		FileName:        fmt.Sprintf("event_%s.mp4", id),
+		ThumbnailURL:    fmt.Sprintf("/api/sdcard/events/%s/thumbnail.jpg", id),
+		VideoURL:        fmt.Sprintf("/api/sdcard/events/%s/video.mp4", id),
+	}, nil
+}
+
 // StreamSnapshot streams a JPEG snapshot for a given event timestamp directly to an io.Writer
 func (m *SDCardManager) StreamSnapshot(ctx context.Context, timestamp int64, w io.Writer) error {
 	return m.streamFile(ctx, "get_snapshot", timestamp, w, nil)
 }
 
-// StreamVideo streams an MP4 recording for a given event timestamp directly to an io.Writer
-func (m *SDCardManager) StreamVideo(ctx context.Context, timestamp int64, w io.Writer, onStart func(name string, size int64)) error {
-	return m.streamFile(ctx, "get_event_video", timestamp, w, onStart)
+// StreamThumbnail implements storage.RecordingProvider
+func (m *SDCardManager) StreamThumbnail(ctx context.Context, id string, w io.Writer) error {
+	ts, err := strconv.ParseInt(id, 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid recording ID: %w", err)
+	}
+	err = m.StreamSnapshot(ctx, ts, w)
+	if errors.Is(err, ErrSDCardBusy) {
+		return storage.ErrStorageBusy
+	}
+	if errors.Is(err, ErrSDCardTimeout) {
+		return storage.ErrStorageTimeout
+	}
+	if errors.Is(err, ErrTransferAborted) {
+		return storage.ErrTransferAborted
+	}
+	return err
+}
+
+// StreamVideo implements storage.RecordingProvider
+func (m *SDCardManager) StreamVideo(ctx context.Context, id string, w io.Writer, onStart func(name string, size int64)) error {
+	ts, err := strconv.ParseInt(id, 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid recording ID: %w", err)
+	}
+	err = m.streamFile(ctx, "get_event_video", ts, w, onStart)
+	if errors.Is(err, ErrSDCardBusy) {
+		return storage.ErrStorageBusy
+	}
+	if errors.Is(err, ErrSDCardTimeout) {
+		return storage.ErrStorageTimeout
+	}
+	if errors.Is(err, ErrTransferAborted) {
+		return storage.ErrTransferAborted
+	}
+	return err
 }
 
 // streamFile executes the binary download protocol with single-flight locking, streaming, and watchdog

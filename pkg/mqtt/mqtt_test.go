@@ -2,6 +2,9 @@ package mqtt
 
 import (
 	"testing"
+	"time"
+
+	"github.com/Afrouper/steinel-cam-bridge/pkg/storage"
 )
 
 type mockMessage struct {
@@ -88,4 +91,23 @@ func TestHandleSirenCommand(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestPublishRecordingEvent(t *testing.T) {
+	c := NewClient(Config{
+		DeviceID:      "de-test",
+		BridgeHTTPURL: "http://192.168.1.100:8000",
+	}, Callbacks{})
+
+	// Calling PublishRecordingEvent when client is nil shouldn't panic
+	c.PublishRecordingEvent(storage.RecordingItem{
+		ID:              "1724528700",
+		StartTime:       time.Date(2026, 8, 26, 18, 0, 0, 0, time.UTC),
+		EndTime:         time.Date(2026, 8, 26, 18, 0, 30, 0, time.UTC),
+		DurationSeconds: 30,
+		EventType:       "motion",
+		FileSizeBytes:   1048576,
+		ThumbnailURL:    "/api/sdcard/events/1724528700/thumbnail.jpg",
+		VideoURL:        "/api/sdcard/events/1724528700/video.mp4",
+	})
 }
