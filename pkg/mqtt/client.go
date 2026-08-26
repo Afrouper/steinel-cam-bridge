@@ -306,7 +306,7 @@ func (c *Client) publishDiscovery(client paho.Client) {
 		"name":        "Letzte SD-Aufnahme",
 		"icon":        "mdi:video-box",
 		"state_topic": fmt.Sprintf("%s/event/recording", c.baseTopic),
-		"event_types": []string{"motion", "manual", "alarm"},
+		"event_types": []string{"motion", "manual", "alarm", "record", "plan", "all"},
 	})
 
 	log.Printf("[MQTT] 📢 Published Home Assistant Auto-Discovery entities for %s under %s", c.nodeID, c.cfg.DiscoveryPrefix)
@@ -322,8 +322,13 @@ func (c *Client) PublishRecordingEvent(item storage.RecordingItem) {
 		return
 	}
 
+	eventType := strings.ToLower(item.EventType)
+	if eventType == "" || (eventType != "manual" && eventType != "alarm" && eventType != "record" && eventType != "plan") {
+		eventType = "motion"
+	}
+
 	payload := map[string]interface{}{
-		"event_type":      item.EventType,
+		"event_type":      eventType,
 		"id":              item.ID,
 		"timestamp":       item.StartTime.Format(time.RFC3339),
 		"duration_sec":    item.DurationSeconds,
@@ -334,7 +339,9 @@ func (c *Client) PublishRecordingEvent(item storage.RecordingItem) {
 
 	data, err := json.Marshal(payload)
 	if err == nil {
-		cl.Publish(fmt.Sprintf("%s/event/recording", c.baseTopic), 1, false, data)
+		log.Printf("[MQTT] 📢 Publishing recording event to %s/event/recording: %s", c.baseTopic, string(data))
+		token := cl.Publish(fmt.Sprintf("%s/event/recording", c.baseTopic), 1, false, data)
+		_ = token.WaitTimeout(2 * time.Second)
 	}
 }
 

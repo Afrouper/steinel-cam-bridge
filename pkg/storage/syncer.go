@@ -90,9 +90,12 @@ func (s *RecordingSyncer) syncOnce(ctx context.Context, isInitial bool) {
 	reqCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	// Query latest recordings (lookback 24 hours)
-	resp, err := provider.ListRecordings(reqCtx, time.Now().Add(-24*time.Hour), time.Now(), 0, 5, "")
+	// Query latest recordings (epoch 0 to future to cover any recording regardless of age or clock skew)
+	resp, err := provider.ListRecordings(reqCtx, time.Time{}, time.Time{}, 0, 5, "")
 	if err != nil {
+		if isInitial {
+			log.Printf("[Recording Sync] ⚠️ Initial sync query returned error: %v", err)
+		}
 		return
 	}
 
@@ -104,11 +107,12 @@ func (s *RecordingSyncer) syncOnce(ctx context.Context, isInitial bool) {
 
 	s.mu.Lock()
 	lastID := s.lastSeenID
-	if isInitial || latest.ID != lastID {
+	if lastID == "" || latest.ID != lastID {
+		isFirst := (lastID == "")
 		s.lastSeenID = latest.ID
 		s.mu.Unlock()
 
-		if isInitial {
+		if isFirst {
 			log.Printf("[Recording Sync] 📌 Initial sync: Found latest recording %s (%s)", latest.ID, latest.FileName)
 		} else {
 			log.Printf("[Recording Sync] 🆕 New recording detected on SD card: %s (%s)", latest.ID, latest.FileName)
