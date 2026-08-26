@@ -175,24 +175,12 @@ func (m *SDCardManager) ListRecordings(ctx context.Context, start, end time.Time
 }
 
 // GetRecording implements storage.RecordingProvider
-func (m *SDCardManager) GetRecording(ctx context.Context, id string) (*storage.RecordingItem, error) {
+func (m *SDCardManager) GetRecording(_ context.Context, id string) (*storage.RecordingItem, error) {
 	ts, err := strconv.ParseInt(id, 10, 64)
 	if err != nil {
 		return nil, fmt.Errorf("invalid recording ID: %w", err)
 	}
 
-	listResp, err := m.ListRecordings(ctx, time.Unix(ts-1, 0), time.Unix(ts+1, 0), 0, 10, "")
-	if err != nil {
-		return nil, err
-	}
-
-	for _, item := range listResp.List {
-		if item.ID == id {
-			return &item, nil
-		}
-	}
-
-	// Synthesize if not in list response
 	st := time.Unix(ts, 0).UTC()
 	return &storage.RecordingItem{
 		ID:              id,

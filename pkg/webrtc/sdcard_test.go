@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Afrouper/steinel-cam-bridge/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -168,10 +169,10 @@ func TestSDCardConcurrencyLock(t *testing.T) {
 	})
 	sdm.HandleBinaryChunk([]byte("data"))
 
-	// Try to start a concurrent second transfer -> must fail with ErrSDCardBusy
+	// Try to start a concurrent second transfer -> must fail with ErrStorageBusy
 	var buf2 bytes.Buffer
 	err2 := sdm.StreamVideo(ctx, "1723899999", &buf2, nil)
-	assert.ErrorIs(t, err2, ErrSDCardBusy)
+	assert.ErrorIs(t, err2, storage.ErrStorageBusy)
 
 	// End transfer 1
 	sdm.HandleJSONMessage(map[string]interface{}{
@@ -211,7 +212,7 @@ func TestSDCardClientAbort(t *testing.T) {
 	cancel()
 
 	err := <-errChan
-	assert.ErrorIs(t, err, ErrTransferAborted)
+	assert.ErrorIs(t, err, storage.ErrTransferAborted)
 
 	mu.Lock()
 	cmdVal := lastCmd
