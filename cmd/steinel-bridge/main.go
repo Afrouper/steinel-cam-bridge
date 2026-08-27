@@ -259,22 +259,23 @@ var AppVersion = "dev"
 
 // AppConfig encapsulates the complete resolved runtime configuration
 type AppConfig struct {
-	NabtoConfig    *nabto.Config
-	CameraType     string
-	CameraUser     string
-	CameraPassword string
-	Resolution     string
-	AudioCodec     string
-	RTSPPort       int
-	RTSPPath       string
-	ONVIFPort      int
-	ResetPairing   bool
-	MQTTBroker     string
-	MQTTUser       string
-	MQTTPassword   string
-	MQTTTopic      string
-	MQTTDiscovery  string
-	Debug          bool
+	NabtoConfig        *nabto.Config
+	CameraType         string
+	CameraUser         string
+	CameraPassword     string
+	Resolution         string
+	AudioCodec         string
+	RTSPPort           int
+	RTSPPath           string
+	ONVIFPort          int
+	ResetPairing       bool
+	MQTTBroker         string
+	MQTTUser           string
+	MQTTPassword       string
+	MQTTTopic          string
+	MQTTDiscovery      string
+	Debug              bool
+	SDCardSyncInterval int
 }
 
 func loadHomeAssistantOptionsFromPath(path string, cfg *AppConfig) {
@@ -305,6 +306,7 @@ func loadHomeAssistantOptionsFromPath(path string, cfg *AppConfig) {
 		MQTTTopicPrefix     string `json:"mqtt_topic_prefix"`
 		MQTTDiscoveryPrefix string `json:"mqtt_discovery_prefix"`
 		Debug               bool   `json:"debug"`
+		SDCardSyncInterval  int    `json:"sdcard_sync_interval"`
 	}
 
 	if err := json.Unmarshal(data, &opts); err != nil {
@@ -367,6 +369,9 @@ func loadHomeAssistantOptionsFromPath(path string, cfg *AppConfig) {
 	}
 	if opts.Debug {
 		cfg.Debug = true
+	}
+	if opts.SDCardSyncInterval > 0 {
+		cfg.SDCardSyncInterval = opts.SDCardSyncInterval
 	}
 }
 
@@ -462,17 +467,18 @@ func resolveConfig(optionsPath string, fs *flag.FlagSet) *AppConfig {
 			CameraPort: 5592,
 			KeyPath:    "data/client.key",
 		},
-		Resolution:    "1080p",
-		AudioCodec:    "aac",
-		RTSPPort:      8554,
-		RTSPPath:      "steinel",
-		ONVIFPort:     8000,
-		ResetPairing:  false,
-		MQTTBroker:    "",
-		MQTTUser:      "",
-		MQTTPassword:  "",
-		MQTTTopic:     "steinel",
-		MQTTDiscovery: "homeassistant",
+		Resolution:         "1080p",
+		AudioCodec:         "aac",
+		RTSPPort:           8554,
+		RTSPPath:           "steinel",
+		ONVIFPort:          8000,
+		ResetPairing:       false,
+		MQTTBroker:         "",
+		MQTTUser:           "",
+		MQTTPassword:       "",
+		MQTTTopic:          "steinel",
+		MQTTDiscovery:      "homeassistant",
+		SDCardSyncInterval: 30,
 	}
 
 	// 2. Layer 2: Configuration File
@@ -548,6 +554,15 @@ func resolveConfig(optionsPath string, fs *flag.FlagSet) *AppConfig {
 	if md := os.Getenv("MQTT_DISCOVERY_PREFIX"); md != "" {
 		cfg.MQTTDiscovery = md
 	}
+	if syncStr := os.Getenv("SDCARD_SYNC_INTERVAL"); syncStr != "" {
+		if s, err := strconv.Atoi(syncStr); err == nil && s > 0 {
+			cfg.SDCardSyncInterval = s
+		}
+	} else if syncStr := os.Getenv("SYNC_INTERVAL"); syncStr != "" {
+		if s, err := strconv.Atoi(syncStr); err == nil && s > 0 {
+			cfg.SDCardSyncInterval = s
+		}
+	}
 	if sct := os.Getenv("SCT"); sct != "" {
 		cfg.NabtoConfig.SCT = sct
 	}
@@ -608,6 +623,10 @@ func resolveConfig(optionsPath string, fs *flag.FlagSet) *AppConfig {
 				cfg.MQTTDiscovery = f.Value.String()
 			case "audio-codec":
 				cfg.AudioCodec = f.Value.String()
+			case "sync-interval", "sdcard-sync-interval":
+				if s, err := strconv.Atoi(f.Value.String()); err == nil && s > 0 {
+					cfg.SDCardSyncInterval = s
+				}
 			case "debug":
 				if b, err := strconv.ParseBool(f.Value.String()); err == nil {
 					cfg.Debug = b
@@ -648,6 +667,8 @@ func main() {
 	flag.String("mqtt-topic", "", "MQTT base topic prefix (default: steinel)")
 	flag.String("mqtt-disc", "", "MQTT Home Assistant Discovery Prefix")
 	flag.String("audio-codec", "", "Audio codec for RTSP/ONVIF stream: 'aac' (transcoded, default) or 'pcmu' (raw passthrough)")
+	flag.Int("sync-interval", 30, "Interval in seconds to poll SD card for new recordings (default: 30s)")
+	flag.Int("sdcard-sync-interval", 30, "Interval in seconds to poll SD card for new recordings (alias)")
 	flag.Bool("debug", false, "Enable verbose debug logging")
 	betaFlag := flag.Bool("beta", false, "Identify as beta instance for IAM registration")
 	flag.Parse()
@@ -823,11 +844,11 @@ func main() {
 			}
 		}()
 
-		// Start background recording sync engine (initial sync + 20s polling + motion trigger)
+		// Start background recording sync engine (initial sync + polling + motion trigger)
 		recordingSyncer := storage.NewRecordingSyncer(
 			bridgeMgr.GetRecordingProvider,
 			mqttClient.PublishRecordingEvent,
-			20*time.Second,
+			time.Duration(appCfg.SDCardSyncInterval)*time.Second,
 		)
 		go recordingSyncer.Start(ctx)
 

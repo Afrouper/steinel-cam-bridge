@@ -26,6 +26,7 @@ options:
   audio_codec: "aac"
   rtsp_port: 8554
   onvif_port: 8000
+  sdcard_sync_interval: 30
   debug: false
 schema:
   camera_ip: "str"
@@ -38,6 +39,7 @@ schema:
   audio_codec: "list(aac|pcmu)"
   rtsp_port: "port"
   onvif_port: "port"
+  sdcard_sync_interval: "int(5,300)?"
   debug: "bool?"
   mqtt_broker: "str?"
   mqtt_user: "str?"
