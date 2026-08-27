@@ -64,6 +64,7 @@ func NewBridge(client *nabto.Client, stream *nabto.Stream, rtspServer *rtsp.Serv
 
 	// Initialize SD Card Manager using DataChannel JSON command dispatcher
 	b.sdcardManager = NewSDCardManager(b.sendJSONCmd)
+	b.sdcardManager.SetDebug(debug)
 
 	// Register audio backchannel handler with RTSP server
 	if rtspServer != nil {
@@ -619,7 +620,9 @@ func (b *Bridge) sendJSONCmd(cmdName string, info map[string]interface{}) error 
 		cmd["info"] = infoCopy
 	}
 	data, _ := json.Marshal(cmd)
-	log.Printf("[DataChannel] 📤 Sending JSON command '%s'", cmdName)
+	if b.debug {
+		log.Printf("[DataChannel] 📤 Sending JSON command '%s'", cmdName)
+	}
 	return dc.Send(data)
 }
 

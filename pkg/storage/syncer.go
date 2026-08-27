@@ -14,6 +14,7 @@ type RecordingSyncer struct {
 	onNewRecording func(RecordingItem)
 	pollInterval   time.Duration
 	lastSeenID     string
+	lastSeenTime   time.Time
 	triggerChan    chan struct{}
 	mu             sync.Mutex
 }
@@ -90,8 +91,18 @@ func (s *RecordingSyncer) syncOnce(ctx context.Context, isInitial bool) {
 	reqCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	// Query latest recordings (epoch 0 to future to cover any recording regardless of age or clock skew)
-	resp, err := provider.ListRecordings(reqCtx, time.Time{}, time.Time{}, 0, 5, "")
+	s.mu.Lock()
+	lastTime := s.lastSeenTime
+	s.mu.Unlock()
+
+	var startTime time.Time
+	if !lastTime.IsZero() {
+		// Only query recordings around the last seen time (-10s buffer) to avoid fetching the entire history
+		startTime = lastTime.Add(-10 * time.Second)
+	}
+
+	// Query latest recordings (epoch 0 on initial sync, or since lastSeenTime on periodic polls)
+	resp, err := provider.ListRecordings(reqCtx, startTime, time.Time{}, 0, 5, "")
 	if err != nil {
 		if isInitial {
 			log.Printf("[Recording Sync] ⚠️ Initial sync query returned error: %v", err)
@@ -110,6 +121,7 @@ func (s *RecordingSyncer) syncOnce(ctx context.Context, isInitial bool) {
 	if lastID == "" || latest.ID != lastID {
 		isFirst := (lastID == "")
 		s.lastSeenID = latest.ID
+		s.lastSeenTime = latest.StartTime
 		s.mu.Unlock()
 
 		if isFirst {

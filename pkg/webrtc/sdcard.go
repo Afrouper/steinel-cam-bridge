@@ -54,6 +54,7 @@ type SDCardManager struct {
 	transferMu  sync.Mutex
 	active      *activeTransfer
 	mu          sync.Mutex
+	debug       bool
 
 	// Event list response synchronization
 	eventListMu   sync.Mutex
@@ -65,6 +66,13 @@ func NewSDCardManager(sendJSONCmd func(cmd string, info map[string]interface{}) 
 	return &SDCardManager{
 		sendJSONCmd: sendJSONCmd,
 	}
+}
+
+// SetDebug enables or disables verbose debug logging for SD card operations.
+func (m *SDCardManager) SetDebug(debug bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.debug = debug
 }
 
 // GetEventList queries the list of recordings from the camera's SD card within a given time range
@@ -80,7 +88,13 @@ func (m *SDCardManager) GetEventList(ctx context.Context, startTime, endTime int
 		endTime = 2147483647
 	}
 
-	log.Printf("[SDCard] 🔍 Requesting event list (start: %d, end: %d, page: %d, limit: %d)", startTime, endTime, page, limit)
+	m.mu.Lock()
+	isDebug := m.debug
+	m.mu.Unlock()
+
+	if isDebug {
+		log.Printf("[SDCard] 🔍 Requesting event list (start: %d, end: %d, page: %d, limit: %d)", startTime, endTime, page, limit)
+	}
 
 	m.eventListMu.Lock()
 	respChan := make(chan *EventListResponse, 1)
@@ -115,7 +129,9 @@ func (m *SDCardManager) GetEventList(ctx context.Context, startTime, endTime int
 		if resp == nil {
 			return &EventListResponse{Count: 0, Total: 0, List: []EventItem{}}, nil
 		}
-		log.Printf("[SDCard] 📋 Received event list with %d items (Total: %d)", resp.Count, resp.Total)
+		if isDebug {
+			log.Printf("[SDCard] 📋 Received event list with %d items (Total: %d)", resp.Count, resp.Total)
+		}
 		return resp, nil
 	}
 }

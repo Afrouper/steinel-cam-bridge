@@ -805,7 +805,7 @@ func main() {
 			DeviceID:        cfg.DeviceID,
 			ProductID:       cfg.ProductID,
 			Model:           modelName,
-			BridgeHTTPURL:   fmt.Sprintf("http://%s:%d", cfg.CameraIP, appCfg.ONVIFPort),
+			BridgeHTTPURL:   fmt.Sprintf("http://%s:%d", getLocalBridgeIP(cfg.CameraIP), appCfg.ONVIFPort),
 		}, mqtt.Callbacks{
 			SetLampMode:       bridgeMgr.SetLampState,
 			SetHighlight:      bridgeMgr.SetHighlight,
@@ -938,4 +938,19 @@ func main() {
 	rtspServer.Close()
 	onvifServer.Close()
 	log.Printf("[*] Standalone Go Bridge stopped cleanly.")
+}
+
+func getLocalBridgeIP(target string) string {
+	if target == "" {
+		target = "8.8.8.8"
+	}
+	conn, err := net.Dial("udp", fmt.Sprintf("%s:80", target))
+	if err != nil {
+		return "127.0.0.1"
+	}
+	defer func() { _ = conn.Close() }()
+	if localAddr, ok := conn.LocalAddr().(*net.UDPAddr); ok {
+		return localAddr.IP.String()
+	}
+	return "127.0.0.1"
 }
