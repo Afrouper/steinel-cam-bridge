@@ -135,6 +135,9 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
 - **`extracts/`**:
   - Nur für Entwickler und Agenten zum Nachschlagen von Reverse-Engineering-Traces, App-Disassembly und Mitschnitten. Darf **nicht** ins Git eingecheckt werden.
 
+- **`tools/`**
+  - Tools zur Analyse des Datenprotokolls
+  - `mock-camera`: Mock Kamera um das xiongmai Protokoll zu analysieren
 ---
 
 ## 3. Zentrale Architektur-, Sicherheits- & Dokumentationsregeln
