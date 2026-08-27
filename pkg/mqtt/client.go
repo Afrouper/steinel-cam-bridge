@@ -27,6 +27,7 @@ type Config struct {
 	ProductID       string // e.g. "pr-qtatbtbi"
 	Model           string // e.g. "L 625 CAM SC"
 	BridgeHTTPURL   string
+	Debug           bool
 }
 
 type Callbacks struct {
@@ -339,7 +340,9 @@ func (c *Client) PublishRecordingEvent(item storage.RecordingItem) {
 
 	data, err := json.Marshal(payload)
 	if err == nil {
-		log.Printf("[MQTT] 📢 Publishing recording event to %s/event/recording: %s", c.baseTopic, string(data))
+		if c.cfg.Debug {
+			log.Printf("[MQTT] 📢 Publishing recording event to %s/event/recording: %s", c.baseTopic, string(data))
+		}
 		token := cl.Publish(fmt.Sprintf("%s/event/recording", c.baseTopic), 1, false, data)
 		_ = token.WaitTimeout(2 * time.Second)
 	}

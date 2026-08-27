@@ -827,6 +827,7 @@ func main() {
 			ProductID:       cfg.ProductID,
 			Model:           modelName,
 			BridgeHTTPURL:   fmt.Sprintf("http://%s:%d", getLocalBridgeIP(cfg.CameraIP), appCfg.ONVIFPort),
+			Debug:           appCfg.Debug,
 		}, mqtt.Callbacks{
 			SetLampMode:       bridgeMgr.SetLampState,
 			SetHighlight:      bridgeMgr.SetHighlight,
