@@ -40,36 +40,44 @@ func ParseFrame(hexStr string) (*ConfigInfo, error) {
 		return nil, fmt.Errorf("invalid body length: %s", body)
 	}
 
-	mode, _ := strconv.ParseInt(body[4:6], 16, 64)
-	lux, _ := strconv.ParseInt(body[6:10], 16, 64)
+	mode := parseHexInt(body[4:6])
+	lux := parseHexInt(body[6:10])
 	pirActive := body[10:11] == "1"
 
-	tuxingVal, _ := strconv.ParseInt(body[11:12], 16, 64)
+	tuxingVal := parseHexInt(body[11:12])
 	motionDetected := (tuxingVal & 0x01) != 0
 	photoDetection := (tuxingVal & 0x02) != 0
 
-	pirSens, _ := strconv.ParseInt(body[12:14], 16, 64)
-	colorTemp, _ := strconv.ParseInt(body[14:16], 16, 64)
-	highlight, _ := strconv.ParseInt(body[16:18], 16, 64)
-	highlightTime, _ := strconv.ParseInt(body[18:22], 16, 64)
-	lowlight, _ := strconv.ParseInt(body[22:24], 16, 64)
-	lowlightTime, _ := strconv.ParseInt(body[24:28], 16, 64)
+	pirSens := parseHexInt(body[12:14])
+	colorTemp := parseHexInt(body[14:16])
+	highlight := parseHexInt(body[16:18])
+	highlightTime := parseHexInt(body[18:22])
+	lowlight := parseHexInt(body[22:24])
+	lowlightTime := parseHexInt(body[24:28])
 
 	return &ConfigInfo{
 		HVersion:                body[0:2],
 		SVersion:                body[2:4],
-		Mode:                    int(mode),
-		Lux:                     int(lux),
+		Mode:                    mode,
+		Lux:                     lux,
 		PIRActive:               pirActive,
 		MotionDetected:          motionDetected,
 		PhotosensitiveDetection: photoDetection,
-		PIRSensitivity:          int(pirSens),
-		ColorTemp:               int(colorTemp),
-		Highlight:               int(highlight),
-		HighlightTime:           int(highlightTime),
-		Lowlight:                int(lowlight),
-		LowlightTime:            int(lowlightTime),
+		PIRSensitivity:          pirSens,
+		ColorTemp:               colorTemp,
+		Highlight:               highlight,
+		HighlightTime:           highlightTime,
+		Lowlight:                lowlight,
+		LowlightTime:            lowlightTime,
 	}, nil
+}
+
+func parseHexInt(hexStr string) int {
+	val, err := strconv.ParseInt(hexStr, 16, 0)
+	if err != nil {
+		return 0
+	}
+	return int(val)
 }
 
 // ParseBase64Data parses a Base64-encoded MCU frame (from DataChannel JSON)

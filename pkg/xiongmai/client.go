@@ -511,6 +511,13 @@ func (c *Client) sendPacketLocked(msgID uint16, payload []byte) ([]byte, error) 
 	return []byte(cleanPayload), nil
 }
 
+// SendPacket sends a Sofia message and awaits the response.
+func (c *Client) SendPacket(msgID uint16, data []byte) ([]byte, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.sendPacketLocked(msgID, data)
+}
+
 // Close gracefully logs out and closes the connection.
 func (c *Client) Close() error {
 	if c.closed.Swap(true) {

@@ -11,7 +11,7 @@
 [![Go Version](https://img.shields.io/badge/Go-1.27-00ADD8?logo=go)](https://go.dev)
 
 Die Anwendung ist ein hochperformanter, 100 % autarker **Go-Daemon**.
-Sie verwandelt **Steinel CAM Außenleuchten** (**L 625 CAM SC**, **L 620 CAM**, **XLED CAM 1/2**, **Spot CAM**) in standardkonforme **ONVIF Profile S/T Kameras** mit **RTSP-Streaming**, **2-Wege-Audio (Gegensprechen)** und vollständiger **MQTT Home Assistant Auto-Discovery** – zur nahtlosen Integration in **Home Assistant**, **Scrypted / Apple HomeKit Secure Video (HKSV)**, **Frigate** und weitere.
+Sie verwandelt **Steinel CAM Außenleuchten** (**L 625 CAM SC**, **L 620 CAM**, **XLED CAM 1/2**, **Spot CAM**) in standardkonforme **ONVIF Profile S/T/G Kameras** mit **RTSP-Streaming**, **2-Wege-Audio (Gegensprechen)**, **lokalem MicroSD-Speicherabruf** und vollständiger **MQTT Home Assistant Auto-Discovery** – zur nahtlosen Integration in **Home Assistant**, **Synology Surveillance Station**, **Scrypted / Apple HomeKit Secure Video (HKSV)**, **Frigate** und weitere.
 
 Das Schwestermodell **XLED CAM2 SC** konnte nicht verprobt werden, könnte aber ebenfalls funktionieren. Über Rückmeldungen würde ich mich freuen.
 
@@ -26,6 +26,8 @@ Das Schwestermodell **XLED CAM2 SC** konnte nicht verprobt werden, könnte aber 
   - **🎮 Steuerung (Hauptansicht)**:
     - **Betriebsmodus (`select.mode`)**: Umschalten zwischen `Sensor (Automatik)`, `Dauerlicht` und `Aus`.
     - **Alarmsirene (`siren.siren`)**: Sofortiges Auslösen und Stoppen des akustischen Alarms der Außenleuchte mit Live-Zustandsrückmeldung (`ON` / `OFF`).
+  - **🎬 Ereignisse & Aufnahmen**:
+    - **Letzte SD-Aufnahme (`event.letzte_sd_aufnahme`)**: Übermittlung des neuesten MicroSD-Aufnahmeereignisses mit Metadaten (Zeitstempel, Dauer, Dateigröße) und direkten URLs für Vorschaubild (`thumbnail_url`) und MP4-Video (`video_url`).
   - **⚙️ Konfiguration (Einstellungsbereich)**:
     - **Dämmerungsschwelle (`number.lux_threshold`)**: Schaltschwelle in Lux (`2`–`1000 lx`), ab welcher Umgebungsdunkelheit das Licht bei Bewegung schaltet.
     - **Hauptlicht Helligkeit (`number.highlight`)**: Maximale Leuchtstärke des Flutlichts (`10`–`100 %`).
@@ -43,7 +45,8 @@ Das Schwestermodell **XLED CAM2 SC** konnte nicht verprobt werden, könnte aber 
     - **In Home Assistant**: Über **Frigate** oder **MotionEye** für präzise KI-Objekterkennung (Personen, Fahrzeuge, Tiere).
     - **In Scrypted**: Über das offizielle Plugin **`OpenCV Motion Detector`** (`@scrypted/opencv`) für latenzfreie HomeKit-Mitteilungen und HKSV-Cloud-Aufzeichnungen.
 
-- **Standardisierter ONVIF Profile S & Profile T Server**:
+- **Standardisierter ONVIF Profile S, T & G Server**:
+  - **Profile G (Edge Storage)**: Bereitstellung standardisierter Search- (`/onvif/search_service`), Replay- (`/onvif/replay_service`) und Recording-Dienste (`/onvif/recording_service`) zur Wiedergabe und Synchronisation von MicroSD-Aufnahmen in NVRs (z. B. Synology Surveillance Station).
   - **WS-Discovery (UDP 3702)**: Automatische Erkennung im lokalen Netzwerk.
   - **Native Live-Snapshots**: NVRs und Clients (z. B. Scrypted Prebuffer, Home Assistant) generieren hochauflösende Live-Standbilder direkt aus dem H.264-Videostream ohne Dummy-Platzhalter.
 
@@ -140,8 +143,8 @@ Die Bridge stellt auf Port `8000` eine direkte 1:1 REST-API bereit, um Aufnahmen
 | Endpunkt | Methode | Beschreibung |
 |---|---|---|
 | `/api/sdcard/events` | `GET` | Liefert die JSON-Liste aller Video-Ereignisse (Query-Parameter: `start`, `end`, `page`, `limit`) |
-| `/api/sdcard/events/{timestamp}/snapshot.jpg` | `GET` | Liefert das JPEG-Vorschaubild der Aufnahme direkt aus dem Kameraspeicher |
-| `/api/sdcard/events/{timestamp}/video.mp4` | `GET` | Streamt die vollständige MP4-Aufnahme als Binärstream (inkl. Hardware-Überlastungsschutz) |
+| `/api/sdcard/events/{id}/thumbnail.jpg` | `GET` | Liefert das JPEG-Vorschaubild der Aufnahme direkt aus dem Kameraspeicher |
+| `/api/sdcard/events/{id}/video.mp4` | `GET` | Streamt die vollständige MP4-Aufnahme als Binärstream (inkl. Hardware-Überlastungsschutz) |
 
 > [!TIP]
 > **Eingebauter Hardware-Schutz (Concurrency = 1)**: Um die kleine Embedded-CPU der Steinel-Kamera vor Überlastung zu schützen, erlaubt die Bridge immer nur **genau einen aktiven Download gleichzeitig**. Parallele Abfragen werden mit `HTTP 429 Too Many Requests` beantwortet. Bricht ein Client den Download vorzeitig ab, stoppt die Bridge den Kamera-Transfer sofort.
@@ -206,6 +209,7 @@ LD_LIBRARY_PATH="$(pwd)/.sdk/lib" ./steinel-bridge \
 | `AUDIO_CODEC` | `-audio-codec` | `aac` | Audio-Codec des RTSP/ONVIF Streams: `aac` (nativ transkodiert) oder `pcmu` (Raw Passthrough) |
 | `RTSP_PORT` | `-port` | `8554` | Port des integrierten RTSP-Servers |
 | `ONVIF_PORT` | `-onvif` | `8000` | Port des integrierten ONVIF HTTP-Servers |
+| `SDCARD_SYNC_INTERVAL` | `-sync-interval` | `30` | Intervall in Sekunden für die Hintergrundabfrage neuer MicroSD-Aufnahmen |
 | `MQTT_BROKER` | `-mqtt-broker` | `""` | MQTT Broker URL (z. B. `tcp://192.168.1.100:1883`) |
 | `MQTT_USER` | `-mqtt-user` | `""` | MQTT Benutzername |
 | `MQTT_PASSWORD` | `-mqtt-pass` | `""` | MQTT Passwort |

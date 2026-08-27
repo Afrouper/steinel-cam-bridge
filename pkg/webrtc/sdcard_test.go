@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Afrouper/steinel-cam-bridge/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -99,7 +100,7 @@ func TestSDCardStreamVideo(t *testing.T) {
 	doneChan := make(chan error, 1)
 
 	go func() {
-		err := sdm.StreamVideo(ctx, 1723812345, &buf, func(name string, size int64) {
+		err := sdm.StreamVideo(ctx, "1723812345", &buf, func(name string, size int64) {
 			startName = name
 			startSize = size
 		})
@@ -151,7 +152,7 @@ func TestSDCardConcurrencyLock(t *testing.T) {
 	transfer1Running := make(chan struct{})
 
 	go func() {
-		_ = sdm.StreamVideo(ctx, 1723812345, &buf1, func(_ string, _ int64) {
+		_ = sdm.StreamVideo(ctx, "1723812345", &buf1, func(_ string, _ int64) {
 			close(transfer1Running)
 		})
 	}()
@@ -168,10 +169,10 @@ func TestSDCardConcurrencyLock(t *testing.T) {
 	})
 	sdm.HandleBinaryChunk([]byte("data"))
 
-	// Try to start a concurrent second transfer -> must fail with ErrSDCardBusy
+	// Try to start a concurrent second transfer -> must fail with ErrStorageBusy
 	var buf2 bytes.Buffer
-	err2 := sdm.StreamVideo(ctx, 1723899999, &buf2, nil)
-	assert.ErrorIs(t, err2, ErrSDCardBusy)
+	err2 := sdm.StreamVideo(ctx, "1723899999", &buf2, nil)
+	assert.ErrorIs(t, err2, storage.ErrStorageBusy)
 
 	// End transfer 1
 	sdm.HandleJSONMessage(map[string]interface{}{
@@ -201,7 +202,7 @@ func TestSDCardClientAbort(t *testing.T) {
 	errChan := make(chan error, 1)
 
 	go func() {
-		err := sdm.StreamVideo(ctx, 1723812345, &buf, nil)
+		err := sdm.StreamVideo(ctx, "1723812345", &buf, nil)
 		errChan <- err
 	}()
 
@@ -211,7 +212,7 @@ func TestSDCardClientAbort(t *testing.T) {
 	cancel()
 
 	err := <-errChan
-	assert.ErrorIs(t, err, ErrTransferAborted)
+	assert.ErrorIs(t, err, storage.ErrTransferAborted)
 
 	mu.Lock()
 	cmdVal := lastCmd
@@ -220,4 +221,45 @@ func TestSDCardClientAbort(t *testing.T) {
 
 	assert.Equal(t, "get_event_video", cmdVal)
 	assert.Equal(t, "stop", actVal)
+}
+
+func TestSDCardRecordingProvider(t *testing.T) {
+	sdm := NewSDCardManager(func(cmd string, info map[string]interface{}) error {
+		return nil
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		sdm.HandleJSONMessage(map[string]interface{}{
+			"resp": "get_event_list",
+			"info": map[string]interface{}{
+				"count": float64(1),
+				"total": float64(1),
+				"list": []interface{}{
+					map[string]interface{}{
+						"time_tag":    float64(1723812345),
+						"record_time": float64(30),
+						"type":        "motion",
+						"name":        "event_1723812345.mp4",
+						"filesize":    float64(4096),
+					},
+				},
+			},
+		})
+	}()
+
+	resp, err := sdm.ListRecordings(ctx, time.Unix(1723800000, 0), time.Unix(1723900000, 0), 0, 10, "")
+	assert.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.Equal(t, 1, resp.Count)
+	assert.Equal(t, "1723812345", resp.List[0].ID)
+	assert.Equal(t, "/api/sdcard/events/1723812345/video.mp4", resp.List[0].VideoURL)
+	assert.Equal(t, "/api/sdcard/events/1723812345/thumbnail.jpg", resp.List[0].ThumbnailURL)
+
+	rec, err := sdm.GetRecording(ctx, "1723812345")
+	assert.NoError(t, err)
+	assert.Equal(t, "1723812345", rec.ID)
 }

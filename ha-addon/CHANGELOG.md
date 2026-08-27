@@ -2,6 +2,29 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge** Add-on werden hier dokumentiert.
 
+## 1.2.0
+
+### 💾 Lokaler MicroSD-Speicherabruf & ONVIF Profile G (#17)
+- **ONVIF Profile G Services**:
+  - Vollständige Implementierung von Search (`/onvif/search_service`), Replay (`/onvif/replay_service`) und Recording (`/onvif/recording_service`).
+  - Unterstützung für NVR-Systeme (z. B. Synology Surveillance Station, QNAP, Milestone) zum Abrufen, Synchronisieren und Abspielen lokaler Aufnahmen (Edge Storage Retrieval).
+- **Unified Recording Engine**:
+  - Modellübergreifende Abfrage lokaler SD-Karten-Aufnahmen für Steinel L 625 CAM SC (Nabto RPC) und Steinel L 620 CAM / XLED CAM 1 (Sofia `OPFileQuery`).
+- **REST API Endpunkte**:
+  - `GET /api/sdcard/events`: Liste der erfassten Aufnahmen (JSON).
+  - `GET /api/sdcard/events/{id}/thumbnail.jpg`: Streaming des JPEG-Vorschaubilds.
+  - `GET /api/sdcard/events/{id}/video.mp4`: Direktes Streaming des MP4-Videoclips mit `Content-Length`.
+- **Home Assistant MQTT Event-Entität**:
+  - Neue Entität `event.letzte_sd_aufnahme` (`event.steinel_<deviceID>_recording`) mit Event-Typen `["motion", "manual", "alarm", "record", "plan", "all"]`.
+  - Initialer Abgleich beim Start zur sofortigen Befüllung der Entität.
+  - Ressourcenschonender Hintergrund-Sync mit differenzieller Zeitabfrage (`start_time: lastSeenTime - 10s`) zur Minimierung der Payload.
+  - Konfigurierbares Polling-Intervall (`sdcard_sync_interval`, Standard: 30 Sekunden).
+  - Sofort-Trigger bei eingehenden Bewegungs- und Alarm-Signalen.
+
+### 🔧 Verbesserungen & Optimierungen
+- **Netzwerk-Adressierung**: Automatische Ermittlung der lokalen Bridge-IP für `thumbnail_url` und `video_url` in MQTT-Events.
+- **Log-Bereinigung**: Verlagerung der periodischen Polling-Meldungen auf das Debug-Level (`debug: true`).
+
 ## 1.1.0
 
 ### 🎥 Steinel L 620 CAM & XLED CAM 1 Unterstützung (Initial Support)
