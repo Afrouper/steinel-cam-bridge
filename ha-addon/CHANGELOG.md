@@ -2,6 +2,11 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge** Add-on werden hier dokumentiert.
 
+## 1.2.1
+
+### 🧹 Logging-Bereinigung
+- **Mute für MQTT Recording JSON Payloads**: Die ausführliche Protokollierung des vollständigen JSON-Payloads bei neuen Aufnahmen wird nur noch im Debug-Modus (`debug: true`) ausgegeben. Im Normalbetrieb genügt eine einzige kompakte Statusmeldung.
+
 ## 1.2.0
 
 ### 💾 Lokaler MicroSD-Speicherabruf & ONVIF Profile G (#17)
