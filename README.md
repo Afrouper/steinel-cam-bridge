@@ -1,4 +1,4 @@
-# Bridge für Steinel CAM Leuchten auf ONVIF, 2-Way Audio & Home Assistant
+# Bridge für Steinel CAM Leuchten auf ONVIF (RTSP), 2-Way Audio & Home Assistant
 
 [![Latest Release](https://img.shields.io/github/v/release/Afrouper/steinel-cam-bridge?logo=github)](https://github.com/Afrouper/steinel-cam-bridge/releases)
 [![CI Test & Build](https://github.com/Afrouper/steinel-cam-bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/Afrouper/steinel-cam-bridge/actions/workflows/ci.yml)
@@ -10,24 +10,48 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Go Version](https://img.shields.io/badge/Go-1.27-00ADD8?logo=go)](https://go.dev)
 
-Die Anwendung ist ein hochperformanter, 100 % autarker **Go-Daemon**.
-Sie verwandelt **Steinel CAM Außenleuchten** (**L 625 CAM SC**, **L 620 CAM**, **XLED CAM 1/2**, **Spot CAM**) in standardkonforme **ONVIF Profile S/T/G Kameras** mit **RTSP-Streaming**, **2-Wege-Audio (Gegensprechen)**, **lokalem MicroSD-Speicherabruf** und vollständiger **MQTT Home Assistant Auto-Discovery** – zur nahtlosen Integration in **Home Assistant**, **Synology Surveillance Station**, **Scrypted / Apple HomeKit Secure Video (HKSV)**, **Frigate** und weitere.
+Die Bridge ist eine hochperformanter, 100 % autarker **Go-Daemon** der in Docker (Compose) oder als HomeAssistant App betrieben
+werden kann.
+Sie verwandelt **Steinel CAM Außenleuchten** (**L 625 CAM SC**, **L 620 CAM**, **XLED CAM 1/2**, **Spot CAM**) in standardkonforme
+**ONVIF Profile S/T/G Kamera** mit **RTSP-Streaming**, **2-Wege-Audio (Gegensprechen)**, **lokalem MicroSD-Speicherabruf** und
+vollständiger **MQTT Home Assistant Auto-Discovery**.
+Damit ist eine nahtlosen Integration in **Home Assistant**, **Synology Surveillance Station**, **Scrypted**, **Frigate** und weitere
+möglich.
+Mit Hilfe von Scrypted ist dann z.B. eine Integration in **Apple HomeKit Secure Video (HKSV)** möglich.
 
-Das Schwestermodell **XLED CAM2 SC** konnte nicht verprobt werden, könnte aber ebenfalls funktionieren. Über Rückmeldungen würde ich mich freuen.
+Da ich nicht alle Modelle selbst besitze kann ich nicht alles selbst direkt vertesten. Über Rückmeldungen würde ich mich freuen.
 
 > [!WARNING]
-> Trotz sorgfältiger Entwicklung und Verwendung der Schnittstellen des offiziellen Nabto SDKs und APIs die von der Kamera bereitgestellt werden kann nicht garantiert werden das es zu keinen Komplikationen mit der Hardware der Kamera/Leuchte kommt. Das Projekt oder meine Personen übernehmen keine Gewährleistung oder Sachmängelhaftung für eventuell eintretende Schäden an der Hardware.
+> Trotz sorgfältiger Entwicklung und Verwendung der Schnittstellen der offiziellen (Nabto) SDKs und APIs die von der Kamera
+bereitgestellt werden kann nicht garantiert werden das es zu keinen Komplikationen mit der Hardware der Kamera/Leuchte kommt.
+Das Projekt oder meine Personen übernehmen keine Gewährleistung oder Sachmängelhaftung für eventuell eintretende Schäden
+an der Hardware.
 
 ---
 
 ## ✨ Features & Home Assistant Integration
 
+- **Standardisierter ONVIF Profile S, T & G Server**:
+  - **Profile G (Edge Storage)**: Bereitstellung standardisierter Search-, Replay- und Recording-Dienste zur Wiedergabe und
+    Synchronisation von MicroSD-Aufnahmen in NVRs (z. B. Synology Surveillance Station).
+  - **WS-Discovery (UDP 3702)**: Automatische Erkennung im lokalen Netzwerk.
+  - **Native Live-Snapshots**: NVRs und Clients (z. B. Scrypted Prebuffer, Home Assistant) generieren hochauflösende
+    Live-Standbilder direkt aus dem H.264-Videostream ohne Dummy-Platzhalter.
+
+- **🔊 Volles 2-Way Audio (Gegensprechen) & Natives AAC-Audio**:
+  - **Natives AAC-Audio (Standard)**: Automatisches Realtime-Transcoding des Kamera-Mikrofons (G.711u 8 kHz $\rightarrow$ AAC-LC 16 kHz).
+    Keine extra Konfiguration für Transcoding des Audiosignals erforderlich.
+  - **RTSP Audio Backchannel**: Durchleitung von HomeKit/Scrypted-Sprachdaten direkt an den Lautsprecher der Steinel-Leuchte
+    (PCMU / G.711u 8000 Hz).
+
 - **🏠 Home Assistant MQTT Auto-Discovery (Strukturierte Gerätesteuerung)**:
-  - **🎮 Steuerung (Hauptansicht)**:
+  - **🎮 Steuerung**:
     - **Betriebsmodus (`select.mode`)**: Umschalten zwischen `Sensor (Automatik)`, `Dauerlicht` und `Aus`.
-    - **Alarmsirene (`siren.siren`)**: Sofortiges Auslösen und Stoppen des akustischen Alarms der Außenleuchte mit Live-Zustandsrückmeldung (`ON` / `OFF`).
+    - **Alarmsirene (`siren.siren`)**: Sofortiges Auslösen und Stoppen des akustischen Alarms der Außenleuchte mit
+      Live-Zustandsrückmeldung (`ON` / `OFF`).
   - **🎬 Ereignisse & Aufnahmen**:
-    - **Letzte SD-Aufnahme (`event.letzte_sd_aufnahme`)**: Übermittlung des neuesten MicroSD-Aufnahmeereignisses mit Metadaten (Zeitstempel, Dauer, Dateigröße) und direkten URLs für Vorschaubild (`thumbnail_url`) und MP4-Video (`video_url`).
+    - **Letzte SD-Aufnahme (`event.letzte_sd_aufnahme`)**: Übermittlung des neuesten MicroSD-Aufnahmeereignisses mit 
+      Metadaten (Zeitstempel, Dauer, Dateigröße) und direkten URLs für Vorschaubild (`thumbnail_url`) und MP4-Video (`video_url`).
   - **⚙️ Konfiguration (Einstellungsbereich)**:
     - **Dämmerungsschwelle (`number.lux_threshold`)**: Schaltschwelle in Lux (`2`–`1000 lx`), ab welcher Umgebungsdunkelheit das Licht bei Bewegung schaltet.
     - **Hauptlicht Helligkeit (`number.highlight`)**: Maximale Leuchtstärke des Flutlichts (`10`–`100 %`).
@@ -39,20 +63,17 @@ Das Schwestermodell **XLED CAM2 SC** konnte nicht verprobt werden, könnte aber 
     - **PIR-Status (`binary_sensor.pir_status`)**: Zeigt den Betriebszustand des PIR-Sensors an (`running`).
 
 - **💡 Hinweise zu Hardware-Grenzen & Bewegungserkennung**:
-  - **Kein kontinuierlicher Luxmeter-Sensor (`sensor.lux`)**: Die Steinel-Kamera besitzt keinen digitalen Helligkeitsmesser (wie eine Wetterstation), sondern einen analogen Photowiderstand (LDR), der lediglich mit der eingestellten Dämmerungsschwelle abgeglichen wird.
-  - **Kein lokaler Hardware-PIR-Push (`binary_sensor.motion`)**: Die Kamera-Firmware meldet Bewegungsevents ab Werk ausschließlich über das Cloud-Gateway des Herstellers an die Steinel-Smartphone-App. Auf der lokalen Schnittstelle wird der 1080p-Live-Stream bereitgestellt.
-  - **Bewegungserkennung & Apple HomeKit Secure Video (HKSV)**: Die Bewegungserkennung wird in Smart-Home-Umgebungen standardmäßig per Video-Bildanalyse realisiert:
+  - **Kein kontinuierlicher Luxmeter-Sensor (`sensor.lux`)**: Die Steinel-Kamera besitzt keinen digitalen Helligkeitsmesser
+    (wie eine Wetterstation), sondern einen analogen Photowiderstand (LDR), der lediglich mit der eingestellten Dämmerungsschwelle
+    abgeglichen wird.
+  - **Kein lokaler Hardware-PIR-Push (`binary_sensor.motion`)**: Die Kamera-Firmware meldet Bewegungsevents ab Werk
+    ausschließlich über das Cloud-Gateway des Herstellers an die Steinel-Smartphone-App. Auf der lokalen Schnittstelle wird der
+    1080p-Live-Stream bereitgestellt.
+  - **Bewegungserkennung & Apple HomeKit Secure Video (HKSV)**: Die Bewegungserkennung wird in Smart-Home-Umgebungen
+    standardmäßig per Video-Bildanalyse realisiert:
     - **In Home Assistant**: Über **Frigate** oder **MotionEye** für präzise KI-Objekterkennung (Personen, Fahrzeuge, Tiere).
-    - **In Scrypted**: Über das offizielle Plugin **`OpenCV Motion Detector`** (`@scrypted/opencv`) für latenzfreie HomeKit-Mitteilungen und HKSV-Cloud-Aufzeichnungen.
-
-- **Standardisierter ONVIF Profile S, T & G Server**:
-  - **Profile G (Edge Storage)**: Bereitstellung standardisierter Search- (`/onvif/search_service`), Replay- (`/onvif/replay_service`) und Recording-Dienste (`/onvif/recording_service`) zur Wiedergabe und Synchronisation von MicroSD-Aufnahmen in NVRs (z. B. Synology Surveillance Station).
-  - **WS-Discovery (UDP 3702)**: Automatische Erkennung im lokalen Netzwerk.
-  - **Native Live-Snapshots**: NVRs und Clients (z. B. Scrypted Prebuffer, Home Assistant) generieren hochauflösende Live-Standbilder direkt aus dem H.264-Videostream ohne Dummy-Platzhalter.
-
-- **🔊 Volles 2-Way Audio (Gegensprechen) & Natives AAC-Audio**:
-  - **Natives AAC-Audio (Standard)**: Automatisches Realtime-Transcoding des Kamera-Mikrofons (G.711u 8 kHz $\rightarrow$ AAC-LC 16 kHz). Keine extra Konfiguration für Transcoding des Audiosignals erforderlich. Wahlweise umschaltbar: `AUDIO_CODEC="aac"` (Standard) oder `AUDIO_CODEC="pcmu"` (Raw Passthrough).
-  - **RTSP Audio Backchannel**: Durchleitung von HomeKit/Scrypted-Sprachdaten direkt an den Lautsprecher der Steinel-Leuchte (PCMU / G.711u 8000 Hz).
+    - **In Scrypted**: Über das offizielle Plugin **`OpenCV Motion Detector`** (`@scrypted/opencv`) für latenzfreie
+      HomeKit-Mitteilungen und HKSV-Cloud-Aufzeichnungen.
 
 - **Autarkes Single-Binary**: Kein Python, kein Node.js und kein separater MediaMTX-Server erforderlich.
   - Im Betrieb als HomeAssistant AddOn Image mit minimalsten Abhängigkeiten.
@@ -99,10 +120,10 @@ docker run -d \
   --memory=256m \
   --cpus=0.5 \
   --pids-limit=100 \
-  -e CAMERA_IP="192.168.1.100" \
+  -e CAMERA_IP="IP-ADDESS" \
   -e QR_CODE="did=de-xxxxxxx,pid=pr-xxxxx,sct=xxxx,pairPwd=xxxx" \
   -e AUDIO_CODEC="aac" \
-  -e MQTT_BROKER="tcp://192.168.1.50:1883" \
+  -e MQTT_BROKER="tcp://<IP-ADDESS>:1883" \
   -e MQTT_USER="homeassistant" \
   -e MQTT_PASSWORD="secretpassword" \
   -v ./data:/data \
@@ -114,7 +135,10 @@ docker run -d \
 ## 📱 Einbindung in Home Assistant & Scrypted
 
 ### 1. Home Assistant (MQTT)
-Wird kein separater MQTT Broker konfiguriert wird automatisch der in HomeAssistant integrierte [Standard Broker]()https://github.com/home-assistant/addons/tree/master/mosquitto verwendet. In Home Assistant unter **Einstellungen ➔ Geräte & Dienste ➔ MQTT** erscheint automatisch das Gerät **"Steinel L 625 CAM SC"** mit allen Licht-, Sensor- und Steuerungsentitäten:
+Wird kein separater MQTT Broker konfiguriert wird automatisch der in HomeAssistant integrierte
+[Standard Broker](https://github.com/home-assistant/addons/tree/master/mosquitto) verwendet. In Home Assistant unter
+**Einstellungen ➔ Geräte & Dienste ➔ MQTT** erscheint automatisch das Gerät **"Steinel L 625 CAM SC"** mit allen Licht-,
+Sensor- und Steuerungsentitäten:
 
 <p align="center">
   <img src="docs/HomeAssistant%20Controles.png" alt="Home Assistant Steuerung und Sensoren" width="400">
