@@ -1,17 +1,24 @@
 # Home Assistant Add-on: Steinel CAM Bridge
 
-Standalone ONVIF, 2-Way Audio (Gegensprechen) & MQTT Bridge für die **Steinel L 625 CAM SC** (oder ähnlich) Außenleuchte.
+Standalone ONVIF, 2-Way Audio (Gegensprechen) & MQTT Bridge für Steinel CAM Leuchten (**L 625 CAM SC**, **L 620 CAM**, **XLED CAM 1/2**).
 
 ---
 
 ## 🚀 Schnellstart
 
+### A. Steinel L 625 CAM SC (WebRTC)
 1. **Kamera-IP** eintragen (z. B. `192.168.1.100`).
 2. **QR-Code Payload** aus der Steinel App ("Kamera teilen") in das Feld `qr_code` einfügen.
    - Format: `did=de-xxxxxxx,pid=pr-xxxxx,sct=xxxx,pairPwd=xxxx`
 3. Auf **Speichern** und anschließend auf **Starten** klicken!
 
-Der QR Code wird initial für das Pairing benötigt. Danach muss er nicht mehr zwingend angegeben werden da das Schlüsselmaterial lokal gespeichert wird.
+Der QR-Code wird initial für das Pairing benötigt. Danach muss er nicht mehr zwingend angegeben werden, da das Schlüsselmaterial persistent gespeichert wird.
+
+### B. Steinel L 620 CAM / XLED CAM 1 (Sofia)
+1. **Kamera-IP** eintragen.
+2. In der Steinel App vergebenes Geräte-Passwort unter **`camera_password`** eintragen (`camera_user` bleibt `admin`).
+3. Optional `camera_type: l620` setzen.
+4. Auf **Speichern** und **Starten** klicken!
 
 ---
 
@@ -20,12 +27,17 @@ Der QR Code wird initial für das Pairing benötigt. Danach muss er nicht mehr z
 | Option | Typ | Standard | Beschreibung |
 |---|---|---|---|
 | `camera_ip` | String | *(Pflichtfeld)* | Lokale IP-Adresse der Steinel-Kamera im Heimnetz (z. B. `192.168.1.100`) |
-| `qr_code` | String | `""` | QR-Code Payload zum automatischen Pairing (initial) |
+| `camera_type` | Liste | `auto` | Kameramodell: `auto` (automatische Erkennung), `l625` (L 625 CAM SC), `l620` (L 620 CAM / XLED CAM 1) |
+| `camera_user` | String | `admin` | Benutzername für L 620 CAM (Standard: `admin`) |
+| `camera_password` | String | `""` | Geräte-Passwort für L 620 CAM |
+| `qr_code` | String | `""` | QR-Code Payload zum automatischen Pairing der L 625 CAM SC |
 | `resolution` | Liste | `1080p` | Standardauflösung (`1080p`, `720p`, `360p`) |
 | `audio_codec` | Liste | `aac` | Audio-Codec des RTSP-Streams: `aac` (nativ transkodiert) oder `pcmu` |
 | `rtsp_port` | Port | `8554` | RTSP Server Port |
-| `onvif_port` | Port | `8000` | ONVIF HTTP Service Port |
-| `reset_pairing` | Boolean | `false` | Setzen Sie diese Option auf `true`, um den gespeicherten Schlüssel zu löschen und ein erneutes Pairing mit dem angegebenen `qr_code` zu erzwingen |
+| `onvif_port` | Port | `8000` | ONVIF HTTP & SD-Karten REST API Service Port |
+| `sdcard_sync_interval` | Ganzzahl | `30` | Intervall in Sekunden für die Hintergrundabfrage neuer SD-Karten-Aufnahmen (5–300 s) |
+| `reset_pairing` | Boolean | `false` | Setzen Sie diese Option auf `true`, um den gespeicherten Schlüssel zu löschen und ein erneutes Pairing der L 625 mit dem angegebenen `qr_code` zu erzwingen |
+| `debug` | Boolean | `false` | Ausführliches Debug-Logging für Diagnosezwecke aktivieren |
 
 ---
 

@@ -27,8 +27,10 @@ Der QR Code wird initial für das Pairing benötigt. Danach muss er nicht mehr z
 | `resolution` | Liste | `1080p` | Standardauflösung (`1080p`, `720p`, `360p`) |
 | `audio_codec` | Liste | `aac` | Audio-Codec des RTSP-Streams: `aac` (nativ transkodiert) oder `pcmu` |
 | `rtsp_port` | Port | `8554` | RTSP Server Port |
-| `onvif_port` | Port | `8000` | ONVIF HTTP Service Port |
+| `onvif_port` | Port | `8000` | ONVIF HTTP & SD-Karten REST API Service Port |
+| `sdcard_sync_interval` | Ganzzahl | `30` | Intervall in Sekunden für die Hintergrundabfrage neuer SD-Karten-Aufnahmen (5–300 s) |
 | `reset_pairing` | Boolean | `false` | Setzen Sie diese Option auf `true`, um den gespeicherten Schlüssel zu löschen und ein erneutes Pairing der L 625 mit dem angegebenen `qr_code` zu erzwingen |
+| `debug` | Boolean | `false` | Ausführliches Debug-Logging für Diagnosezwecke aktivieren |
 
 ---
 
