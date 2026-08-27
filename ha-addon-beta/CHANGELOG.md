@@ -2,6 +2,13 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.2.0-beta.4
+
+### ⚡ Polling- & Log-Optimierung
+- **Gezielte Polling-Abfragen (`startTime: lastSeenTime - 10s`)**: Nach dem initialen Sync fragt die Bridge beim 20s-Polling nur noch die Aufnahmen ab, die seit dem letzten erfassten Event hinzugekommen sind. Dadurch werden statt 1800+ Events pro Abfrage nur noch die tatsächlichen neuen Einträge (0 bis 1 Element) über WebRTC übertragen.
+- **Sauberes Logging (Debug Level)**: Polling-Anfragen (`[SDCard] 🔍 Requesting...`, `[DataChannel] 📤 Sending...`) werden nur noch im Debug-Modus geloggt. Im normalen Betrieb werden ausschließlich neu gefundene Aufnahmen und MQTT-Publish-Events protokolliert.
+- **Lokale Bridge-IP Ermittlung**: `thumbnail_url` und `video_url` verweisen nun automatisch auf die tatsächliche IP der Bridge im LAN statt auf die Kamera-IP.
+
 ## 1.2.0-beta.3
 
 ### 🔧 Fix Initialer SD-Aufnahme-Sync & Event-Typen
