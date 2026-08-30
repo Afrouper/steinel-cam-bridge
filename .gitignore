@@ -1,6 +1,7 @@
 # Binaries and build outputs
 /steinel-bridge
 /steinel-bridge.exe
+/test-pure-nabto
 *.exe
 *.exe~
 *.dll

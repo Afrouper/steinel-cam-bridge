@@ -67,18 +67,6 @@ import (
 	"unsafe"
 )
 
-type Config struct {
-	CameraIP   string
-	CameraPort int
-	ProductID  string
-	DeviceID   string
-	SCT        string
-	PairPwd    string
-	KeyPath    string
-	IsBeta     bool
-	ClientName string
-}
-
 type Client struct {
 	cfg        *Config
 	ctx        *C.NabtoClient

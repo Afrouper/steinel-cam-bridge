@@ -69,9 +69,13 @@ func (c *Client) LoadOrGenerateKey() (*ecdsa.PrivateKey, bool, error) {
 	if err == nil {
 		block, _ := pem.Decode(keyBytes)
 		if block != nil {
-			key, err := x509.ParseECPrivateKey(block.Bytes)
-			if err == nil {
+			if key, err := x509.ParseECPrivateKey(block.Bytes); err == nil {
 				return key, false, nil
+			}
+			if pk, err := x509.ParsePKCS8PrivateKey(block.Bytes); err == nil {
+				if ecKey, ok := pk.(*ecdsa.PrivateKey); ok {
+					return ecKey, false, nil
+				}
 			}
 		}
 	}
