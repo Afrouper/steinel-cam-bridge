@@ -23,8 +23,8 @@ import (
 )
 
 type Bridge struct {
-	nabtoClient      *nabto.Client
-	stream           *nabto.Stream
+	nabtoClient      nabto.Driver
+	stream           nabto.StreamDriver
 	rtspServer       *rtsp.Server
 	resolution       string
 	pliInterval      time.Duration
@@ -46,7 +46,7 @@ type Bridge struct {
 	mu               sync.Mutex
 }
 
-func NewBridge(client *nabto.Client, stream *nabto.Stream, rtspServer *rtsp.Server, resolution string, pliInterval time.Duration, debug bool) *Bridge {
+func NewBridge(client nabto.Driver, stream nabto.StreamDriver, rtspServer *rtsp.Server, resolution string, pliInterval time.Duration, debug bool) *Bridge {
 	if resolution == "" {
 		resolution = "1080p"
 	}

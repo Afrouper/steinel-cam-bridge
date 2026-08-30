@@ -439,7 +439,7 @@ func (c *Client) RequestTracks() (uint16, error) {
 }
 
 // OpenSignalingStream opens a Nabto virtual stream for WebRTC signaling
-func (c *Client) OpenSignalingStream(port uint32) (*Stream, error) {
+func (c *Client) OpenSignalingStream(port uint32) (StreamDriver, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
