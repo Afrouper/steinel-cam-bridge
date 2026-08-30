@@ -48,6 +48,17 @@ func TestCoAPClientMock(t *testing.T) {
 
 	go func() {
 		buf := make([]byte, 1024)
+		for {
+			n, err := clientConn.Read(buf)
+			if err != nil {
+				return
+			}
+			coapClient.HandleIncomingPacket(buf[:n])
+		}
+	}()
+
+	go func() {
+		buf := make([]byte, 1024)
 		n, err := serverConn.Read(buf)
 		if err != nil {
 			return

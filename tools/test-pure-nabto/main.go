@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Afrouper/steinel-cam-bridge/pkg/nabtopure"
+	"github.com/Afrouper/steinel-cam-bridge/pkg/webrtc"
 )
 
 func main() {
@@ -55,12 +56,32 @@ func main() {
 		log.Printf("[Test] 📋 CoAP /iam/pairing response status %s, payload: %x (hex)", resp.StatusString(), resp.Payload)
 	}
 
-	// Step 2b: Test CoAP POST /webrtc/tracks
-	log.Printf("[Test] 🎥 Sending CoAP POST /webrtc/tracks...")
-	statusCode, err := client.RequestTracks()
+	// Step 3: Test Opening Signaling Stream
+	log.Printf("[Test] 🔌 Opening WebRTC signaling stream on port %d...", sigPort)
+	stream, err := client.OpenSignalingStream(sigPort)
 	if err != nil {
-		log.Fatalf("[Test] ❌ RequestTracks failed: %v", err)
+		log.Fatalf("[Test] ❌ OpenSignalingStream failed: %v", err)
 	}
-	log.Printf("[Test] ✅ /webrtc/tracks returned status: %d", statusCode)
-	log.Printf("[Test] 🌟 STEP 2 (CoAP Layer) PASSED 100%%!")
+	defer stream.Close()
+
+	log.Printf("[Test] 📡 Sending WebRTC TURN_REQUEST via pure-Go stream...")
+	turnReq := &webrtc.SignalMessage{Type: webrtc.TypeTurnRequest}
+	turnReqBytes, _ := webrtc.MarshalSignalMessage(turnReq)
+	if err := stream.WriteMsg(turnReqBytes); err != nil {
+		log.Fatalf("[Test] ❌ stream.WriteMsg failed: %v", err)
+	}
+
+	log.Printf("[Test] 📥 Reading WebRTC TURN_RESPONSE from camera...")
+	respBytes, err := stream.ReadMsg()
+	if err != nil {
+		log.Fatalf("[Test] ❌ stream.ReadMsg failed: %v", err)
+	}
+
+	turnResp, err := webrtc.UnmarshalSignalMessage(respBytes)
+	if err != nil {
+		log.Fatalf("[Test] ❌ UnmarshalSignalMessage failed: %v", err)
+	}
+	log.Printf("[Test] 📦 Raw WebRTC response (%d bytes): %s", len(respBytes), string(respBytes))
+	log.Printf("[Test] 🎉 SUCCESS! Received WebRTC message from camera: Type=%d Data=%s", turnResp.Type, turnResp.Data)
+	log.Printf("[Test] 🏆 ALL 3 STEPS OF PURE-GO NABTO PROTOCOL PASSED 100%%!")
 }

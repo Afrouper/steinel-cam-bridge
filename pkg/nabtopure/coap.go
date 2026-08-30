@@ -354,30 +354,29 @@ func (c *CoAPClient) Execute(req *CoAPMessage, timeout time.Duration) (*CoAPMess
 		return nil, fmt.Errorf("failed to send CoAP packet: %w", err)
 	}
 
-	// Read loop with timeout
-	deadline := time.Now().Add(timeout)
-	buf := make([]byte, 2048)
+	select {
+	case resp := <-respChan:
+		return resp, nil
+	case <-time.After(timeout):
+		return nil, fmt.Errorf("CoAP request timed out after %v", timeout)
+	}
+}
 
-	for time.Now().Before(deadline) {
-		_ = c.conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
-		n, err := c.conn.Read(buf)
-		if err != nil {
-			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				continue
-			}
-			return nil, fmt.Errorf("failed to read CoAP response: %w", err)
-		}
-
-		resp, err := DecodeCoAPMessage(buf[:n])
-		if err != nil {
-			continue
-		}
-
-		// Match token
-		if bytes.Equal(resp.Token, req.Token) || (resp.MessageID == req.MessageID && resp.Code != CodeEmpty) {
-			return resp, nil
-		}
+// HandleIncomingPacket routes incoming CoAP packets to pending request waiters.
+func (c *CoAPClient) HandleIncomingPacket(raw []byte) {
+	resp, err := DecodeCoAPMessage(raw)
+	if err != nil {
+		return
 	}
 
-	return nil, fmt.Errorf("CoAP request to timed out after %v", timeout)
+	c.pendingMu.Lock()
+	respChan, exists := c.pending[string(resp.Token)]
+	c.pendingMu.Unlock()
+
+	if exists {
+		select {
+		case respChan <- resp:
+		default:
+		}
+	}
 }

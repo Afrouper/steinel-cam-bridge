@@ -23,6 +23,7 @@ import (
 	"github.com/Afrouper/steinel-cam-bridge/pkg/mcu"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/mqtt"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/nabto"
+	"github.com/Afrouper/steinel-cam-bridge/pkg/nabtopure"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/onvif"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/rtsp"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/storage"
@@ -879,7 +880,13 @@ func main() {
 
 		// Supervisor loop for Nabto + WebRTC
 		for ctx.Err() == nil {
-			client, err := nabto.NewClient(cfg)
+			var client nabto.Driver
+			var err error
+			if os.Getenv("USE_CGO_NABTO") == "true" || os.Getenv("USE_CGO_NABTO") == "1" {
+				client, err = nabto.NewClient(cfg)
+			} else {
+				client, err = nabtopure.NewClient(cfg)
+			}
 			if err != nil {
 				log.Printf("[!] Nabto client init error: %v", err)
 				select {

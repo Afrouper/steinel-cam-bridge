@@ -8,11 +8,9 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/binary"
 	"encoding/hex"
 	"encoding/pem"
 	"fmt"
-	"io"
 	"log"
 	"math/big"
 	"net"
@@ -26,28 +24,19 @@ import (
 	dtlselliptic "github.com/pion/dtls/v3/pkg/crypto/elliptic"
 )
 
-// Config mirrors the connection parameters required for Nabto Edge communication.
-type Config struct {
-	CameraIP   string
-	CameraPort int
-	ProductID  string
-	DeviceID   string
-	SCT        string
-	PairPwd    string
-	KeyPath    string
-	IsBeta     bool
-	ClientName string
-	Debug      bool
-}
+// Config is an alias to nabto.Config.
+type Config = nabto.Config
 
 // Client is the Pure-Go implementation of the Nabto Edge client driver.
 type Client struct {
-	cfg        *Config
-	privateKey *ecdsa.PrivateKey
-	dtlsConn   *dtls.Conn
-	udpConn    net.PacketConn
-	coapClient *CoAPClient
-	mu         sync.Mutex
+	cfg           *Config
+	privateKey    *ecdsa.PrivateKey
+	dtlsConn      *dtls.Conn
+	udpConn       net.PacketConn
+	coapClient    *CoAPClient
+	currentStream *Stream
+	readerClose   chan struct{}
+	mu            sync.Mutex
 }
 
 // Ensure Client satisfies nabto.Driver interface.
@@ -201,7 +190,60 @@ func (c *Client) Connect() error {
 	log.Printf("[NabtoPure] ✅ DTLS 1.2 handshake established successfully with %s", targetAddr)
 	c.dtlsConn = conn
 	c.coapClient = NewCoAPClient(conn)
+	c.readerClose = make(chan struct{})
+	go c.packetReaderLoop()
 	return nil
+}
+
+func (c *Client) packetReaderLoop() {
+	buf := make([]byte, 4096)
+	for {
+		c.mu.Lock()
+		conn := c.dtlsConn
+		c.mu.Unlock()
+
+		if conn == nil {
+			return
+		}
+
+		_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		n, err := conn.Read(buf)
+		if err != nil {
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				continue
+			}
+			return
+		}
+		if n == 0 {
+			continue
+		}
+
+		pkt := make([]byte, n)
+		copy(pkt, buf[:n])
+
+		firstByte := pkt[0]
+		if firstByte >= 0x40 && firstByte <= 0x7F {
+			// CoAP packet
+			c.mu.Lock()
+			coap := c.coapClient
+			c.mu.Unlock()
+			if coap != nil {
+				coap.HandleIncomingPacket(pkt)
+			}
+		} else if firstByte == StreamAppDataType {
+			// Stream packet (0x05)
+			c.mu.Lock()
+			stream := c.currentStream
+			c.mu.Unlock()
+			if stream != nil {
+				stream.HandleIncomingPacket(pkt)
+			}
+		} else if firstByte == 0x04 {
+			// KeepAlive ping - reply with KeepAlive ACK
+			_ = conn.SetWriteDeadline(time.Now().Add(1 * time.Second))
+			_, _ = conn.Write([]byte{0x04, 0x02})
+		}
+	}
 }
 
 func (c *Client) sendMDNSWAKEUP(target string) {
@@ -228,6 +270,10 @@ func (c *Client) Close() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	if c.readerClose != nil {
+		close(c.readerClose)
+		c.readerClose = nil
+	}
 	if c.dtlsConn != nil {
 		_ = c.dtlsConn.Close()
 		c.dtlsConn = nil
@@ -237,6 +283,7 @@ func (c *Client) Close() {
 		c.udpConn = nil
 	}
 	c.coapClient = nil
+	c.currentStream = nil
 }
 
 // CoAPClient returns the underlying CoAPClient.
@@ -309,59 +356,31 @@ func (c *Client) RequestTracks() (uint16, error) {
 
 // OpenSignalingStream opens a virtual Nabto streaming channel over the DTLS connection.
 func (c *Client) OpenSignalingStream(port uint32) (nabto.StreamDriver, error) {
-	return nil, fmt.Errorf("pure-go stream open not yet implemented")
-}
-
-// Stream is the Pure-Go implementation of nabto.StreamDriver.
-type Stream struct {
-	conn net.Conn
-	mu   sync.Mutex
-}
-
-var _ nabto.StreamDriver = (*Stream)(nil)
-
-func (s *Stream) Abort() {
-	if s.conn != nil {
-		_ = s.conn.Close()
+	c.mu.Lock()
+	if c.dtlsConn == nil {
+		c.mu.Unlock()
+		return nil, fmt.Errorf("client not connected")
 	}
-}
+	stream := NewStream(c, 0, port)
+	c.currentStream = stream
+	c.mu.Unlock()
 
-func (s *Stream) Close() {
-	if s.conn != nil {
-		_ = s.conn.Close()
-	}
-}
-
-func (s *Stream) ReadMsg() ([]byte, error) {
-	if s.conn == nil {
-		return nil, io.EOF
-	}
-	var lenBuf [4]byte
-	if _, err := io.ReadFull(s.conn, lenBuf[:]); err != nil {
+	if err := stream.Open(10 * time.Second); err != nil {
 		return nil, err
 	}
-	msgLen := binary.LittleEndian.Uint32(lenBuf[:])
-	if msgLen == 0 || msgLen > (1<<20) {
-		return nil, fmt.Errorf("invalid message length %d", msgLen)
-	}
-	payload := make([]byte, msgLen)
-	if _, err := io.ReadFull(s.conn, payload); err != nil {
-		return nil, err
-	}
-	return payload, nil
+	return stream, nil
 }
 
-func (s *Stream) WriteMsg(payload []byte) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (c *Client) writeRawStream(data []byte) error {
+	c.mu.Lock()
+	conn := c.dtlsConn
+	c.mu.Unlock()
 
-	if s.conn == nil {
-		return io.ErrClosedPipe
+	if conn == nil {
+		return fmt.Errorf("connection closed")
 	}
-	wire := make([]byte, 4+len(payload))
-	binary.LittleEndian.PutUint32(wire[:4], uint32(len(payload)))
-	copy(wire[4:], payload)
 
-	_, err := s.conn.Write(wire)
+	_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	_, err := conn.Write(data)
 	return err
 }
