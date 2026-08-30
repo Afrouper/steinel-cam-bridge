@@ -13,6 +13,7 @@ extracts/
 
 # Local Nabto SDK cache (downloaded via scripts/setup-sdk)
 .sdk/
+/scratch/
 
 # Persistent data, pairing keys and secrets
 data/
