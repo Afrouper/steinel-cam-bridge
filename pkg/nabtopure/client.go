@@ -192,7 +192,32 @@ func (c *Client) Connect() error {
 	c.coapClient = NewCoAPClient(conn)
 	c.readerClose = make(chan struct{})
 	go c.packetReaderLoop()
+	go c.keepAliveLoop()
 	return nil
+}
+
+func (c *Client) keepAliveLoop() {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-c.readerClose:
+			return
+		case <-ticker.C:
+			c.mu.Lock()
+			conn := c.dtlsConn
+			c.mu.Unlock()
+			if conn == nil {
+				return
+			}
+			kaReq := make([]byte, 18)
+			kaReq[0] = 0x04
+			kaReq[1] = 0x01 // CT_KEEP_ALIVE_REQUEST
+			_ = conn.SetWriteDeadline(time.Now().Add(1 * time.Second))
+			_, _ = conn.Write(kaReq)
+		}
+	}
 }
 
 func (c *Client) packetReaderLoop() {
@@ -239,9 +264,14 @@ func (c *Client) packetReaderLoop() {
 				stream.HandleIncomingPacket(pkt)
 			}
 		} else if firstByte == 0x04 {
-			// KeepAlive ping - reply with KeepAlive ACK
-			_ = conn.SetWriteDeadline(time.Now().Add(1 * time.Second))
-			_, _ = conn.Write([]byte{0x04, 0x02})
+			// KeepAlive: 0x04, type (0x01 = req, 0x02 = resp), payload (16 bytes)
+			if len(pkt) >= 2 && pkt[1] == 0x01 {
+				resp := make([]byte, len(pkt))
+				copy(resp, pkt)
+				resp[1] = 0x02 // CT_KEEP_ALIVE_RESPONSE
+				_ = conn.SetWriteDeadline(time.Now().Add(1 * time.Second))
+				_, _ = conn.Write(resp)
+			}
 		}
 	}
 }

@@ -46,6 +46,7 @@ type Stream struct {
 	sendNonce          bool
 	established        bool
 	closed             bool
+	closeChan          chan struct{}
 	readBuf            *bytes.Buffer
 	incomingChan       chan []byte
 	mu                 sync.Mutex
@@ -61,6 +62,7 @@ func NewStream(client *Client, streamID uint64, port uint32) *Stream {
 		port:               port,
 		clientSeq:          1,
 		maxSendSegmentSize: 256,
+		closeChan:          make(chan struct{}),
 		readBuf:            new(bytes.Buffer),
 		incomingChan:       make(chan []byte, 100),
 	}
@@ -94,6 +96,8 @@ func (s *Stream) Open(timeout time.Duration) error {
 		var raw []byte
 		select {
 		case raw = <-s.incomingChan:
+		case <-s.closeChan:
+			return io.EOF
 		case <-time.After(1 * time.Second):
 			continue
 		}
@@ -158,8 +162,6 @@ func (s *Stream) Open(timeout time.Duration) error {
 
 // ReadMsg reads a 4-byte little-endian length-prefixed WebRTC signaling message.
 func (s *Stream) ReadMsg() ([]byte, error) {
-	deadline := time.Now().Add(15 * time.Second)
-
 	for {
 		s.mu.Lock()
 		if s.closed {
@@ -182,14 +184,12 @@ func (s *Stream) ReadMsg() ([]byte, error) {
 		}
 		s.mu.Unlock()
 
-		if time.Now().After(deadline) {
-			return nil, fmt.Errorf("ReadMsg timed out")
-		}
-
 		// Read next stream packet from incoming channel
 		var raw []byte
 		select {
 		case raw = <-s.incomingChan:
+		case <-s.closeChan:
+			return nil, io.EOF
 		case <-time.After(2 * time.Second):
 			// Retransmit ACK if waiting for camera
 			ackPkt := s.buildACKPacket(nil)
@@ -290,6 +290,9 @@ func (s *Stream) Close() {
 		return
 	}
 	s.closed = true
+	if s.closeChan != nil {
+		close(s.closeChan)
+	}
 }
 
 type streamHeader struct {

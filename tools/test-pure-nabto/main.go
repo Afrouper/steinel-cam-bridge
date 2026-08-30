@@ -64,10 +64,10 @@ func main() {
 	}
 
 	bridge := webrtc.NewBridge(client, stream, nil, "1080p", 3*time.Second, true)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	log.Printf("[Test] 🚀 Starting WebRTC Bridge session for 10s...")
+	log.Printf("[Test] 🚀 Starting WebRTC Bridge session for 30s...")
 	if err := bridge.Run(ctx); err != nil && ctx.Err() == nil {
 		log.Fatalf("[Test] ❌ Bridge.Run failed: %v", err)
 	}
