@@ -1,17 +1,20 @@
 package nabtopure
 
 import (
-	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	crand "crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/pem"
 	"fmt"
 	"io"
 	"log"
+	"math/big"
 	"net"
 	"os"
 	"sync"
@@ -91,6 +94,39 @@ func (c *Client) LoadOrGenerateKey() (*ecdsa.PrivateKey, bool, error) {
 	return key, true, nil
 }
 
+// GenerateSelfSignedCert generates a self-signed X.509 certificate for DTLS 1.2 client auth.
+func GenerateSelfSignedCert(key *ecdsa.PrivateKey) (tls.Certificate, error) {
+	template := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "nabto-edge-client"},
+		NotBefore:             time.Now().Add(-24 * time.Hour),
+		NotAfter:              time.Now().Add(50 * 365 * 24 * time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+	}
+
+	certDER, err := x509.CreateCertificate(crand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("failed to create client certificate: %w", err)
+	}
+
+	return tls.Certificate{
+		Certificate: [][]byte{certDER},
+		PrivateKey:  key,
+	}, nil
+}
+
+// ComputeFingerprint returns the lowercase SHA256 hex string of the client's public key (Nabto IAM fingerprint).
+func ComputeFingerprint(key *ecdsa.PrivateKey) (string, error) {
+	pubDER, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	if err != nil {
+		return "", err
+	}
+	hash := sha256.Sum256(pubDER)
+	return hex.EncodeToString(hash[:]), nil
+}
+
 // Connect establishes the DTLS 1.2 connection over UDP to the camera.
 func (c *Client) Connect() error {
 	c.mu.Lock()
@@ -101,6 +137,14 @@ func (c *Client) Connect() error {
 		return err
 	}
 	c.privateKey = key
+
+	cert, err := GenerateSelfSignedCert(key)
+	if err != nil {
+		return fmt.Errorf("failed to generate DTLS certificate: %w", err)
+	}
+
+	fingerprint, _ := ComputeFingerprint(key)
+	log.Printf("[NabtoPure] 🔑 Client ECC Fingerprint: %s (new key: %v)", fingerprint, isNewKey)
 
 	targetAddr := fmt.Sprintf("%s:%d", c.cfg.CameraIP, c.cfg.CameraPort)
 	rAddr, err := net.ResolveUDPAddr("udp", targetAddr)
@@ -113,23 +157,22 @@ func (c *Client) Connect() error {
 
 	log.Printf("[NabtoPure] 🚀 Connecting to %s via Pure-Go DTLS 1.2...", targetAddr)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
 	//nolint:staticcheck // dtls.Config used for client configuration
 	dtlsConfig := &dtls.Config{
-		Certificates: []tls.Certificate{
-			// Self-signed DTLS client certificate generated from private key
-		},
-		InsecureSkipVerify: true,
+		Certificates:         []tls.Certificate{cert},
+		ExtendedMasterSecret: dtls.RequireExtendedMasterSecret,
+		InsecureSkipVerify:   true,
+		FlightInterval:       100 * time.Millisecond,
 	}
 
-	_ = dtlsConfig
-	_ = rAddr
-	_ = ctx
-	_ = isNewKey
+	//nolint:staticcheck
+	conn, err := dtls.Dial("udp", rAddr, dtlsConfig)
+	if err != nil {
+		return fmt.Errorf("DTLS handshake failed with %s: %w", targetAddr, err)
+	}
 
-	// Prototype skeleton: will be populated in subsequent steps
+	log.Printf("[NabtoPure] ✅ DTLS 1.2 handshake established successfully with %s", targetAddr)
+	c.dtlsConn = conn
 	return nil
 }
 
