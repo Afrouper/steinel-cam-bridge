@@ -1,6 +1,7 @@
 # Binaries and build outputs
 /steinel-bridge
 /steinel-bridge.exe
+/test-pure-nabto
 *.exe
 *.exe~
 *.dll
@@ -12,6 +13,7 @@ extracts/
 
 # Local Nabto SDK cache (downloaded via scripts/setup-sdk)
 .sdk/
+/scratch/
 
 # Persistent data, pairing keys and secrets
 data/

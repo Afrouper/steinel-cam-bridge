@@ -2,6 +2,18 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.3.0-beta.1
+
+### 🚀 100% Pure-Go Nabto Edge Treiber (CGo & libnabto-Abhängigkeit entfernt)
+- **Vollständige Eigenimplementierung des Nabto Edge Protokolls**:
+  - **DTLS 1.2 Handshake**: Native Pion/DTLS-Anbindung mit ECC P-256 Schlüsseln, Nabto 16-Byte Paketframing (`0xF0`), CCM Cipher-Suites (`TLS_ECDHE_ECDSA_WITH_AES_128_CCM`) und ALPN `"n5"`.
+  - **CoAP RFC 7252 Layer**: Pure-Go REST-Abfragen für `/p2p/webrtc-info`, `/iam/pairing` und `/webrtc/tracks`.
+  - **Nabto Streaming Protocol**: Virtueller Multiplex-Stream (`AT_STREAM = 0x05`) für WebRTC-Signaling (SDP Offer/Answer & ICE Candidates).
+- **Keine dynamischen C-Bibliotheken (`libnabto_client.so`/`.dylib`) mehr erforderlich**:
+  - Geringerer Speicherbedarf, schnellere Verbindungsaufbauzeiten (< 100ms) und höhere Stabilität.
+  - Vollständig kompatibel mit bestehenden Schlüsseldateien (`local_client.key`).
+  - Standardmäßig aktiv; bei Bedarf kann über `USE_CGO_NABTO=true` auf den alten Treiber zurückgegriffen werden.
+
 ## 1.2.1
 
 ### 🧹 Logging-Bereinigung
