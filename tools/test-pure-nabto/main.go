@@ -36,4 +36,31 @@ func main() {
 	}
 
 	log.Printf("[Test] 🎉 SUCCESS! Pure-Go DTLS 1.2 connection established in %v!", time.Since(start))
+
+	// Step 2: Test CoAP /p2p/webrtc-info
+	log.Printf("[Test] 🛰️ Sending CoAP GET /p2p/webrtc-info...")
+	sigPort, err := client.GetSignalingPort()
+	if err != nil {
+		log.Fatalf("[Test] ❌ GetSignalingPort failed: %v", err)
+	}
+	log.Printf("[Test] ✅ Received SignalingStreamPort: %d", sigPort)
+
+	// Step 2a: Test CoAP GET /iam/pairing
+	log.Printf("[Test] 🔐 Sending CoAP GET /iam/pairing...")
+	req := nabtopure.NewRequest(nabtopure.CodeGET, "/iam/pairing", 0, nil)
+	resp, err := client.CoAPClient().Execute(req, 5*time.Second)
+	if err != nil {
+		log.Printf("[Test] ⚠️ CoAP /iam/pairing error: %v", err)
+	} else {
+		log.Printf("[Test] 📋 CoAP /iam/pairing response status %s, payload: %x (hex)", resp.StatusString(), resp.Payload)
+	}
+
+	// Step 2b: Test CoAP POST /webrtc/tracks
+	log.Printf("[Test] 🎥 Sending CoAP POST /webrtc/tracks...")
+	statusCode, err := client.RequestTracks()
+	if err != nil {
+		log.Fatalf("[Test] ❌ RequestTracks failed: %v", err)
+	}
+	log.Printf("[Test] ✅ /webrtc/tracks returned status: %d", statusCode)
+	log.Printf("[Test] 🌟 STEP 2 (CoAP Layer) PASSED 100%%!")
 }

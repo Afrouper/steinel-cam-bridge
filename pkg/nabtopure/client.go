@@ -17,11 +17,13 @@ import (
 	"math/big"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/Afrouper/steinel-cam-bridge/pkg/nabto"
 	"github.com/pion/dtls/v3"
+	dtlselliptic "github.com/pion/dtls/v3/pkg/crypto/elliptic"
 )
 
 // Config mirrors the connection parameters required for Nabto Edge communication.
@@ -44,6 +46,7 @@ type Client struct {
 	privateKey *ecdsa.PrivateKey
 	dtlsConn   *dtls.Conn
 	udpConn    net.PacketConn
+	coapClient *CoAPClient
 	mu         sync.Mutex
 }
 
@@ -167,16 +170,37 @@ func (c *Client) Connect() error {
 		ExtendedMasterSecret: dtls.RequireExtendedMasterSecret,
 		InsecureSkipVerify:   true,
 		FlightInterval:       100 * time.Millisecond,
+		CipherSuites: []dtls.CipherSuiteID{
+			dtls.TLS_ECDHE_ECDSA_WITH_AES_128_CCM,
+			dtls.TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8,
+			dtls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+		},
+		EllipticCurves:     []dtlselliptic.Curve{dtlselliptic.P256},
+		SupportedProtocols: []string{"n5"},
+	}
+
+	rawUDP, err := net.ListenUDP("udp", nil)
+	if err != nil {
+		return fmt.Errorf("failed to open local UDP socket: %w", err)
+	}
+	c.udpConn = rawUDP
+
+	nabtoUDP, err := newNabtoPacketConn(rawUDP)
+	if err != nil {
+		_ = rawUDP.Close()
+		return err
 	}
 
 	//nolint:staticcheck
-	conn, err := dtls.Dial("udp", rAddr, dtlsConfig)
+	conn, err := dtls.Client(nabtoUDP, rAddr, dtlsConfig)
 	if err != nil {
+		_ = rawUDP.Close()
 		return fmt.Errorf("DTLS handshake failed with %s: %w", targetAddr, err)
 	}
 
 	log.Printf("[NabtoPure] ✅ DTLS 1.2 handshake established successfully with %s", targetAddr)
 	c.dtlsConn = conn
+	c.coapClient = NewCoAPClient(conn)
 	return nil
 }
 
@@ -212,18 +236,75 @@ func (c *Client) Close() {
 		_ = c.udpConn.Close()
 		c.udpConn = nil
 	}
+	c.coapClient = nil
+}
+
+// CoAPClient returns the underlying CoAPClient.
+func (c *Client) CoAPClient() *CoAPClient {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.coapClient
 }
 
 // GetSignalingPort queries /p2p/webrtc-info via CoAP.
 func (c *Client) GetSignalingPort() (uint32, error) {
-	// Pure Go CoAP GET /p2p/webrtc-info
-	return 0, fmt.Errorf("pure-go coap /p2p/webrtc-info not yet implemented")
+	c.mu.Lock()
+	coap := c.coapClient
+	c.mu.Unlock()
+
+	if coap == nil {
+		return 0, fmt.Errorf("client not connected")
+	}
+
+	req := NewRequest(CodeGET, "/p2p/webrtc-info", 0, nil)
+	resp, err := coap.Execute(req, 5*time.Second)
+	if err != nil {
+		return 0, fmt.Errorf("CoAP /p2p/webrtc-info failed: %w", err)
+	}
+
+	if resp.StatusCode() != 205 && resp.StatusCode() != 200 {
+		return 0, fmt.Errorf("unexpected CoAP status %s", resp.StatusString())
+	}
+
+	respStr := string(resp.Payload)
+	log.Printf("[NabtoPure] 🛰️ CoAP /p2p/webrtc-info response: %s", respStr)
+
+	var port uint32
+	if _, err := fmt.Sscanf(respStr, "{\"SignalingStreamPort\":%d}", &port); err == nil && port > 0 {
+		return port, nil
+	}
+	if idx := strings.Index(respStr, "SignalingStreamPort"); idx >= 0 {
+		if colon := strings.Index(respStr[idx:], ":"); colon >= 0 {
+			_, _ = fmt.Sscanf(respStr[idx+colon+1:], "%d", &port)
+			if port > 0 {
+				return port, nil
+			}
+		}
+	}
+
+	return 0, fmt.Errorf("could not parse SignalingStreamPort from: %s", respStr)
 }
 
 // RequestTracks sends CoAP POST /webrtc/tracks.
 func (c *Client) RequestTracks() (uint16, error) {
-	// Pure Go CoAP POST /webrtc/tracks
-	return 0, fmt.Errorf("pure-go coap /webrtc/tracks not yet implemented")
+	c.mu.Lock()
+	coap := c.coapClient
+	c.mu.Unlock()
+
+	if coap == nil {
+		return 0, fmt.Errorf("client not connected")
+	}
+
+	payload := []byte("{\"tracks\": [\"frontdoor-video\", \"frontdoor-audio\"]}")
+	req := NewRequest(CodePOST, "/webrtc/tracks", ContentFormatApplicationJSON, payload)
+
+	resp, err := coap.Execute(req, 5*time.Second)
+	if err != nil {
+		return 0, fmt.Errorf("CoAP /webrtc/tracks failed: %w", err)
+	}
+
+	log.Printf("[NabtoPure] 🎥 CoAP /webrtc/tracks response status: %s", resp.StatusString())
+	return uint16(resp.StatusCode()), nil
 }
 
 // OpenSignalingStream opens a virtual Nabto streaming channel over the DTLS connection.
