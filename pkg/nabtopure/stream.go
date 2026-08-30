@@ -35,19 +35,20 @@ const (
 
 // Stream implements nabto.StreamDriver for WebRTC signaling over DTLS.
 type Stream struct {
-	client       *Client
-	streamID     uint64
-	port         uint32
-	clientSeq    uint32
-	serverSeq    uint32
-	serverTs     uint32
-	nonce        [8]byte
-	sendNonce    bool
-	established  bool
-	closed       bool
-	readBuf      *bytes.Buffer
-	incomingChan chan []byte
-	mu           sync.Mutex
+	client             *Client
+	streamID           uint64
+	port               uint32
+	clientSeq          uint32
+	serverSeq          uint32
+	serverTs           uint32
+	maxSendSegmentSize uint16
+	nonce              [8]byte
+	sendNonce          bool
+	established        bool
+	closed             bool
+	readBuf            *bytes.Buffer
+	incomingChan       chan []byte
+	mu                 sync.Mutex
 }
 
 var _ nabto.StreamDriver = (*Stream)(nil)
@@ -55,12 +56,13 @@ var _ nabto.StreamDriver = (*Stream)(nil)
 // NewStream initiates a stream on the specified port.
 func NewStream(client *Client, streamID uint64, port uint32) *Stream {
 	return &Stream{
-		client:       client,
-		streamID:     streamID,
-		port:         port,
-		clientSeq:    1,
-		readBuf:      new(bytes.Buffer),
-		incomingChan: make(chan []byte, 100),
+		client:             client,
+		streamID:           streamID,
+		port:               port,
+		clientSeq:          1,
+		maxSendSegmentSize: 256,
+		readBuf:            new(bytes.Buffer),
+		incomingChan:       make(chan []byte, 100),
 	}
 }
 
@@ -74,7 +76,9 @@ func (s *Stream) HandleIncomingPacket(raw []byte) {
 
 // Open establishes the virtual Nabto stream via SYN/ACK handshake.
 func (s *Stream) Open(timeout time.Duration) error {
-	log.Printf("[NabtoPure Stream] 🔄 Opening stream on port %d (streamID: %d)...", s.port, s.streamID)
+	if s.client.cfg.Debug {
+		log.Printf("[NabtoPure Stream] 🔄 Opening stream on port %d (streamID: %d)...", s.port, s.streamID)
+	}
 
 	s.clientSeq = 1 // SYN sequence number
 
@@ -96,19 +100,31 @@ func (s *Stream) Open(timeout time.Duration) error {
 
 		hdr, extensions, err := s.parseStreamPacket(raw)
 		if err != nil {
-			log.Printf("[NabtoPure Stream] ⚠️ parse error in Open: %v", err)
+			if s.client.cfg.Debug {
+				log.Printf("[NabtoPure Stream] ⚠️ parse error in Open: %v", err)
+			}
 			continue
 		}
 
 		s.serverTs = hdr.timestampValue
-		log.Printf("[NabtoPure Stream] 📥 Open received packet flags=0x%02x, ts=%d, raw hex: %x", hdr.flags, s.serverTs, raw)
+		if s.client.cfg.Debug {
+			log.Printf("[NabtoPure Stream] 📥 Open received packet flags=0x%02x, ts=%d, raw hex: %x", hdr.flags, s.serverTs, raw)
+		}
 
 		if (hdr.flags & (StreamFlagSYN | StreamFlagACK)) == (StreamFlagSYN | StreamFlagACK) {
-			// Extract server sequence number and nonce from SYN|ACK
+			// Extract server sequence number, max segment sizes and nonce from SYN|ACK
 			for _, ext := range extensions {
-				log.Printf("[NabtoPure Stream] 📦 Extension 0x%04x (len %d): %x", ext.extType, len(ext.data), ext.data)
+				if s.client.cfg.Debug {
+					log.Printf("[NabtoPure Stream] 📦 Extension 0x%04x (len %d): %x", ext.extType, len(ext.data), ext.data)
+				}
 				if ext.extType == ExtSYN && len(ext.data) >= 4 {
 					s.serverSeq = binary.BigEndian.Uint32(ext.data[:4])
+				}
+				if ext.extType == ExtSegmentSizes && len(ext.data) >= 4 {
+					segSize := binary.BigEndian.Uint16(ext.data[:2])
+					if segSize > 0 && segSize <= 1024 {
+						s.maxSendSegmentSize = segSize
+					}
 				}
 				if ext.extType == ExtNonce && len(ext.data) >= 8 {
 					copy(s.nonce[:], ext.data[:8])
@@ -121,14 +137,18 @@ func (s *Stream) Open(timeout time.Duration) error {
 
 			// Send ACK to finalize handshake
 			ackPkt := s.buildACKPacket(nil)
-			log.Printf("[NabtoPure Stream] 📤 Sending ACK packet (%d bytes): %x", len(ackPkt), ackPkt)
+			if s.client.cfg.Debug {
+				log.Printf("[NabtoPure Stream] 📤 Sending ACK packet (%d bytes): %x", len(ackPkt), ackPkt)
+			}
 			_ = s.client.writeRawStream(ackPkt)
 
 			s.mu.Lock()
 			s.established = true
 			s.mu.Unlock()
 
-			log.Printf("[NabtoPure Stream] ✅ Stream established on port %d! (serverSeq: %d, hasNonce: %v)", s.port, s.serverSeq, s.sendNonce)
+			if s.client.cfg.Debug {
+				log.Printf("[NabtoPure Stream] ✅ Stream established on port %d! (serverSeq: %d, maxSendSeg: %d)", s.port, s.serverSeq, s.maxSendSegmentSize)
+			}
 			return nil
 		}
 	}
@@ -179,11 +199,15 @@ func (s *Stream) ReadMsg() ([]byte, error) {
 
 		hdr, extensions, err := s.parseStreamPacket(raw)
 		if err != nil {
-			log.Printf("[NabtoPure Stream] ⚠️ parse error: %v (raw %d bytes: %x)", err, len(raw), raw)
+			if s.client.cfg.Debug {
+				log.Printf("[NabtoPure Stream] ⚠️ parse error: %v (raw %d bytes: %x)", err, len(raw), raw)
+			}
 			continue
 		}
 
-		log.Printf("[NabtoPure Stream] 📥 Received stream packet: %d bytes, flags=0x%02x, %d extensions", len(raw), hdr.flags, len(extensions))
+		if s.client.cfg.Debug {
+			log.Printf("[NabtoPure Stream] 📥 Received stream packet: %d bytes, flags=0x%02x, %d extensions", len(raw), hdr.flags, len(extensions))
+		}
 		s.serverTs = hdr.timestampValue
 
 		hasNewData := false
@@ -198,7 +222,9 @@ func (s *Stream) ReadMsg() ([]byte, error) {
 					s.serverSeq = dataSeq
 					s.mu.Unlock()
 					hasNewData = true
-					log.Printf("[NabtoPure Stream] 📝 Received DATA %d bytes (serverSeq now %d)", len(payload), s.serverSeq)
+					if s.client.cfg.Debug {
+						log.Printf("[NabtoPure Stream] 📝 Received DATA %d bytes (serverSeq now %d)", len(payload), s.serverSeq)
+					}
 				}
 			}
 		}
@@ -218,6 +244,10 @@ func (s *Stream) WriteMsg(payload []byte) error {
 		s.mu.Unlock()
 		return fmt.Errorf("stream is closed")
 	}
+	chunkSize := int(s.maxSendSegmentSize)
+	if chunkSize <= 0 {
+		chunkSize = 256
+	}
 	s.mu.Unlock()
 
 	// Frame with 4-byte LE length prefix
@@ -229,8 +259,6 @@ func (s *Stream) WriteMsg(payload []byte) error {
 
 	framedBytes := framed.Bytes()
 
-	// Send in segments of max 1024 bytes
-	chunkSize := 1024
 	for offset := 0; offset < len(framedBytes); offset += chunkSize {
 		end := offset + chunkSize
 		if end > len(framedBytes) {
@@ -239,7 +267,9 @@ func (s *Stream) WriteMsg(payload []byte) error {
 		chunk := framedBytes[offset:end]
 
 		dataPkt := s.buildACKPacket(chunk)
-		log.Printf("[NabtoPure Stream] 📤 Sending DATA packet (%d bytes, clientSeq=%d): %x", len(dataPkt), s.clientSeq, dataPkt)
+		if s.client.cfg.Debug {
+			log.Printf("[NabtoPure Stream] 📤 Sending DATA packet (%d bytes, clientSeq=%d): %x", len(dataPkt), s.clientSeq, dataPkt)
+		}
 		if err := s.client.writeRawStream(dataPkt); err != nil {
 			return fmt.Errorf("failed to write stream data packet: %w", err)
 		}

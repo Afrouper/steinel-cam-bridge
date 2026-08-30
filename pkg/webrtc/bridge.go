@@ -769,16 +769,23 @@ func (b *Bridge) readVideoLoop(ctx context.Context, track *pion.TrackRemote, can
 		}
 
 		b.lastVideoPacket.Store(time.Now().UnixNano())
-		b.rtspServer.WriteVideoPacket(pkt)
+		if b.rtspServer != nil {
+			b.rtspServer.WriteVideoPacket(pkt)
+		}
 	}
 }
 
 func (b *Bridge) readAudioLoop(ctx context.Context, track *pion.TrackRemote) {
-	codec := b.rtspServer.GetAudioCodec()
+	var codec string
+	if b.rtspServer != nil {
+		codec = b.rtspServer.GetAudioCodec()
+	}
 	if codec == "aac" {
 		log.Printf("[Audio] 🔊 Transcoding audio: G.711u (8kHz) -> AAC-LC (16kHz) (Microphone -> Clients)")
 		transcoder := audio.NewTranscoder(func(au []byte, pts time.Duration) {
-			b.rtspServer.WriteAACFrame(au, pts)
+			if b.rtspServer != nil {
+				b.rtspServer.WriteAACFrame(au, pts)
+			}
 		})
 		for {
 			select {
@@ -808,7 +815,9 @@ func (b *Bridge) readAudioLoop(ctx context.Context, track *pion.TrackRemote) {
 				return
 			}
 
-			b.rtspServer.WriteAudioPacket(pkt)
+			if b.rtspServer != nil {
+				b.rtspServer.WriteAudioPacket(pkt)
+			}
 		}
 	}
 }

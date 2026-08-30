@@ -314,7 +314,9 @@ func (c *Client) GetSignalingPort() (uint32, error) {
 	}
 
 	respStr := string(resp.Payload)
-	log.Printf("[NabtoPure] 🛰️ CoAP /p2p/webrtc-info response: %s", respStr)
+	if c.cfg.Debug {
+		log.Printf("[NabtoPure] 🛰️ CoAP /p2p/webrtc-info response: %s", respStr)
+	}
 
 	var port uint32
 	if _, err := fmt.Sscanf(respStr, "{\"SignalingStreamPort\":%d}", &port); err == nil && port > 0 {
@@ -350,7 +352,9 @@ func (c *Client) RequestTracks() (uint16, error) {
 		return 0, fmt.Errorf("CoAP /webrtc/tracks failed: %w", err)
 	}
 
-	log.Printf("[NabtoPure] 🎥 CoAP /webrtc/tracks response status: %s", resp.StatusString())
+	if c.cfg.Debug {
+		log.Printf("[NabtoPure] 🎥 CoAP /webrtc/tracks response status: %s", resp.StatusString())
+	}
 	return uint16(resp.StatusCode()), nil
 }
 

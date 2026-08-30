@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log"
 	"time"
@@ -56,32 +57,20 @@ func main() {
 		log.Printf("[Test] 📋 CoAP /iam/pairing response status %s, payload: %x (hex)", resp.StatusString(), resp.Payload)
 	}
 
-	// Step 3: Test Opening Signaling Stream
 	log.Printf("[Test] 🔌 Opening WebRTC signaling stream on port %d...", sigPort)
 	stream, err := client.OpenSignalingStream(sigPort)
 	if err != nil {
 		log.Fatalf("[Test] ❌ OpenSignalingStream failed: %v", err)
 	}
-	defer stream.Close()
 
-	log.Printf("[Test] 📡 Sending WebRTC TURN_REQUEST via pure-Go stream...")
-	turnReq := &webrtc.SignalMessage{Type: webrtc.TypeTurnRequest}
-	turnReqBytes, _ := webrtc.MarshalSignalMessage(turnReq)
-	if err := stream.WriteMsg(turnReqBytes); err != nil {
-		log.Fatalf("[Test] ❌ stream.WriteMsg failed: %v", err)
+	bridge := webrtc.NewBridge(client, stream, nil, "1080p", 3*time.Second, true)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	log.Printf("[Test] 🚀 Starting WebRTC Bridge session for 10s...")
+	if err := bridge.Run(ctx); err != nil && ctx.Err() == nil {
+		log.Fatalf("[Test] ❌ Bridge.Run failed: %v", err)
 	}
 
-	log.Printf("[Test] 📥 Reading WebRTC TURN_RESPONSE from camera...")
-	respBytes, err := stream.ReadMsg()
-	if err != nil {
-		log.Fatalf("[Test] ❌ stream.ReadMsg failed: %v", err)
-	}
-
-	turnResp, err := webrtc.UnmarshalSignalMessage(respBytes)
-	if err != nil {
-		log.Fatalf("[Test] ❌ UnmarshalSignalMessage failed: %v", err)
-	}
-	log.Printf("[Test] 📦 Raw WebRTC response (%d bytes): %s", len(respBytes), string(respBytes))
-	log.Printf("[Test] 🎉 SUCCESS! Received WebRTC message from camera: Type=%d Data=%s", turnResp.Type, turnResp.Data)
-	log.Printf("[Test] 🏆 ALL 3 STEPS OF PURE-GO NABTO PROTOCOL PASSED 100%%!")
+	log.Printf("[Test] 🏆 FULL WEBRTC SESSION COMPLETED SUCCESSFULLY IN PURE GO!")
 }
