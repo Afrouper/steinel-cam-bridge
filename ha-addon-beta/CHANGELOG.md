@@ -2,6 +2,14 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.3.0-beta.8
+
+### 🧹 Bereinigung & Benutzerfreundlicher Log-Hinweis
+- **Aufgeräumte Supervisor MQTT-Erkennung**:
+  - Direkte und performante Abfrage der offiziellen Supervisor-URLs.
+- **Klarer Log-Hinweis bei Erstinstallation**:
+  - Verständlicher deutscher/englischer Hinweis im Log, falls der Mosquitto-Broker nach einer Neuinstallation noch nicht initial neu gestartet wurde.
+
 ## 1.3.0-beta.7
 
 ### 🚀 Automatische Freischaltung des MQTT-Dienstes im Supervisor
