@@ -2,6 +2,13 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.3.0-beta.7
+
+### 🚀 Automatische Freischaltung des MQTT-Dienstes im Supervisor
+- **Auto-Enablement via `POST /services/mqtt`**:
+  - Sobald der Supervisor meldet, dass der MQTT-Dienst für das Add-on noch nicht freigeschaltet ist (`Service not enabled`), fordert die Bridge die Aktivierung automatisch an.
+  - Ermöglicht eine nahtlose, vollautomatische Anbindung an den Mosquitto-Broker ohne manuelle Broker-Konfiguration oder Neustarts.
+
 ## 1.3.0-beta.6
 
 ### 🔍 Detaillierte Supervisor-API Fehlerdiagnose
