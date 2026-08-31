@@ -2,6 +2,16 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.3.0-beta.5
+
+### 🛠️ Fix Home Assistant Supervisor MQTT Auto-Discovery & Exact 11-char DeviceID
+- **Supervisor Header `X-Supervisor-Token`**:
+  - Authentifizierung mit `X-Supervisor-Token` & `Authorization: Bearer` für direkte und automatische Mosquitto-Zugangsdaten-Ermittlung via `mqtt:want`.
+- **Exakte 11-Zeichen Nabto ID-Extraktion**:
+  - `DeviceId` und `ProductId` werden präzise auf 11 Zeichen (`de-m4yfowbr`, `pr-qtatbtbi`) gecrasht, um bestehende Home Assistant Entitäten 1:1 zu synchronisieren.
+- **Explizites Logging bei Kamera-Verbindung**:
+  - Bei erfolgreichem Connect werden die ermittelten Kamera-IDs direkt im Log ausgegeben.
+
 ## 1.3.0-beta.4
 
 ### 🛠️ Home Assistant MQTT Auto-Discovery & Status-Updates
