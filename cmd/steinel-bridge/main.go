@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
@@ -437,7 +438,46 @@ func fetchSupervisorMQTTOptions() (broker, user, pass string, err error) {
 		if resp.StatusCode != http.StatusOK {
 			bodyBytes, _ := io.ReadAll(resp.Body)
 			_ = resp.Body.Close()
-			lastErr = fmt.Errorf("supervisor API (%s) returned HTTP %d: %s", u, resp.StatusCode, strings.TrimSpace(string(bodyBytes)))
+			bodyStr := string(bodyBytes)
+
+			// If service is registered in Supervisor but not yet enabled for this add-on, request enablement via POST /services/mqtt
+			if strings.Contains(bodyStr, "not enabled") {
+				postReq, pErr := http.NewRequest("POST", u, bytes.NewBufferString("{}"))
+				if pErr == nil {
+					postReq.Header.Set("Authorization", "Bearer "+token)
+					postReq.Header.Set("X-Supervisor-Token", token)
+					postReq.Header.Set("Content-Type", "application/json")
+					if postResp, postDoErr := client.Do(postReq); postDoErr == nil {
+						_ = postResp.Body.Close()
+
+						// Retry GET request after enablement
+						retryReq, _ := http.NewRequest("GET", u, nil)
+						retryReq.Header.Set("Authorization", "Bearer "+token)
+						retryReq.Header.Set("X-Supervisor-Token", token)
+						retryReq.Header.Set("Content-Type", "application/json")
+						if retryResp, retryErr := client.Do(retryReq); retryErr == nil {
+							if retryResp.StatusCode == http.StatusOK {
+								var retrySResp supervisorMQTTResponse
+								if err := json.NewDecoder(retryResp.Body).Decode(&retrySResp); err == nil && retrySResp.Result == "ok" && retrySResp.Data.Host != "" {
+									_ = retryResp.Body.Close()
+									port := retrySResp.Data.Port
+									if port <= 0 {
+										port = 1883
+									}
+									scheme := "tcp"
+									if retrySResp.Data.SSL {
+										scheme = "ssl"
+									}
+									return fmt.Sprintf("%s://%s:%d", scheme, retrySResp.Data.Host, port), retrySResp.Data.Username, retrySResp.Data.Password, nil
+								}
+							}
+							_ = retryResp.Body.Close()
+						}
+					}
+				}
+			}
+
+			lastErr = fmt.Errorf("supervisor API (%s) returned HTTP %d: %s", u, resp.StatusCode, strings.TrimSpace(bodyStr))
 			continue
 		}
 
