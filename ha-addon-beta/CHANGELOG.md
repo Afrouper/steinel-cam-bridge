@@ -2,6 +2,11 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.3.0-beta.6
+
+### 🔍 Detaillierte Supervisor-API Fehlerdiagnose
+- Exakte Ausgabe des Supervisor-Antworttexts im Log, um eventuelle Konfigurations- oder Dienstprobleme in Home Assistant sofort transparent zu machen.
+
 ## 1.3.0-beta.5
 
 ### 🛠️ Fix Home Assistant Supervisor MQTT Auto-Discovery & Exact 11-char DeviceID
