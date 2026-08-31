@@ -193,7 +193,54 @@ func (c *Client) Connect() error {
 	c.readerClose = make(chan struct{})
 	go c.packetReaderLoop()
 	go c.keepAliveLoop()
+
+	// Auto-discover ProductID and DeviceID via CoAP /iam/pairing if not configured
+	if c.cfg.DeviceID == "" || c.cfg.ProductID == "" {
+		req := NewRequest(CodeGET, "/iam/pairing", 0, nil)
+		if resp, err := c.coapClient.Execute(req, 2*time.Second); err == nil && (resp.StatusCode() == 205 || resp.StatusCode() == 200) {
+			pid, did := extractPairingIDs(resp.Payload)
+			if did != "" && c.cfg.DeviceID == "" {
+				c.cfg.DeviceID = did
+			}
+			if pid != "" && c.cfg.ProductID == "" {
+				c.cfg.ProductID = pid
+			}
+			log.Printf("[NabtoPure] 📷 Auto-discovered DeviceID: %s | ProductID: %s", c.cfg.DeviceID, c.cfg.ProductID)
+		}
+	}
+
 	return nil
+}
+
+func extractPairingIDs(payload []byte) (productId, deviceId string) {
+	str := string(payload)
+	if idx := strings.Index(str, "ProductId"); idx >= 0 {
+		sub := str[idx+9:]
+		for i := 0; i < len(sub); i++ {
+			if strings.HasPrefix(sub[i:], "pr-") {
+				end := i + 3
+				for end < len(sub) && (sub[end] >= 'a' && sub[end] <= 'z' || sub[end] >= '0' && sub[end] <= '9' || sub[end] == '-') {
+					end++
+				}
+				productId = sub[i:end]
+				break
+			}
+		}
+	}
+	if idx := strings.Index(str, "DeviceId"); idx >= 0 {
+		sub := str[idx+8:]
+		for i := 0; i < len(sub); i++ {
+			if strings.HasPrefix(sub[i:], "de-") {
+				end := i + 3
+				for end < len(sub) && (sub[end] >= 'a' && sub[end] <= 'z' || sub[end] >= '0' && sub[end] <= '9' || sub[end] == '-') {
+					end++
+				}
+				deviceId = sub[i:end]
+				break
+			}
+		}
+	}
+	return
 }
 
 func (c *Client) keepAliveLoop() {

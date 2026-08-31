@@ -402,8 +402,16 @@ func fetchSupervisorMQTTOptions() (broker, user, pass string, err error) {
 	}
 
 	urls := []string{
+		"http://172.30.32.2/services/mqtt",
 		"http://supervisor/services/mqtt",
 		"http://hassio/services/mqtt",
+		"http://127.0.0.1:80/services/mqtt",
+	}
+	if api := os.Getenv("SUPERVISOR_API"); api != "" {
+		urls = append([]string{strings.TrimSuffix(api, "/") + "/services/mqtt"}, urls...)
+	}
+	if api := os.Getenv("HASSIO_API"); api != "" {
+		urls = append([]string{strings.TrimSuffix(api, "/") + "/services/mqtt"}, urls...)
 	}
 
 	var lastErr error
@@ -494,6 +502,8 @@ func resolveConfig(optionsPath string, fs *flag.FlagSet) *AppConfig {
 			cfg.MQTTUser = user
 			cfg.MQTTPassword = pass
 			log.Printf("[HA Addon] 📡 Auto-discovered Home Assistant MQTT service: %s (User: %s)", broker, user)
+		} else if err != nil && os.Getenv("SUPERVISOR_TOKEN") != "" {
+			log.Printf("[HA Addon] ℹ️ MQTT auto-discovery: %v", err)
 		}
 	}
 
@@ -816,9 +826,11 @@ func main() {
 		log.Printf("[!] Warning: Could not start ONVIF server: %v", err)
 	}
 
+	var mqttClient *mqtt.Client
+
 	// 3. Start MQTT Client (Optional — provides Home Assistant Auto-Discovery entities)
 	if appCfg.MQTTBroker != "" {
-		mqttClient := mqtt.NewClient(mqtt.Config{
+		mqttClient = mqtt.NewClient(mqtt.Config{
 			Broker:          appCfg.MQTTBroker,
 			Username:        appCfg.MQTTUser,
 			Password:        appCfg.MQTTPassword,
@@ -859,6 +871,8 @@ func main() {
 				recordingSyncer.TriggerSync()
 			}
 		})
+	} else {
+		log.Printf("[Config] ℹ️ MQTT is disabled (no broker configured). To enable Home Assistant entities, configure 'mqtt_broker' in addon options or install an MQTT broker addon.")
 	}
 
 	// 4. Branch: Xiongmai Sofia Driver (L 620 CAM) vs. Nabto WebRTC Driver (L 625 CAM SC)
@@ -909,6 +923,11 @@ func main() {
 				case <-time.After(reconnectCooldown):
 				}
 				continue
+			}
+
+			// If DeviceID was discovered during connection, update MQTT discovery & availability
+			if mqttClient != nil && cfg.DeviceID != "" {
+				mqttClient.UpdateDeviceInfo(cfg.DeviceID, cfg.ProductID)
 			}
 
 			port, err := client.GetSignalingPort()

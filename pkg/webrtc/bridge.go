@@ -643,20 +643,17 @@ func (b *Bridge) handleDataChannelMessage(data []byte) {
 				return
 			}
 
-			// Check for MCU tran_report
-			str := string(data)
-			if strVal, ok := root["resp"].(string); ok && strVal == "tran_report" || strings.Contains(str, "tran_report") {
-				if infoMap, ok := root["info"].(map[string]interface{}); ok {
-					if b64Data, ok := infoMap["data"].(string); ok {
-						cfg, err := mcu.ParseBase64Data(b64Data)
-						if err != nil {
-							log.Printf("[MCU] ⚠️ Failed to parse tran_report Base64 '%s': %v", b64Data, err)
-						} else if cfg != nil {
-							b.onMCUStatus(cfg)
-						}
+			// Check for MCU base64 status payloads (tran_report, tran_ctl, etc.)
+			if infoMap, ok := root["info"].(map[string]interface{}); ok {
+				if b64Data, ok := infoMap["data"].(string); ok && b64Data != "" {
+					cfg, err := mcu.ParseBase64Data(b64Data)
+					if err != nil {
+						log.Printf("[MCU] ⚠️ Failed to parse MCU Base64 '%s': %v", b64Data, err)
+					} else if cfg != nil {
+						b.onMCUStatus(cfg)
 					}
+					return
 				}
-				return
 			}
 
 			// Check for get_device_info
@@ -671,6 +668,7 @@ func (b *Bridge) handleDataChannelMessage(data []byte) {
 			}
 
 			// Check and log for any Motion, PIR, Alarm or Event notifications from camera
+			str := string(data)
 			lowerStr := strings.ToLower(str)
 			if strings.Contains(lowerStr, "alarm") ||
 				strings.Contains(lowerStr, "motion") ||
