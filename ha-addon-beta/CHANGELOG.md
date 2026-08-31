@@ -2,6 +2,18 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.3.0-beta.4
+
+### 🛠️ Home Assistant MQTT Auto-Discovery & Status-Updates
+- **Verbesserte Supervisor MQTT Auto-Discovery**:
+  - Unterstützung für `172.30.32.2` (Standard-Gateway der Supervisor-API bei `host_network: true`), falls DNS-Namen wie `supervisor` im Host-Netzwerk nicht auflösbar sind.
+  - Aussagekräftiges Logging beim Start (`[HA Addon] 📡 Auto-discovered Home Assistant MQTT service` oder entsprechende Hinweismeldung).
+- **Automatische DeviceID-Erkennung via CoAP**:
+  - Der Pure-Go Treiber ermittelt automatisch die reale `DeviceID` (`de-m4yfowbr`) und `ProductID` der Kamera über CoAP `/iam/pairing`, auch wenn die Kamera nur über IP ohne QR-Code konfiguriert wurde.
+  - Der MQTT-Client passt Topics (`steinel/<deviceID>/...`) und Discovery-Konfigurationen dynamisch an, sodass bestehende Home Assistant Entitäten sofort als "Verfügbar" erkannt und aktualisiert werden.
+- **Zuverlässiges MCU Status-Parsing**:
+  - Alle über den DataChannel eingehenden Base64-Statusmeldungen der Kamera (`tran_report`, `tran_ctl`) werden geparst und synchronisieren Sensoren, Schalter und Helligkeitswerte sofort via MQTT und ONVIF.
+
 ## 1.3.0-beta.3
 
 ### 🚀 100% Pure-Go Nabto Edge Treiber (CGo & libnabto-Abhängigkeit entfernt)
