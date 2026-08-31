@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -434,8 +435,9 @@ func fetchSupervisorMQTTOptions() (broker, user, pass string, err error) {
 		}
 
 		if resp.StatusCode != http.StatusOK {
+			bodyBytes, _ := io.ReadAll(resp.Body)
 			_ = resp.Body.Close()
-			lastErr = fmt.Errorf("supervisor API returned HTTP %d", resp.StatusCode)
+			lastErr = fmt.Errorf("supervisor API (%s) returned HTTP %d: %s", u, resp.StatusCode, strings.TrimSpace(string(bodyBytes)))
 			continue
 		}
 
