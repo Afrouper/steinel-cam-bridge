@@ -52,7 +52,7 @@ Falls die Kamera zurückgesetzt wurde, das Pairing-Passwort geändert wurde oder
 ---
 
 ## 🏠 Home Assistant MQTT Integration
-Wenn das offizielle **Mosquitto MQTT Add-on** in Home Assistant installiert ist, verbindet sich dieses Add-on vollautomatisch ohne manuelle Passworteingabe (`mqtt:want`). Unter **Einstellungen ➔ Geräte & Dienste ➔ MQTT** erscheint automatisch die Steinel-Außenleuchte mit allen Licht- und Dimm-Entitäten!
+Wenn das offizielle **Mosquitto MQTT Add-on** in Home Assistant installiert ist, verbindet sich dieses Add-on vollautomatisch ohne manuelle Passworteingabe (`mqtt:want`). (*Hinweis: Nach der Erstinstallation des Add-ons bitte einmalig das Mosquitto Broker Add-on neu starten, damit Home Assistant die Dienstverknüpfung initial freischaltet.*) Unter **Einstellungen ➔ Geräte & Dienste ➔ MQTT** erscheint automatisch die Steinel-Außenleuchte mit allen Licht- und Dimm-Entitäten!
 
 ---
 

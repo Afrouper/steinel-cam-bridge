@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
@@ -406,17 +405,8 @@ func fetchSupervisorMQTTOptions() (broker, user, pass string, err error) {
 	urls := []string{
 		"http://supervisor/services/mqtt",
 		"http://hassio/services/mqtt",
+		"http://172.30.32.2/services/mqtt",
 	}
-	if sup := os.Getenv("SUPERVISOR"); sup != "" {
-		urls = append([]string{strings.TrimSuffix(sup, "/") + "/services/mqtt"}, urls...)
-	}
-	if api := os.Getenv("SUPERVISOR_API"); api != "" {
-		urls = append([]string{strings.TrimSuffix(api, "/") + "/services/mqtt"}, urls...)
-	}
-	if api := os.Getenv("HASSIO_API"); api != "" {
-		urls = append([]string{strings.TrimSuffix(api, "/") + "/services/mqtt"}, urls...)
-	}
-	urls = append(urls, "http://172.30.32.2/services/mqtt")
 
 	var lastErr error
 	for _, u := range urls {
@@ -439,44 +429,6 @@ func fetchSupervisorMQTTOptions() (broker, user, pass string, err error) {
 			bodyBytes, _ := io.ReadAll(resp.Body)
 			_ = resp.Body.Close()
 			bodyStr := string(bodyBytes)
-
-			// If service is registered in Supervisor but not yet enabled for this add-on, request enablement via POST /services/mqtt
-			if strings.Contains(bodyStr, "not enabled") {
-				postReq, pErr := http.NewRequest("POST", u, bytes.NewBufferString("{}"))
-				if pErr == nil {
-					postReq.Header.Set("Authorization", "Bearer "+token)
-					postReq.Header.Set("X-Supervisor-Token", token)
-					postReq.Header.Set("Content-Type", "application/json")
-					if postResp, postDoErr := client.Do(postReq); postDoErr == nil {
-						_ = postResp.Body.Close()
-
-						// Retry GET request after enablement
-						retryReq, _ := http.NewRequest("GET", u, nil)
-						retryReq.Header.Set("Authorization", "Bearer "+token)
-						retryReq.Header.Set("X-Supervisor-Token", token)
-						retryReq.Header.Set("Content-Type", "application/json")
-						if retryResp, retryErr := client.Do(retryReq); retryErr == nil {
-							if retryResp.StatusCode == http.StatusOK {
-								var retrySResp supervisorMQTTResponse
-								if err := json.NewDecoder(retryResp.Body).Decode(&retrySResp); err == nil && retrySResp.Result == "ok" && retrySResp.Data.Host != "" {
-									_ = retryResp.Body.Close()
-									port := retrySResp.Data.Port
-									if port <= 0 {
-										port = 1883
-									}
-									scheme := "tcp"
-									if retrySResp.Data.SSL {
-										scheme = "ssl"
-									}
-									return fmt.Sprintf("%s://%s:%d", scheme, retrySResp.Data.Host, port), retrySResp.Data.Username, retrySResp.Data.Password, nil
-								}
-							}
-							_ = retryResp.Body.Close()
-						}
-					}
-				}
-			}
-
 			lastErr = fmt.Errorf("supervisor API (%s) returned HTTP %d: %s", u, resp.StatusCode, strings.TrimSpace(bodyStr))
 			continue
 		}
@@ -548,7 +500,11 @@ func resolveConfig(optionsPath string, fs *flag.FlagSet) *AppConfig {
 			cfg.MQTTPassword = pass
 			log.Printf("[HA Addon] 📡 Auto-discovered Home Assistant MQTT service: %s (User: %s)", broker, user)
 		} else if err != nil && os.Getenv("SUPERVISOR_TOKEN") != "" {
-			log.Printf("[HA Addon] ℹ️ MQTT auto-discovery: %v", err)
+			if strings.Contains(err.Error(), "not enabled") {
+				log.Printf("[HA Addon] ℹ️ MQTT broker detected, but service binding is not yet active in Supervisor. Please restart the MQTT broker add-on once, or configure 'mqtt_broker' in add-on options.")
+			} else {
+				log.Printf("[HA Addon] ℹ️ MQTT auto-discovery check: %v", err)
+			}
 		}
 	}
 
