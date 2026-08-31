@@ -151,6 +151,19 @@ func TestDTLSHandshakeWithNabtoFraming(t *testing.T) {
 	}
 }
 
+func TestExtractPairingIDs(t *testing.T) {
+	// Sample CBOR payload from Steinel camera /iam/pairing:
+	// bf654d6f6465739f6c50617373776f72644f70656e694c6f63616c4f70656e6e50617373776f7264496e766974656c4c6f63616c496e697469616cff6c4e6162746f56657273696f6e66352e31342e306950726f6475637449646b70722d71746174627462696844657669636549646b64652d6d3479666f7762726c467269656e646c794e616d65735765627274632064656d6f206578616d706c65ff
+	samplePayload := []byte("\xbf\x65Modes\x9f\x6cPasswordOpen\x69LocalOpen\x6ePasswordInvite\x6cLocalInitial\xff\x6cNabtoVersion\x665.14.0\x69ProductId\x6bpr-qtatbtbi\x68DeviceId\x6bde-m4yfowbr\x6cFriendlyNames\x57Webrtc demo example\xff")
+	pid, did := extractPairingIDs(samplePayload)
+	if pid != "pr-qtatbtbi" {
+		t.Fatalf("expected ProductId 'pr-qtatbtbi', got '%s'", pid)
+	}
+	if did != "de-m4yfowbr" {
+		t.Fatalf("expected DeviceId 'de-m4yfowbr', got '%s'", did)
+	}
+}
+
 func TestKeyPersistence(t *testing.T) {
 	tmpDir := t.TempDir()
 	keyPath := filepath.Join(tmpDir, "test.key")

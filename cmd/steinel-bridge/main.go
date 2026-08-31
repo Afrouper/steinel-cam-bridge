@@ -402,10 +402,11 @@ func fetchSupervisorMQTTOptions() (broker, user, pass string, err error) {
 	}
 
 	urls := []string{
-		"http://172.30.32.2/services/mqtt",
 		"http://supervisor/services/mqtt",
 		"http://hassio/services/mqtt",
-		"http://127.0.0.1:80/services/mqtt",
+	}
+	if sup := os.Getenv("SUPERVISOR"); sup != "" {
+		urls = append([]string{strings.TrimSuffix(sup, "/") + "/services/mqtt"}, urls...)
 	}
 	if api := os.Getenv("SUPERVISOR_API"); api != "" {
 		urls = append([]string{strings.TrimSuffix(api, "/") + "/services/mqtt"}, urls...)
@@ -413,6 +414,7 @@ func fetchSupervisorMQTTOptions() (broker, user, pass string, err error) {
 	if api := os.Getenv("HASSIO_API"); api != "" {
 		urls = append([]string{strings.TrimSuffix(api, "/") + "/services/mqtt"}, urls...)
 	}
+	urls = append(urls, "http://172.30.32.2/services/mqtt")
 
 	var lastErr error
 	for _, u := range urls {
@@ -422,6 +424,7 @@ func fetchSupervisorMQTTOptions() (broker, user, pass string, err error) {
 			continue
 		}
 		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("X-Supervisor-Token", token)
 		req.Header.Set("Content-Type", "application/json")
 
 		resp, doErr := client.Do(req)

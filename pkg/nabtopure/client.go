@@ -205,9 +205,10 @@ func (c *Client) Connect() error {
 			if pid != "" && c.cfg.ProductID == "" {
 				c.cfg.ProductID = pid
 			}
-			log.Printf("[NabtoPure] 📷 Auto-discovered DeviceID: %s | ProductID: %s", c.cfg.DeviceID, c.cfg.ProductID)
 		}
 	}
+
+	log.Printf("[NabtoPure] 📷 Camera Connected: DeviceID=%s | ProductID=%s", c.cfg.DeviceID, c.cfg.ProductID)
 
 	return nil
 }
@@ -216,26 +217,18 @@ func extractPairingIDs(payload []byte) (productId, deviceId string) {
 	str := string(payload)
 	if idx := strings.Index(str, "ProductId"); idx >= 0 {
 		sub := str[idx+9:]
-		for i := 0; i < len(sub); i++ {
+		for i := 0; i+11 <= len(sub); i++ {
 			if strings.HasPrefix(sub[i:], "pr-") {
-				end := i + 3
-				for end < len(sub) && (sub[end] >= 'a' && sub[end] <= 'z' || sub[end] >= '0' && sub[end] <= '9' || sub[end] == '-') {
-					end++
-				}
-				productId = sub[i:end]
+				productId = sub[i : i+11]
 				break
 			}
 		}
 	}
 	if idx := strings.Index(str, "DeviceId"); idx >= 0 {
 		sub := str[idx+8:]
-		for i := 0; i < len(sub); i++ {
+		for i := 0; i+11 <= len(sub); i++ {
 			if strings.HasPrefix(sub[i:], "de-") {
-				end := i + 3
-				for end < len(sub) && (sub[end] >= 'a' && sub[end] <= 'z' || sub[end] >= '0' && sub[end] <= '9' || sub[end] == '-') {
-					end++
-				}
-				deviceId = sub[i:end]
+				deviceId = sub[i : i+11]
 				break
 			}
 		}
