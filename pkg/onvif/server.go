@@ -1,6 +1,7 @@
 package onvif
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -292,9 +293,8 @@ func (s *Server) handleAPISDCardItem(w http.ResponseWriter, r *http.Request) {
 	action := parts[1]
 	switch action {
 	case "snapshot.jpg", "thumbnail.jpg", "snapshot":
-		w.Header().Set("Content-Type", "image/jpeg")
-		w.Header().Set("Cache-Control", "public, max-age=86400")
-		if err := provider.StreamThumbnail(r.Context(), id, w); err != nil {
+		var buf bytes.Buffer
+		if err := provider.StreamThumbnail(r.Context(), id, &buf); err != nil {
 			if errors.Is(err, storage.ErrStorageBusy) {
 				http.Error(w, "SD card busy", http.StatusTooManyRequests)
 				return
@@ -304,7 +304,18 @@ func (s *Server) handleAPISDCardItem(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			log.Printf("[SDCard] Snapshot streaming error: %v", err)
+			http.Error(w, fmt.Sprintf("Failed to load snapshot: %v", err), http.StatusInternalServerError)
+			return
 		}
+		if buf.Len() == 0 {
+			http.Error(w, "Snapshot is empty", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "image/jpeg")
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		w.Header().Set("Content-Length", strconv.Itoa(buf.Len()))
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(buf.Bytes())
 
 	case "video.mp4", "download.mp4", "video", "stream.mp4":
 		err := provider.StreamVideo(r.Context(), id, w, func(name string, size int64) {

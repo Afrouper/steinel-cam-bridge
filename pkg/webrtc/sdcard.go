@@ -281,9 +281,13 @@ func (m *SDCardManager) streamFile(ctx context.Context, cmd string, timestamp in
 	}()
 
 	// 2. Request file transfer from camera
+	action := "start"
+	if cmd == "get_snapshot" {
+		action = "event_start"
+	}
 	info := map[string]interface{}{
 		"timestamp": timestamp,
-		"action":    "start",
+		"action":    action,
 	}
 
 	if err := m.sendJSONCmd(cmd, info); err != nil {

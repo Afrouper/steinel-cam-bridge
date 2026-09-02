@@ -263,3 +263,72 @@ func TestSDCardRecordingProvider(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "1723812345", rec.ID)
 }
+
+func TestSDCardStreamSnapshot(t *testing.T) {
+	var mu sync.Mutex
+	var sentCmd string
+	var sentAction string
+	var sentTS int64
+
+	sdm := NewSDCardManager(func(cmd string, info map[string]interface{}) error {
+		mu.Lock()
+		sentCmd = cmd
+		if act, ok := info["action"].(string); ok {
+			sentAction = act
+		}
+		if ts, ok := info["timestamp"].(int64); ok {
+			sentTS = ts
+		}
+		mu.Unlock()
+		return nil
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	var buf bytes.Buffer
+	doneChan := make(chan error, 1)
+
+	go func() {
+		err := sdm.StreamThumbnail(ctx, "1723812345", &buf)
+		doneChan <- err
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+
+	mu.Lock()
+	cmdVal := sentCmd
+	actVal := sentAction
+	tsVal := sentTS
+	mu.Unlock()
+
+	// Verify that get_snapshot sends action "event_start"
+	assert.Equal(t, "get_snapshot", cmdVal)
+	assert.Equal(t, "event_start", actVal)
+	assert.Equal(t, int64(1723812345), tsVal)
+
+	// 1. Camera sends start
+	sdm.HandleJSONMessage(map[string]interface{}{
+		"resp":   "get_snapshot",
+		"action": "start",
+		"info": map[string]interface{}{
+			"name":     "snapshot.jpg",
+			"filesize": float64(4),
+		},
+	})
+
+	// 2. Camera sends binary chunk (JPEG data)
+	sdm.HandleBinaryChunk([]byte{0xFF, 0xD8, 0xFF, 0xE0})
+
+	time.Sleep(30 * time.Millisecond)
+
+	// 3. Camera sends end
+	sdm.HandleJSONMessage(map[string]interface{}{
+		"resp":   "get_snapshot",
+		"action": "end",
+	})
+
+	err := <-doneChan
+	require.NoError(t, err)
+	assert.Equal(t, []byte{0xFF, 0xD8, 0xFF, 0xE0}, buf.Bytes())
+}
