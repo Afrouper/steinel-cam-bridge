@@ -2,6 +2,14 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge** Add-on werden hier dokumentiert.
 
+## 1.3.1
+
+### 🐛 Fehlerbehebungen (Bugfixes)
+- **SD-Karten Snapshot- & Thumbnail-Abruf (L 625 CAM SC)**:
+  - Behebt ein Problem, bei dem das Abrufen von Snapshots/Thumbnails (`/api/sdcard/events/{id}/thumbnail.jpg`) zu einer 0-Byte-Datei führte.
+  - Das interne Nabto DataChannel-Kommando `get_snapshot` nutzt nun die von der Kamera-Firmware erwartete Aktion `"event_start"`.
+  - Robuste Fehlerbehandlung im HTTP-Server: Scheitert die Übertragung oder liefert die Kamera keine Daten, wird ein passender HTTP-Statuscode (500 / 404) anstelle eines 0-Byte `HTTP 200 OK` zurückgegeben.
+
 ## 1.3.0
 
 ### 🚀 Nativer Pure-Go Nabto Edge Client (100% C-SDK frei)
