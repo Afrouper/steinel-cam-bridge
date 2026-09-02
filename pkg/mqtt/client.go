@@ -69,9 +69,12 @@ func NewClient(cfg Config, cb Callbacks) *Client {
 		basePrefix = "steinel"
 	}
 
-	// Always nest DeviceID under base prefix: <basePrefix>/<deviceID>
-	// This guarantees no conflicts when multiple Steinel cameras run on the same MQTT broker.
-	fullBaseTopic := fmt.Sprintf("%s/%s", basePrefix, cfg.DeviceID)
+	var fullBaseTopic string
+	if cfg.DeviceID != "" {
+		fullBaseTopic = fmt.Sprintf("%s/%s", basePrefix, cfg.DeviceID)
+	} else {
+		fullBaseTopic = fmt.Sprintf("%s/%s", basePrefix, cleanDID)
+	}
 
 	if cfg.ClientID == "" {
 		cfg.ClientID = fmt.Sprintf("steinel_bridge_%s", cleanDID)
@@ -85,6 +88,36 @@ func NewClient(cfg Config, cb Callbacks) *Client {
 	}
 
 	return c
+}
+
+// UpdateDeviceInfo updates the device identifiers and re-publishes discovery & availability.
+func (c *Client) UpdateDeviceInfo(deviceID, productID string) {
+	c.mu.Lock()
+	if deviceID == "" || c.cfg.DeviceID == deviceID {
+		c.mu.Unlock()
+		return
+	}
+	log.Printf("[MQTT] 🔄 Updating DeviceID: '%s' -> '%s'", c.cfg.DeviceID, deviceID)
+	c.cfg.DeviceID = deviceID
+	if productID != "" {
+		c.cfg.ProductID = productID
+	}
+	cleanDID := strings.ReplaceAll(deviceID, "-", "_")
+	c.nodeID = fmt.Sprintf("steinel_%s", cleanDID)
+	basePrefix := strings.TrimSuffix(c.cfg.TopicPrefix, "/")
+	if basePrefix == "" {
+		basePrefix = "steinel"
+	}
+	c.baseTopic = fmt.Sprintf("%s/%s", basePrefix, deviceID)
+	cl := c.client
+	c.mu.Unlock()
+
+	if cl != nil && cl.IsConnected() {
+		availTopic := fmt.Sprintf("%s/availability", c.baseTopic)
+		cl.Publish(availTopic, 1, true, "online")
+		c.publishDiscovery(cl)
+		c.publishStatus(events.GlobalBus.GetStatus())
+	}
 }
 
 func (c *Client) Start(_ context.Context) error {

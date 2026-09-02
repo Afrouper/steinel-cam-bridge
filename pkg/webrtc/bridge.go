@@ -23,8 +23,8 @@ import (
 )
 
 type Bridge struct {
-	nabtoClient      *nabto.Client
-	stream           *nabto.Stream
+	nabtoClient      nabto.Driver
+	stream           nabto.StreamDriver
 	rtspServer       *rtsp.Server
 	resolution       string
 	pliInterval      time.Duration
@@ -46,7 +46,7 @@ type Bridge struct {
 	mu               sync.Mutex
 }
 
-func NewBridge(client *nabto.Client, stream *nabto.Stream, rtspServer *rtsp.Server, resolution string, pliInterval time.Duration, debug bool) *Bridge {
+func NewBridge(client nabto.Driver, stream nabto.StreamDriver, rtspServer *rtsp.Server, resolution string, pliInterval time.Duration, debug bool) *Bridge {
 	if resolution == "" {
 		resolution = "1080p"
 	}
@@ -643,20 +643,17 @@ func (b *Bridge) handleDataChannelMessage(data []byte) {
 				return
 			}
 
-			// Check for MCU tran_report
-			str := string(data)
-			if strVal, ok := root["resp"].(string); ok && strVal == "tran_report" || strings.Contains(str, "tran_report") {
-				if infoMap, ok := root["info"].(map[string]interface{}); ok {
-					if b64Data, ok := infoMap["data"].(string); ok {
-						cfg, err := mcu.ParseBase64Data(b64Data)
-						if err != nil {
-							log.Printf("[MCU] ⚠️ Failed to parse tran_report Base64 '%s': %v", b64Data, err)
-						} else if cfg != nil {
-							b.onMCUStatus(cfg)
-						}
+			// Check for MCU base64 status payloads (tran_report, tran_ctl, etc.)
+			if infoMap, ok := root["info"].(map[string]interface{}); ok {
+				if b64Data, ok := infoMap["data"].(string); ok && b64Data != "" {
+					cfg, err := mcu.ParseBase64Data(b64Data)
+					if err != nil {
+						log.Printf("[MCU] ⚠️ Failed to parse MCU Base64 '%s': %v", b64Data, err)
+					} else if cfg != nil {
+						b.onMCUStatus(cfg)
 					}
+					return
 				}
-				return
 			}
 
 			// Check for get_device_info
@@ -671,6 +668,7 @@ func (b *Bridge) handleDataChannelMessage(data []byte) {
 			}
 
 			// Check and log for any Motion, PIR, Alarm or Event notifications from camera
+			str := string(data)
 			lowerStr := strings.ToLower(str)
 			if strings.Contains(lowerStr, "alarm") ||
 				strings.Contains(lowerStr, "motion") ||
@@ -769,16 +767,23 @@ func (b *Bridge) readVideoLoop(ctx context.Context, track *pion.TrackRemote, can
 		}
 
 		b.lastVideoPacket.Store(time.Now().UnixNano())
-		b.rtspServer.WriteVideoPacket(pkt)
+		if b.rtspServer != nil {
+			b.rtspServer.WriteVideoPacket(pkt)
+		}
 	}
 }
 
 func (b *Bridge) readAudioLoop(ctx context.Context, track *pion.TrackRemote) {
-	codec := b.rtspServer.GetAudioCodec()
+	var codec string
+	if b.rtspServer != nil {
+		codec = b.rtspServer.GetAudioCodec()
+	}
 	if codec == "aac" {
 		log.Printf("[Audio] 🔊 Transcoding audio: G.711u (8kHz) -> AAC-LC (16kHz) (Microphone -> Clients)")
 		transcoder := audio.NewTranscoder(func(au []byte, pts time.Duration) {
-			b.rtspServer.WriteAACFrame(au, pts)
+			if b.rtspServer != nil {
+				b.rtspServer.WriteAACFrame(au, pts)
+			}
 		})
 		for {
 			select {
@@ -808,7 +813,9 @@ func (b *Bridge) readAudioLoop(ctx context.Context, track *pion.TrackRemote) {
 				return
 			}
 
-			b.rtspServer.WriteAudioPacket(pkt)
+			if b.rtspServer != nil {
+				b.rtspServer.WriteAudioPacket(pkt)
+			}
 		}
 	}
 }

@@ -67,18 +67,6 @@ import (
 	"unsafe"
 )
 
-type Config struct {
-	CameraIP   string
-	CameraPort int
-	ProductID  string
-	DeviceID   string
-	SCT        string
-	PairPwd    string
-	KeyPath    string
-	IsBeta     bool
-	ClientName string
-}
-
 type Client struct {
 	cfg        *Config
 	ctx        *C.NabtoClient
@@ -439,7 +427,7 @@ func (c *Client) RequestTracks() (uint16, error) {
 }
 
 // OpenSignalingStream opens a Nabto virtual stream for WebRTC signaling
-func (c *Client) OpenSignalingStream(port uint32) (*Stream, error) {
+func (c *Client) OpenSignalingStream(port uint32) (StreamDriver, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 

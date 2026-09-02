@@ -2,6 +2,27 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge** Add-on werden hier dokumentiert.
 
+## 1.3.0
+
+### 🚀 Nativer Pure-Go Nabto Edge Client (100% C-SDK frei)
+- **Eigenständiger DTLS 1.2 & CoAP Stack**:
+  - Vollständige Reimplementierung des Nabto Edge Protokolls in modernem, reinem Go ohne Abhängigkeit von externen dynamischen Bibliotheken (`libnabto_client.so`) im Normalbetrieb.
+  - Eigene Implementierung von Nabto-Framing, DTLS 1.2 Handshake (ECC NIST P-256), CoAP Request/Response und Stream-Transport.
+- **Unterbrechungsfreier Dauerbetrieb (KeepAlive Heartbeat)**:
+  - Automatischer 5-Sekunden Keepalive-Ping und 18-Byte Echo (`0x04 0x02` + 16-Byte Nonce) zur zuverlässigen Verhinderung von Kamera-Timeouts im Dauerbetrieb.
+- **C-Wrapper als Fallback beibehalten**:
+  - Der bewährte CGo-Wrapper (`pkg/nabto`) bleibt für maximale Abwärtskompatibilität und Fehlerdiagnose als konfigurierbarer Fallback (`USE_CGO_NABTO=true`) im Code erhalten.
+
+### 🏠 Home Assistant MQTT & Supervisor-Verbesserungen
+- **Supervisor Service Discovery (`X-Supervisor-Token`)**:
+  - Automatische und direkte Ermittlung der Mosquitto-Broker-Zugangsdaten über die offizielle Home Assistant Supervisor API.
+- **Benutzerfreundlicher Erstinstallations-Hinweis**:
+  - Klarer Hinweis im Log bei Neuinstallationen, falls der Mosquitto-Broker im Supervisor noch nicht initial neu gestartet wurde.
+- **Exakte 11-Zeichen Identifikator-Synchronisation**:
+  - Strikte Formatierung und Extraktion von `DeviceId` (`de-XXXXXXXX`) und `ProductId` (`pr-XXXXXXXX`) zur nahtlosen Bindung an bestehende Home Assistant Entitäten.
+- **MCU Telemetrie- und Steuerungs-Abgleich**:
+  - Vollständige Verarbeitung aller eingehenden Base64 MCU-Pakete (`tran_report` und `tran_ctl`) zur verzögerungsfreien Aktualisierung von Licht, Dämmerungsschwelle, Nachlaufzeit und Sirene.
+
 ## 1.2.1
 
 ### 🧹 Logging-Bereinigung

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -23,6 +24,7 @@ import (
 	"github.com/Afrouper/steinel-cam-bridge/pkg/mcu"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/mqtt"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/nabto"
+	"github.com/Afrouper/steinel-cam-bridge/pkg/nabtopure"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/onvif"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/rtsp"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/storage"
@@ -403,6 +405,7 @@ func fetchSupervisorMQTTOptions() (broker, user, pass string, err error) {
 	urls := []string{
 		"http://supervisor/services/mqtt",
 		"http://hassio/services/mqtt",
+		"http://172.30.32.2/services/mqtt",
 	}
 
 	var lastErr error
@@ -413,6 +416,7 @@ func fetchSupervisorMQTTOptions() (broker, user, pass string, err error) {
 			continue
 		}
 		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("X-Supervisor-Token", token)
 		req.Header.Set("Content-Type", "application/json")
 
 		resp, doErr := client.Do(req)
@@ -422,8 +426,10 @@ func fetchSupervisorMQTTOptions() (broker, user, pass string, err error) {
 		}
 
 		if resp.StatusCode != http.StatusOK {
+			bodyBytes, _ := io.ReadAll(resp.Body)
 			_ = resp.Body.Close()
-			lastErr = fmt.Errorf("supervisor API returned HTTP %d", resp.StatusCode)
+			bodyStr := string(bodyBytes)
+			lastErr = fmt.Errorf("supervisor API (%s) returned HTTP %d: %s", u, resp.StatusCode, strings.TrimSpace(bodyStr))
 			continue
 		}
 
@@ -493,6 +499,12 @@ func resolveConfig(optionsPath string, fs *flag.FlagSet) *AppConfig {
 			cfg.MQTTUser = user
 			cfg.MQTTPassword = pass
 			log.Printf("[HA Addon] 📡 Auto-discovered Home Assistant MQTT service: %s (User: %s)", broker, user)
+		} else if err != nil && os.Getenv("SUPERVISOR_TOKEN") != "" {
+			if strings.Contains(err.Error(), "not enabled") {
+				log.Printf("[HA Addon] ℹ️ MQTT broker detected, but service binding is not yet active in Supervisor. Please restart the MQTT broker add-on once, or configure 'mqtt_broker' in add-on options.")
+			} else {
+				log.Printf("[HA Addon] ℹ️ MQTT auto-discovery check: %v", err)
+			}
 		}
 	}
 
@@ -815,9 +827,11 @@ func main() {
 		log.Printf("[!] Warning: Could not start ONVIF server: %v", err)
 	}
 
+	var mqttClient *mqtt.Client
+
 	// 3. Start MQTT Client (Optional — provides Home Assistant Auto-Discovery entities)
 	if appCfg.MQTTBroker != "" {
-		mqttClient := mqtt.NewClient(mqtt.Config{
+		mqttClient = mqtt.NewClient(mqtt.Config{
 			Broker:          appCfg.MQTTBroker,
 			Username:        appCfg.MQTTUser,
 			Password:        appCfg.MQTTPassword,
@@ -858,6 +872,8 @@ func main() {
 				recordingSyncer.TriggerSync()
 			}
 		})
+	} else {
+		log.Printf("[Config] ℹ️ MQTT is disabled (no broker configured). To enable Home Assistant entities, configure 'mqtt_broker' in addon options or install an MQTT broker addon.")
 	}
 
 	// 4. Branch: Xiongmai Sofia Driver (L 620 CAM) vs. Nabto WebRTC Driver (L 625 CAM SC)
@@ -879,7 +895,13 @@ func main() {
 
 		// Supervisor loop for Nabto + WebRTC
 		for ctx.Err() == nil {
-			client, err := nabto.NewClient(cfg)
+			var client nabto.Driver
+			var err error
+			if os.Getenv("USE_CGO_NABTO") == "true" || os.Getenv("USE_CGO_NABTO") == "1" {
+				client, err = nabto.NewClient(cfg)
+			} else {
+				client, err = nabtopure.NewClient(cfg)
+			}
 			if err != nil {
 				log.Printf("[!] Nabto client init error: %v", err)
 				select {
@@ -902,6 +924,11 @@ func main() {
 				case <-time.After(reconnectCooldown):
 				}
 				continue
+			}
+
+			// If DeviceID was discovered during connection, update MQTT discovery & availability
+			if mqttClient != nil && cfg.DeviceID != "" {
+				mqttClient.UpdateDeviceInfo(cfg.DeviceID, cfg.ProductID)
 			}
 
 			port, err := client.GetSignalingPort()
