@@ -2,6 +2,65 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.3.0-beta.8
+
+### 🧹 Bereinigung & Benutzerfreundlicher Log-Hinweis
+- **Aufgeräumte Supervisor MQTT-Erkennung**:
+  - Direkte und performante Abfrage der offiziellen Supervisor-URLs.
+- **Klarer Log-Hinweis bei Erstinstallation**:
+  - Verständlicher deutscher/englischer Hinweis im Log, falls der Mosquitto-Broker nach einer Neuinstallation noch nicht initial neu gestartet wurde.
+
+## 1.3.0-beta.7
+
+### 🚀 Automatische Freischaltung des MQTT-Dienstes im Supervisor
+- **Auto-Enablement via `POST /services/mqtt`**:
+  - Sobald der Supervisor meldet, dass der MQTT-Dienst für das Add-on noch nicht freigeschaltet ist (`Service not enabled`), fordert die Bridge die Aktivierung automatisch an.
+  - Ermöglicht eine nahtlose, vollautomatische Anbindung an den Mosquitto-Broker ohne manuelle Broker-Konfiguration oder Neustarts.
+
+## 1.3.0-beta.6
+
+### 🔍 Detaillierte Supervisor-API Fehlerdiagnose
+- Exakte Ausgabe des Supervisor-Antworttexts im Log, um eventuelle Konfigurations- oder Dienstprobleme in Home Assistant sofort transparent zu machen.
+
+## 1.3.0-beta.5
+
+### 🛠️ Fix Home Assistant Supervisor MQTT Auto-Discovery & Exact 11-char DeviceID
+- **Supervisor Header `X-Supervisor-Token`**:
+  - Authentifizierung mit `X-Supervisor-Token` & `Authorization: Bearer` für direkte und automatische Mosquitto-Zugangsdaten-Ermittlung via `mqtt:want`.
+- **Exakte 11-Zeichen Nabto ID-Extraktion**:
+  - `DeviceId` und `ProductId` werden präzise auf 11 Zeichen (`de-m4yfowbr`, `pr-qtatbtbi`) gecrasht, um bestehende Home Assistant Entitäten 1:1 zu synchronisieren.
+- **Explizites Logging bei Kamera-Verbindung**:
+  - Bei erfolgreichem Connect werden die ermittelten Kamera-IDs direkt im Log ausgegeben.
+
+## 1.3.0-beta.4
+
+### 🛠️ Home Assistant MQTT Auto-Discovery & Status-Updates
+- **Verbesserte Supervisor MQTT Auto-Discovery**:
+  - Unterstützung für `172.30.32.2` (Standard-Gateway der Supervisor-API bei `host_network: true`), falls DNS-Namen wie `supervisor` im Host-Netzwerk nicht auflösbar sind.
+  - Aussagekräftiges Logging beim Start (`[HA Addon] 📡 Auto-discovered Home Assistant MQTT service` oder entsprechende Hinweismeldung).
+- **Automatische DeviceID-Erkennung via CoAP**:
+  - Der Pure-Go Treiber ermittelt automatisch die reale `DeviceID` (`de-m4yfowbr`) und `ProductID` der Kamera über CoAP `/iam/pairing`, auch wenn die Kamera nur über IP ohne QR-Code konfiguriert wurde.
+  - Der MQTT-Client passt Topics (`steinel/<deviceID>/...`) und Discovery-Konfigurationen dynamisch an, sodass bestehende Home Assistant Entitäten sofort als "Verfügbar" erkannt und aktualisiert werden.
+- **Zuverlässiges MCU Status-Parsing**:
+  - Alle über den DataChannel eingehenden Base64-Statusmeldungen der Kamera (`tran_report`, `tran_ctl`) werden geparst und synchronisieren Sensoren, Schalter und Helligkeitswerte sofort via MQTT und ONVIF.
+
+## 1.3.0-beta.3
+
+### 🚀 100% Pure-Go Nabto Edge Treiber (CGo & libnabto-Abhängigkeit entfernt)
+- **Vollständige Eigenimplementierung des Nabto Edge Protokolls**:
+  - **DTLS 1.2 Handshake**: Native Pion/DTLS-Anbindung mit ECC P-256 Schlüsseln, Nabto 16-Byte Paketframing (`0xF0`), CCM Cipher-Suites (`TLS_ECDHE_ECDSA_WITH_AES_128_CCM`) und ALPN `"n5"`.
+  - **CoAP RFC 7252 Layer**: Pure-Go REST-Abfragen für `/p2p/webrtc-info`, `/iam/pairing` und `/webrtc/tracks`.
+  - **Nabto Streaming Protocol**: Virtueller Multiplex-Stream (`AT_STREAM = 0x05`) für WebRTC-Signaling mit dynamischer Segmentgrößen-Aushandlung (256 Bytes).
+- **Stabilität & KeepAlive**:
+  - Vollständige 18-Byte Nabto KeepAlive-Paketbehandlung (`0x04 0x02` + Nonce-Echo) und periodischer 5s KeepAlive-Heartbeat zur Verhinderung von Verbindungsabbrüchen.
+  - Entfernung künstlicher Read-Timeouts für dauerhaft unterbrechungsfreie Video- und Audio-Streams.
+- **Bereinigtes Logging**:
+  - Detaillierte Nabto/DTLS-Datagramm- und Stream-Traces werden nur noch im Debug-Modus (`debug: true`) ausgegeben.
+- **Keine dynamischen C-Bibliotheken (`libnabto_client.so`/`.dylib`) mehr erforderlich**:
+  - Geringerer Speicherbedarf, schnellere Verbindungsaufbauzeiten (< 100ms) und höhere Stabilität.
+  - Vollständig kompatibel mit bestehenden Schlüsseldateien (`local_client.key`).
+  - Standardmäßig aktiv; bei Bedarf kann über `USE_CGO_NABTO=true` auf den alten Treiber zurückgegriffen werden.
+
 ## 1.2.1
 
 ### 🧹 Logging-Bereinigung
