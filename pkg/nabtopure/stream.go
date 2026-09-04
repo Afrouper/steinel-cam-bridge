@@ -162,7 +162,12 @@ func (s *Stream) Open(timeout time.Duration) error {
 
 // ReadMsg reads a 4-byte little-endian length-prefixed WebRTC signaling message.
 func (s *Stream) ReadMsg() ([]byte, error) {
+	deadline := time.Now().Add(15 * time.Second)
 	for {
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("read signaling message timed out after 15s")
+		}
+
 		s.mu.Lock()
 		if s.closed {
 			s.mu.Unlock()

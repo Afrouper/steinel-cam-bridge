@@ -277,6 +277,10 @@ func (c *Client) packetReaderLoop() {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 				continue
 			}
+			if c.cfg.Debug {
+				log.Printf("[NabtoPure] ⚠️ DTLS connection ended: %v", err)
+			}
+			c.Close()
 			return
 		}
 		if n == 0 {
@@ -352,8 +356,11 @@ func (c *Client) Close() {
 		_ = c.udpConn.Close()
 		c.udpConn = nil
 	}
+	if c.currentStream != nil {
+		c.currentStream.Close()
+		c.currentStream = nil
+	}
 	c.coapClient = nil
-	c.currentStream = nil
 }
 
 // CoAPClient returns the underlying CoAPClient.

@@ -278,6 +278,7 @@ type AppConfig struct {
 	MQTTDiscovery      string
 	Debug              bool
 	SDCardSyncInterval int
+	NabtoDriver        string // "pure" (default) or "cgo" / "lib"
 }
 
 func loadHomeAssistantOptionsFromPath(path string, cfg *AppConfig) {
@@ -309,6 +310,8 @@ func loadHomeAssistantOptionsFromPath(path string, cfg *AppConfig) {
 		MQTTDiscoveryPrefix string `json:"mqtt_discovery_prefix"`
 		Debug               bool   `json:"debug"`
 		SDCardSyncInterval  int    `json:"sdcard_sync_interval"`
+		NabtoDriver         string `json:"nabto_driver"`
+		UseCGONabto         bool   `json:"use_cgo_nabto"`
 	}
 
 	if err := json.Unmarshal(data, &opts); err != nil {
@@ -374,6 +377,11 @@ func loadHomeAssistantOptionsFromPath(path string, cfg *AppConfig) {
 	}
 	if opts.SDCardSyncInterval > 0 {
 		cfg.SDCardSyncInterval = opts.SDCardSyncInterval
+	}
+	if opts.NabtoDriver != "" {
+		cfg.NabtoDriver = opts.NabtoDriver
+	} else if opts.UseCGONabto {
+		cfg.NabtoDriver = "cgo"
 	}
 }
 
@@ -485,6 +493,7 @@ func resolveConfig(optionsPath string, fs *flag.FlagSet) *AppConfig {
 		MQTTTopic:          "steinel",
 		MQTTDiscovery:      "homeassistant",
 		SDCardSyncInterval: 30,
+		NabtoDriver:        "pure",
 	}
 
 	// 2. Layer 2: Configuration File
@@ -587,6 +596,12 @@ func resolveConfig(optionsPath string, fs *flag.FlagSet) *AppConfig {
 	if pid := os.Getenv("PRODUCT_ID"); pid != "" {
 		cfg.NabtoConfig.ProductID = pid
 	}
+	if nd := os.Getenv("NABTO_DRIVER"); nd != "" {
+		cfg.NabtoDriver = nd
+	}
+	if os.Getenv("USE_CGO_NABTO") == "true" || os.Getenv("USE_CGO_NABTO") == "1" {
+		cfg.NabtoDriver = "cgo"
+	}
 	if envDebug := os.Getenv("DEBUG"); envDebug == "true" || envDebug == "1" {
 		cfg.Debug = true
 	}
@@ -639,6 +654,12 @@ func resolveConfig(optionsPath string, fs *flag.FlagSet) *AppConfig {
 				if s, err := strconv.Atoi(f.Value.String()); err == nil && s > 0 {
 					cfg.SDCardSyncInterval = s
 				}
+			case "nabto-driver":
+				cfg.NabtoDriver = f.Value.String()
+			case "use-cgo":
+				if b, err := strconv.ParseBool(f.Value.String()); err == nil && b {
+					cfg.NabtoDriver = "cgo"
+				}
 			case "debug":
 				if b, err := strconv.ParseBool(f.Value.String()); err == nil {
 					cfg.Debug = b
@@ -681,6 +702,8 @@ func main() {
 	flag.String("audio-codec", "", "Audio codec for RTSP/ONVIF stream: 'aac' (transcoded, default) or 'pcmu' (raw passthrough)")
 	flag.Int("sync-interval", 30, "Interval in seconds to poll SD card for new recordings (default: 30s)")
 	flag.Int("sdcard-sync-interval", 30, "Interval in seconds to poll SD card for new recordings (alias)")
+	flag.String("nabto-driver", "pure", "Nabto Edge driver engine ('pure' for native Go stack, 'cgo' for C-SDK)")
+	flag.Bool("use-cgo", false, "Use C-SDK libnabto_client wrapper (alias for --nabto-driver=cgo)")
 	flag.Bool("debug", false, "Enable verbose debug logging")
 	betaFlag := flag.Bool("beta", false, "Identify as beta instance for IAM registration")
 	flag.Parse()
@@ -897,9 +920,12 @@ func main() {
 		for ctx.Err() == nil {
 			var client nabto.Driver
 			var err error
-			if os.Getenv("USE_CGO_NABTO") == "true" || os.Getenv("USE_CGO_NABTO") == "1" {
+			useCGO := appCfg.NabtoDriver == "cgo" || appCfg.NabtoDriver == "lib" || os.Getenv("USE_CGO_NABTO") == "true" || os.Getenv("USE_CGO_NABTO") == "1"
+			if useCGO {
+				log.Printf("[Driver] 🔧 Using C-SDK wrapper driver (libnabto_client.so)")
 				client, err = nabto.NewClient(cfg)
 			} else {
+				log.Printf("[Driver] 🚀 Using native Pure-Go Nabto driver")
 				client, err = nabtopure.NewClient(cfg)
 			}
 			if err != nil {
@@ -931,6 +957,7 @@ func main() {
 				mqttClient.UpdateDeviceInfo(cfg.DeviceID, cfg.ProductID)
 			}
 
+			log.Printf("[Supervisor] 🛰️ Querying WebRTC signaling port from camera...")
 			port, err := client.GetSignalingPort()
 			if err != nil {
 				client.Close()
@@ -946,6 +973,7 @@ func main() {
 				continue
 			}
 
+			log.Printf("[Supervisor] 🔄 Opening Nabto signaling stream on port %d...", port)
 			stream, err := client.OpenSignalingStream(port)
 			if err != nil {
 				client.Close()
@@ -960,6 +988,7 @@ func main() {
 				}
 				continue
 			}
+			log.Printf("[Supervisor] ✅ Nabto signaling stream connected on port %d", port)
 
 			log.Printf("[Bridge] 🚀 [ONLINE] Stream ready at rtsp://0.0.0.0:%d/%s", appCfg.RTSPPort, appCfg.RTSPPath)
 			log.Printf("[Bridge] 🛰️ [ONVIF] Endpoints active at http://0.0.0.0:%d/onvif/device_service", appCfg.ONVIFPort)

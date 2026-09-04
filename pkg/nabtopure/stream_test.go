@@ -2,6 +2,8 @@ package nabtopure
 
 import (
 	"bytes"
+	"encoding/binary"
+	"io"
 	"testing"
 )
 
@@ -61,5 +63,31 @@ func TestVarUintRoundtrip(t *testing.T) {
 		if decoded != val {
 			t.Errorf("expected %d, got %d", val, decoded)
 		}
+	}
+}
+
+func TestStreamReadMsg(t *testing.T) {
+	s := NewStream(nil, 0, 1234)
+
+	// 1. Write a length-prefixed message into readBuf
+	msg := []byte("hello-webrtc-signaling")
+	var lenBuf [4]byte
+	binary.LittleEndian.PutUint32(lenBuf[:], uint32(len(msg)))
+	s.readBuf.Write(lenBuf[:])
+	s.readBuf.Write(msg)
+
+	read, err := s.ReadMsg()
+	if err != nil {
+		t.Fatalf("ReadMsg failed: %v", err)
+	}
+	if string(read) != "hello-webrtc-signaling" {
+		t.Fatalf("unexpected message: %s", string(read))
+	}
+
+	// 2. Test ReadMsg when stream closed
+	s.Close()
+	_, err = s.ReadMsg()
+	if err != io.EOF {
+		t.Fatalf("expected io.EOF on closed stream, got %v", err)
 	}
 }

@@ -67,7 +67,7 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
     3. Home Assistant Add-on Konfigurationsdatei (`/data/options.json` & Home Assistant Supervisor MQTT Auto-Discovery API via `X-Supervisor-Token`)
     4. Standardwerte (Layer 1)
   - **Modell-Erkennung**: Prüft per `-type` bzw. führt bei `auto` einen schnellen TCP-Probe auf Port `34567` durch, um automatisch zwischen `L 620 CAM` (Xiongmai Sofia) und `L 625 CAM SC` (Nabto Edge) zu unterscheiden.
-  - **Treiber-Auswahl (L 625)**: Nutzt standardmäßig den nativen Pure-Go Treiber (`pkg/nabtopure`). Über `USE_CGO_NABTO=true` kann bei Bedarf auf den CGo-Wrapper (`pkg/nabto`) umgeschaltet werden.
+  - **Treiber-Auswahl (L 625)**: Nutzt standardmäßig den nativen Pure-Go Treiber (`pkg/nabtopure`). Über die Add-on Option `nabto_driver: "cgo"` (bzw. Umgebungsvariable `USE_CGO_NABTO=true` / CLI-Flag `-nabto-driver=cgo`) kann bei Bedarf auf den CGo-Wrapper (`pkg/nabto`) umgeschaltet werden.
   - Initialisiert Server (`rtsp.Server`, `onvif.Server`, `mqtt.Client`, `storage.RecordingSyncer`).
   - **Supervisor-Loop (Nabto)**: Fängt Verbindungsabbrüche, Session-Beendigungen oder Watchdog-Resets ab und erzwingt einen sauberen **30-Sekunden-Cooldown**, damit neu startende Kameras stabil hochfahren können.
 
