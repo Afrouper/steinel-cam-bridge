@@ -2,6 +2,20 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.3.2-beta.1
+
+### 🚀 Neuerungen & Verbesserungen
+- **Konfigurierbarer Nabto Edge Treiber (`nabto_driver`)**:
+  - Neue Option in den Add-on Einstellungen: Wähle zwischen `pure` (nativer Go-Stack, Standard) und `cgo` (Fallback unter Verwendung von `libnabto_client.so`).
+  - Ermöglicht bequemes Umschalten und Diagnose bei Verbindungsproblemen direkt über die Home Assistant Web-UI.
+- **Detailliertes Verbindungs- & Signaling-Logging**:
+  - Klare Logausgabe beim Starten des Treibers (`[Driver] 🔧 Using C-SDK wrapper driver` vs. `[Driver] 🚀 Using native Pure-Go Nabto driver`) sowie bei den Einzelschritten des WebRTC-Signalings (Signaling-Port-Abfrage und Nabto-Stream-Aufbau).
+
+### 🐛 Fehlerbehebungen & Stabilität
+- **Stream-Hang Absicherung im Pure-Go Stack (`pkg/nabtopure`)**:
+  - Schließt die Verbindung und alle abhängigen Streams bei Verbindungsfehlern im DTLS-Reader sofort sauber ab, anstatt Anfragen stumm blockieren zu lassen.
+  - 15-Sekunden-Timeout für Signaling-Nachrichten (`ReadMsg`), um endloses Verharren bei ausbleibender Kamera-Antwort zu verhindern und einen kontrollierten Reconnect einzuleiten.
+
 ## 1.3.1
 
 ### 🐛 Fehlerbehebungen (Bugfixes)
