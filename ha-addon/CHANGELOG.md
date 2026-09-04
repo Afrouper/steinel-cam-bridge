@@ -2,6 +2,26 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge** Add-on werden hier dokumentiert.
 
+## 1.3.2
+
+### 🚀 Neuerungen & Verbesserungen
+- **CGo (`libnabto_client.so`) als empfohlener Standard-Treiber**:
+  - `nabto_driver: "cgo"` ist nun der standardmäßig aktive Treiber für die Steinel L 625 CAM SC.
+  - Verbindungsaufbau und WebRTC-Signaling erfolgen zuverlässig und extrem schnell (< 1 Sekunde).
+  - Der native Pure-Go Treiber bleibt als experimentelle Option (`pure`) verfügbar.
+- **Transparente Treiber-Auswahl**:
+  - Konfigurierbar über die Add-on Optionen (`nabto_driver: "cgo" | "pure"`).
+
+### 🐛 Fehlerbehebungen & Stabilität
+- **Signaling-Hang Absicherung & Timeout-Watchdogs**:
+  - `Connect()` (30s), `GetSignalingPort()` (15s) und `OpenSignalingStream()` (15s) sind im Supervisor mit strikten Timeout-Watchdogs geschützt, wodurch ein stilles Hängenbleiben des Daemons ausgeschlossen ist.
+  - Prominente Fehlerausgabe und Handlungsanweisung im Log bei Problemen im Pure-Go Modus.
+- **Kamera-Socket Deadlock-Prävention**:
+  - Bei Abbruch oder Timeout wird die DTLS-Session sauber via `close_notify` Alert beendet und der UDP-Socket non-blocking geschlossen, sodass der Port 5592 auf dem Steinel-SoC nicht mehr blockiert verharrt.
+  - Thread-sichere DTLS-Schreibvorgänge (`writeDTLS`) verhindern Race-Conditions.
+  - `CoAPClient.Close()` bricht wartende CoAP-Anfragen sofort ab.
+  - RFC 7252 konforme CoAP-Optionen-Sortierung.
+
 ## 1.3.1
 
 ### 🐛 Fehlerbehebungen (Bugfixes)
