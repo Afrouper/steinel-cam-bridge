@@ -110,4 +110,14 @@ func TestPublishRecordingEvent(t *testing.T) {
 		ThumbnailURL:    "/api/sdcard/events/1724528700/thumbnail.jpg",
 		VideoURL:        "/api/sdcard/events/1724528700/video.mp4",
 	})
+
+	// Also verify with empty ThumbnailURL (e.g. L 625 CAM SC model)
+	c.PublishRecordingEvent(storage.RecordingItem{
+		ID:              "1724528701",
+		StartTime:       time.Date(2026, 8, 26, 18, 1, 0, 0, time.UTC),
+		EndTime:         time.Date(2026, 8, 26, 18, 1, 30, 0, time.UTC),
+		DurationSeconds: 30,
+		EventType:       "ai_person",
+		VideoURL:        "/api/sdcard/events/1724528701/video.mp4",
+	})
 }

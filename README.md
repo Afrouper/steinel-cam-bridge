@@ -51,7 +51,9 @@ an der Hardware.
       Live-Zustandsrückmeldung (`ON` / `OFF`).
   - **🎬 Ereignisse & Aufnahmen**:
     - **Letzte SD-Aufnahme (`event.letzte_sd_aufnahme`)**: Übermittlung des neuesten MicroSD-Aufnahmeereignisses mit 
-      Metadaten (Zeitstempel, Dauer, Dateigröße) und direkten URLs für Vorschaubild (`thumbnail_url`) und MP4-Video (`video_url`).
+      Metadaten (Zeitstempel, Dauer – standardmäßig 30 s, Dateigröße) und direkter URL für das MP4-Video (`video_url`).
+      Sofern vom Kameramodell unterstützt, wird zusätzlich `thumbnail_url` bereitgestellt (Kameras wie die L 625 CAM SC speichern
+      reine MP4-Videodateien ohne separate Standbilder).
   - **⚙️ Konfiguration (Einstellungsbereich)**:
     - **Dämmerungsschwelle (`number.lux_threshold`)**: Schaltschwelle in Lux (`2`–`1000 lx`), ab welcher Umgebungsdunkelheit das Licht bei Bewegung schaltet.
     - **Hauptlicht Helligkeit (`number.highlight`)**: Maximale Leuchtstärke des Flutlichts (`10`–`100 %`).
@@ -167,8 +169,12 @@ Die Bridge stellt auf Port `8000` eine direkte 1:1 REST-API bereit, um Aufnahmen
 | Endpunkt | Methode | Beschreibung |
 |---|---|---|
 | `/api/sdcard/events` | `GET` | Liefert die JSON-Liste aller Video-Ereignisse (Query-Parameter: `start`, `end`, `page`, `limit`) |
-| `/api/sdcard/events/{id}/thumbnail.jpg` | `GET` | Liefert das JPEG-Vorschaubild der Aufnahme direkt aus dem Kameraspeicher |
-| `/api/sdcard/events/{id}/video.mp4` | `GET` | Streamt die vollständige MP4-Aufnahme als Binärstream (inkl. Hardware-Überlastungsschutz) |
+| `/api/sdcard/events/{id}/thumbnail.jpg` | `GET` | Liefert das JPEG-Vorschaubild der Aufnahme direkt aus dem Kameraspeicher (sofern vom Modell unterstützt, sonst `HTTP 501 Not Implemented`) |
+| `/api/sdcard/events/{id}/video.mp4` | `GET` | Streamt die vollständige MP4-Aufnahme (2560x1440 HEVC / AAC) als Binärstream (inkl. Hardware-Überlastungsschutz) |
+
+> [!NOTE]
+> **SD-Karten Snapshots vs. Video-Downloads**:
+> Manche Kameramodelle (u. a. Steinel L 625 CAM SC) legen auf der internen MicroSD-Karte ausschließlich vollständige Video-Clips (`event_<timestamp>.mp4`) und keine separaten JPEG-Dateien ab. Um Wartezeiten und Schnittstellen-Blockaden zu vermeiden, quittiert `/api/sdcard/events/{id}/thumbnail.jpg` bei solchen Modellen Anfragen sofort mit `HTTP 501 Not Implemented`. Das MP4-Video steht unter `/api/sdcard/events/{id}/video.mp4` uneingeschränkt zum Download und zur Wiedergabe bereit.
 
 > [!TIP]
 > **Eingebauter Hardware-Schutz (Concurrency = 1)**: Um die kleine Embedded-CPU der Steinel-Kamera vor Überlastung zu schützen, erlaubt die Bridge immer nur **genau einen aktiven Download gleichzeitig**. Parallele Abfragen werden mit `HTTP 429 Too Many Requests` beantwortet. Bricht ein Client den Download vorzeitig ab, stoppt die Bridge den Kamera-Transfer sofort.

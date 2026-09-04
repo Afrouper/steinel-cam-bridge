@@ -256,12 +256,19 @@ func TestSDCardRecordingProvider(t *testing.T) {
 	require.NotNil(t, resp)
 	assert.Equal(t, 1, resp.Count)
 	assert.Equal(t, "1723812345", resp.List[0].ID)
+	assert.Equal(t, 30, resp.List[0].DurationSeconds)
 	assert.Equal(t, "/api/sdcard/events/1723812345/video.mp4", resp.List[0].VideoURL)
-	assert.Equal(t, "/api/sdcard/events/1723812345/thumbnail.jpg", resp.List[0].ThumbnailURL)
+	assert.Equal(t, "", resp.List[0].ThumbnailURL)
 
 	rec, err := sdm.GetRecording(ctx, "1723812345")
 	assert.NoError(t, err)
 	assert.Equal(t, "1723812345", rec.ID)
+	assert.Equal(t, 30, rec.DurationSeconds)
+	assert.Equal(t, "", rec.ThumbnailURL)
+
+	// StreamThumbnail returns ErrFeatureDisabled for L 625 CAM SC
+	var thumbBuf bytes.Buffer
+	assert.ErrorIs(t, sdm.StreamThumbnail(ctx, "1723812345", &thumbBuf), storage.ErrFeatureDisabled)
 }
 
 func TestSDCardStreamSnapshot(t *testing.T) {
@@ -290,7 +297,7 @@ func TestSDCardStreamSnapshot(t *testing.T) {
 	doneChan := make(chan error, 1)
 
 	go func() {
-		err := sdm.StreamThumbnail(ctx, "1723812345", &buf)
+		err := sdm.StreamSnapshot(ctx, 1723812345, &buf)
 		doneChan <- err
 	}()
 
