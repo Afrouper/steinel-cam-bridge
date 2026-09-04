@@ -36,32 +36,29 @@ func newNabtoServerPacketConn(conn net.PacketConn) *nabtoPacketConn {
 
 func (c *nabtoPacketConn) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
 	buf := make([]byte, len(p)+nabtoHeaderSize+64)
-	nRaw, rAddr, err := c.conn.ReadFrom(buf)
-	if err != nil {
-		return 0, rAddr, err
-	}
+	for {
+		nRaw, rAddr, err := c.conn.ReadFrom(buf)
+		if err != nil {
+			return 0, rAddr, err
+		}
 
-	if nRaw < nabtoHeaderSize {
-		// Too short to contain a Nabto header
-		return 0, rAddr, nil
-	}
+		if nRaw < nabtoHeaderSize || buf[0] != nabtoPrefixConnection {
+			// Skip undersized or non-Nabto connection packets and continue reading
+			continue
+		}
 
-	if buf[0] != nabtoPrefixConnection {
-		// Not a client connection packet, skip
-		return 0, rAddr, nil
-	}
+		if c.connID == [14]byte{} {
+			copy(c.connID[:], buf[1:15])
+		}
 
-	if c.connID == [14]byte{} {
-		copy(c.connID[:], buf[1:15])
+		// Strip 16-byte header and return payload
+		payloadLen := nRaw - nabtoHeaderSize
+		if payloadLen > len(p) {
+			payloadLen = len(p)
+		}
+		copy(p, buf[nabtoHeaderSize:nabtoHeaderSize+payloadLen])
+		return payloadLen, rAddr, nil
 	}
-
-	// Strip 16-byte header and return payload
-	payloadLen := nRaw - nabtoHeaderSize
-	if payloadLen > len(p) {
-		payloadLen = len(p)
-	}
-	copy(p, buf[nabtoHeaderSize:nabtoHeaderSize+payloadLen])
-	return payloadLen, rAddr, nil
 }
 
 func (c *nabtoPacketConn) WriteTo(p []byte, addr net.Addr) (n int, err error) {

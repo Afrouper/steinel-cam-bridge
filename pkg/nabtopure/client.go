@@ -37,6 +37,8 @@ type Client struct {
 	currentStream *Stream
 	readerClose   chan struct{}
 	mu            sync.Mutex
+	writeMu       sync.Mutex
+	closeOnce     sync.Once
 }
 
 // Ensure Client satisfies nabto.Driver interface.
@@ -127,6 +129,8 @@ func ComputeFingerprint(key *ecdsa.PrivateKey) (string, error) {
 func (c *Client) Connect() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	c.closeOnce = sync.Once{}
 
 	key, isNewKey, err := c.LoadOrGenerateKey()
 	if err != nil {
@@ -236,6 +240,23 @@ func extractPairingIDs(payload []byte) (productId, deviceId string) {
 	return
 }
 
+func (c *Client) writeDTLS(data []byte, timeout time.Duration) error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+
+	c.mu.Lock()
+	conn := c.dtlsConn
+	c.mu.Unlock()
+
+	if conn == nil {
+		return fmt.Errorf("connection closed")
+	}
+
+	_ = conn.SetWriteDeadline(time.Now().Add(timeout))
+	_, err := conn.Write(data)
+	return err
+}
+
 func (c *Client) keepAliveLoop() {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
@@ -245,17 +266,12 @@ func (c *Client) keepAliveLoop() {
 		case <-c.readerClose:
 			return
 		case <-ticker.C:
-			c.mu.Lock()
-			conn := c.dtlsConn
-			c.mu.Unlock()
-			if conn == nil {
-				return
-			}
 			kaReq := make([]byte, 18)
 			kaReq[0] = 0x04
 			kaReq[1] = 0x01 // CT_KEEP_ALIVE_REQUEST
-			_ = conn.SetWriteDeadline(time.Now().Add(1 * time.Second))
-			_, _ = conn.Write(kaReq)
+			if err := c.writeDTLS(kaReq, 1*time.Second); err != nil {
+				return
+			}
 		}
 	}
 }
@@ -277,6 +293,10 @@ func (c *Client) packetReaderLoop() {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 				continue
 			}
+			if c.cfg.Debug {
+				log.Printf("[NabtoPure] ⚠️ DTLS connection ended: %v", err)
+			}
+			c.Close()
 			return
 		}
 		if n == 0 {
@@ -309,8 +329,7 @@ func (c *Client) packetReaderLoop() {
 				resp := make([]byte, len(pkt))
 				copy(resp, pkt)
 				resp[1] = 0x02 // CT_KEEP_ALIVE_RESPONSE
-				_ = conn.SetWriteDeadline(time.Now().Add(1 * time.Second))
-				_, _ = conn.Write(resp)
+				_ = c.writeDTLS(resp, 1*time.Second)
 			}
 		}
 	}
@@ -335,25 +354,47 @@ func (c *Client) sendMDNSWAKEUP(target string) {
 	}
 }
 
-// Close closes the underlying DTLS and network connections.
+// Close closes the underlying DTLS and network connections cleanly.
 func (c *Client) Close() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.readerClose != nil {
-		close(c.readerClose)
-		c.readerClose = nil
-	}
-	if c.dtlsConn != nil {
-		_ = c.dtlsConn.Close()
+	c.closeOnce.Do(func() {
+		// 1. Atomically take connection references and clear them
+		c.mu.Lock()
+		if c.readerClose != nil {
+			close(c.readerClose)
+			c.readerClose = nil
+		}
+		stream := c.currentStream
+		c.currentStream = nil
+		coap := c.coapClient
+		c.coapClient = nil
+		conn := c.dtlsConn
 		c.dtlsConn = nil
-	}
-	if c.udpConn != nil {
-		_ = c.udpConn.Close()
+		udp := c.udpConn
 		c.udpConn = nil
-	}
-	c.coapClient = nil
-	c.currentStream = nil
+		c.mu.Unlock()
+
+		// 2. Abort active stream
+		if stream != nil {
+			stream.Close()
+		}
+
+		// 3. Abort pending CoAP calls
+		if coap != nil {
+			coap.Close()
+		}
+
+		// 4. Cleanly terminate DTLS connection if open (send close_notify with 500ms deadline)
+		if conn != nil {
+			_ = conn.SetDeadline(time.Now().Add(500 * time.Millisecond))
+			_ = conn.Close()
+		}
+
+		// 5. Unblock any pending socket reads immediately by setting past deadline, then close UDP
+		if udp != nil {
+			_ = udp.SetDeadline(time.Now())
+			_ = udp.Close()
+		}
+	})
 }
 
 // CoAPClient returns the underlying CoAPClient.
@@ -376,17 +417,17 @@ func (c *Client) GetSignalingPort() (uint32, error) {
 	req := NewRequest(CodeGET, "/p2p/webrtc-info", 0, nil)
 	resp, err := coap.Execute(req, 5*time.Second)
 	if err != nil {
+		log.Printf("[NabtoPure] ❌ CoAP /p2p/webrtc-info request failed: %v", err)
 		return 0, fmt.Errorf("CoAP /p2p/webrtc-info failed: %w", err)
 	}
 
 	if resp.StatusCode() != 205 && resp.StatusCode() != 200 {
+		log.Printf("[NabtoPure] ⚠️ CoAP /p2p/webrtc-info returned unexpected status: %s", resp.StatusString())
 		return 0, fmt.Errorf("unexpected CoAP status %s", resp.StatusString())
 	}
 
 	respStr := string(resp.Payload)
-	if c.cfg.Debug {
-		log.Printf("[NabtoPure] 🛰️ CoAP /p2p/webrtc-info response: %s", respStr)
-	}
+	log.Printf("[NabtoPure] 🛰️ CoAP /p2p/webrtc-info response: %s", respStr)
 
 	var port uint32
 	if _, err := fmt.Sscanf(respStr, "{\"SignalingStreamPort\":%d}", &port); err == nil && port > 0 {
@@ -401,6 +442,7 @@ func (c *Client) GetSignalingPort() (uint32, error) {
 		}
 	}
 
+	log.Printf("[NabtoPure] ❌ Could not parse SignalingStreamPort from camera response: %s", respStr)
 	return 0, fmt.Errorf("could not parse SignalingStreamPort from: %s", respStr)
 }
 
@@ -419,12 +461,11 @@ func (c *Client) RequestTracks() (uint16, error) {
 
 	resp, err := coap.Execute(req, 5*time.Second)
 	if err != nil {
+		log.Printf("[NabtoPure] ❌ CoAP /webrtc/tracks failed: %v", err)
 		return 0, fmt.Errorf("CoAP /webrtc/tracks failed: %w", err)
 	}
 
-	if c.cfg.Debug {
-		log.Printf("[NabtoPure] 🎥 CoAP /webrtc/tracks response status: %s", resp.StatusString())
-	}
+	log.Printf("[NabtoPure] 🎥 CoAP /webrtc/tracks response status: %s", resp.StatusString())
 	return uint16(resp.StatusCode()), nil
 }
 
@@ -440,21 +481,12 @@ func (c *Client) OpenSignalingStream(port uint32) (nabto.StreamDriver, error) {
 	c.mu.Unlock()
 
 	if err := stream.Open(10 * time.Second); err != nil {
+		log.Printf("[NabtoPure] ❌ Failed to open virtual signaling stream on port %d: %v", port, err)
 		return nil, err
 	}
 	return stream, nil
 }
 
 func (c *Client) writeRawStream(data []byte) error {
-	c.mu.Lock()
-	conn := c.dtlsConn
-	c.mu.Unlock()
-
-	if conn == nil {
-		return fmt.Errorf("connection closed")
-	}
-
-	_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-	_, err := conn.Write(data)
-	return err
+	return c.writeDTLS(data, 5*time.Second)
 }

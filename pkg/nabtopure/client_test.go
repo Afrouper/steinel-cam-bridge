@@ -200,3 +200,25 @@ func TestKeyPersistence(t *testing.T) {
 		t.Fatalf("fingerprints do not match: %s vs %s", fp1, fp2)
 	}
 }
+
+func TestClientCloseNonBlocking(t *testing.T) {
+	client, err := NewClient(&Config{CameraIP: "127.0.0.1", CameraPort: 5592})
+	if err != nil {
+		t.Fatalf("NewClient failed: %v", err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		// Calling Close() on uninitialized or multiple times must be non-blocking and safe
+		client.Close()
+		client.Close()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// success
+	case <-time.After(1 * time.Second):
+		t.Fatalf("client.Close() blocked for more than 1 second")
+	}
+}

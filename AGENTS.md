@@ -12,8 +12,8 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
 
 1. **Steinel L 625 CAM SC (Nabto Edge Driver)**:
    - mDNS Wake-Up (UDP 5353 / 5592)
-   - Nativer Pure-Go Nabto Edge P2P Direct Tunnel (`pkg/nabtopure`, Standard)
-   - CGo-Fallback Wrapper um `libnabto_client` (`pkg/nabto`, optional via `USE_CGO_NABTO=true`)
+   - CGo Wrapper um offizielles Nabto Edge Client SDK (`pkg/nabto`, Standard & empfohlen)
+   - Nativer Pure-Go Nabto Edge P2P Direct Tunnel (`pkg/nabtopure`, experimentell)
    - CoAP Signaling (`/p2p/webrtc-info` & `/webrtc/tracks`)
    - WebRTC DTLS/SRTP Media (Pion WebRTC v4) + DataChannel `test` (MCU-Frames & SD-Karten Chunks)
 2. **Steinel L 620 CAM / XLED CAM 1 (Xiongmai Sofia Driver)**:
@@ -67,7 +67,7 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
     3. Home Assistant Add-on Konfigurationsdatei (`/data/options.json` & Home Assistant Supervisor MQTT Auto-Discovery API via `X-Supervisor-Token`)
     4. Standardwerte (Layer 1)
   - **Modell-Erkennung**: Prüft per `-type` bzw. führt bei `auto` einen schnellen TCP-Probe auf Port `34567` durch, um automatisch zwischen `L 620 CAM` (Xiongmai Sofia) und `L 625 CAM SC` (Nabto Edge) zu unterscheiden.
-  - **Treiber-Auswahl (L 625)**: Nutzt standardmäßig den nativen Pure-Go Treiber (`pkg/nabtopure`). Über `USE_CGO_NABTO=true` kann bei Bedarf auf den CGo-Wrapper (`pkg/nabto`) umgeschaltet werden.
+  - **Treiber-Auswahl (L 625)**: Nutzt standardmäßig den CGo-Wrapper (`pkg/nabto`) mit dem offiziellen Nabto Client SDK. Über die Add-on Option `nabto_driver: "pure"` (bzw. Umgebungsvariable `USE_CGO_NABTO=false` / CLI-Flag `-nabto-driver=pure`) kann auf den nativen Pure-Go Treiber (`pkg/nabtopure`, experimentell) gewechselt werden.
   - Initialisiert Server (`rtsp.Server`, `onvif.Server`, `mqtt.Client`, `storage.RecordingSyncer`).
   - **Supervisor-Loop (Nabto)**: Fängt Verbindungsabbrüche, Session-Beendigungen oder Watchdog-Resets ab und erzwingt einen sauberen **30-Sekunden-Cooldown**, damit neu startende Kameras stabil hochfahren können.
 
@@ -78,7 +78,7 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
   - `packet_conn.go`: Paket-Demultiplexer und Framer (Typ `0x03` DTLS Record Wrapping über UDP).
 
 - **`pkg/nabto/`**:
-  - `client.go`: CGo-Bindings für das Nabto Edge Client SDK (`nabto_client.h`) als konfigurierbarer Fallback (`USE_CGO_NABTO=true`).
+  - `client.go`: CGo-Bindings für das offizielle Nabto Edge Client SDK (`nabto_client.h`) als Standard-Treiber.
   - `interface.go`: Gemeinsame Treiber-Interfaces (`Driver`, `StreamDriver`).
   - `qr.go`: Parst Zugangsdaten (`did`, `pid`, `sct`, `pairPwd`) aus dem QR-Code-String der Steinel App.
 

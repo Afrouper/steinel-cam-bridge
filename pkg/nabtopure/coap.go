@@ -5,7 +5,9 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"log"
 	"net"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -111,7 +113,10 @@ func (m *CoAPMessage) Encode() ([]byte, error) {
 		buf.Write(m.Token)
 	}
 
-	// Options (Delta encoded in ascending order)
+	// Options (Delta encoded in ascending order - RFC 7252 Section 3.1)
+	sort.SliceStable(m.Options, func(i, j int) bool {
+		return m.Options[i].Number < m.Options[j].Number
+	})
 	lastOptionNumber := uint16(0)
 	for _, opt := range m.Options {
 		delta := opt.Number - lastOptionNumber
@@ -316,9 +321,25 @@ func NewRequest(method uint8, path string, contentFormat uint16, payload []byte)
 	return msg
 }
 
+// Close terminates all pending CoAP requests and marks the client as closed.
+func (c *CoAPClient) Close() {
+	c.pendingMu.Lock()
+	defer c.pendingMu.Unlock()
+	for k, ch := range c.pending {
+		close(ch)
+		delete(c.pending, k)
+	}
+	c.mu.Lock()
+	c.conn = nil
+	c.mu.Unlock()
+}
+
 // Execute sends a CoAP request and waits for the response
 func (c *CoAPClient) Execute(req *CoAPMessage, timeout time.Duration) (*CoAPMessage, error) {
-	if c.conn == nil {
+	c.mu.Lock()
+	conn := c.conn
+	c.mu.Unlock()
+	if conn == nil {
 		return nil, fmt.Errorf("coap client: connection is closed")
 	}
 
@@ -346,6 +367,10 @@ func (c *CoAPClient) Execute(req *CoAPMessage, timeout time.Duration) (*CoAPMess
 	}
 
 	c.mu.Lock()
+	if c.conn == nil {
+		c.mu.Unlock()
+		return nil, fmt.Errorf("coap client: connection closed during write")
+	}
 	_ = c.conn.SetWriteDeadline(time.Now().Add(timeout))
 	_, err = c.conn.Write(raw)
 	c.mu.Unlock()
@@ -355,7 +380,10 @@ func (c *CoAPClient) Execute(req *CoAPMessage, timeout time.Duration) (*CoAPMess
 	}
 
 	select {
-	case resp := <-respChan:
+	case resp, ok := <-respChan:
+		if !ok {
+			return nil, fmt.Errorf("coap request aborted: connection closed")
+		}
 		return resp, nil
 	case <-time.After(timeout):
 		return nil, fmt.Errorf("CoAP request timed out after %v", timeout)
@@ -366,6 +394,7 @@ func (c *CoAPClient) Execute(req *CoAPMessage, timeout time.Duration) (*CoAPMess
 func (c *CoAPClient) HandleIncomingPacket(raw []byte) {
 	resp, err := DecodeCoAPMessage(raw)
 	if err != nil {
+		log.Printf("[CoAP] ⚠️ Failed to decode incoming CoAP message (%d bytes): %v", len(raw), err)
 		return
 	}
 
@@ -377,6 +406,14 @@ func (c *CoAPClient) HandleIncomingPacket(raw []byte) {
 		select {
 		case respChan <- resp:
 		default:
+		}
+	} else {
+		if resp.Code == CodeEmpty {
+			if resp.Type == TypeRST {
+				log.Printf("[CoAP] ⚠️ Received CoAP RST (MessageID: %d)", resp.MessageID)
+			}
+		} else {
+			log.Printf("[CoAP] ℹ️ Unmatched CoAP packet received: Status=%s, Type=%d, Token=%x", resp.StatusString(), resp.Type, resp.Token)
 		}
 	}
 }

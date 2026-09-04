@@ -30,6 +30,7 @@ func TestLayer1_CodeDefaults(t *testing.T) {
 	assert.Equal(t, "", cfg.MQTTBroker)
 	assert.Equal(t, "steinel", cfg.MQTTTopic)
 	assert.Equal(t, "homeassistant", cfg.MQTTDiscovery)
+	assert.Equal(t, "cgo", cfg.NabtoDriver)
 }
 
 // TestLayer2_ConfigFileOverridesDefaults verifies that options.json overrides Layer 1 defaults
@@ -50,7 +51,8 @@ func TestLayer2_ConfigFileOverridesDefaults(t *testing.T) {
 		"mqtt_user": "user_test",
 		"mqtt_password": "pwd_test",
 		"mqtt_topic_prefix": "steinel_test",
-		"mqtt_discovery_prefix": "ha_test"
+		"mqtt_discovery_prefix": "ha_test",
+		"nabto_driver": "cgo"
 	}`
 	err := os.WriteFile(optsFile, []byte(jsonContent), 0644)
 	assert.NoError(t, err)
@@ -73,6 +75,20 @@ func TestLayer2_ConfigFileOverridesDefaults(t *testing.T) {
 	assert.Equal(t, "pwd_test", cfg.MQTTPassword)
 	assert.Equal(t, "steinel_test", cfg.MQTTTopic)
 	assert.Equal(t, "ha_test", cfg.MQTTDiscovery)
+	assert.Equal(t, "cgo", cfg.NabtoDriver)
+}
+
+// TestLayer2_UseCGONabtoFallback verifies that boolean use_cgo_nabto in options.json sets NabtoDriver to cgo
+func TestLayer2_UseCGONabtoFallback(t *testing.T) {
+	tmpDir := t.TempDir()
+	optsFile := filepath.Join(tmpDir, "options.json")
+
+	jsonContent := `{"use_cgo_nabto": true}`
+	err := os.WriteFile(optsFile, []byte(jsonContent), 0644)
+	assert.NoError(t, err)
+
+	cfg := resolveConfig(optsFile, nil)
+	assert.Equal(t, "cgo", cfg.NabtoDriver)
 }
 
 // TestSupervisorMQTTAutoDiscovery verifies that MQTT credentials are automatically fetched when available
@@ -131,6 +147,7 @@ func TestLayer3_EnvironmentOverridesConfigFile(t *testing.T) {
 	t.Setenv("CAMERA_IP", "192.168.99.99")
 	t.Setenv("RESOLUTION", "360p")
 	t.Setenv("RTSP_PORT", "8556")
+	t.Setenv("NABTO_DRIVER", "cgo")
 
 	cfg := resolveConfig(optsFile, nil)
 
@@ -138,6 +155,7 @@ func TestLayer3_EnvironmentOverridesConfigFile(t *testing.T) {
 	assert.Equal(t, "192.168.99.99", cfg.NabtoConfig.CameraIP)
 	assert.Equal(t, "360p", cfg.Resolution)
 	assert.Equal(t, 8556, cfg.RTSPPort)
+	assert.Equal(t, "cgo", cfg.NabtoDriver)
 }
 
 // TestLayer4_CLIFlagsOverrideAll verifies POSIX principle (explicit CLI flags override environment & config files)
@@ -151,7 +169,8 @@ func TestLayer4_CLIFlagsOverrideAll(t *testing.T) {
 		"camera_user": "admin",
 		"camera_password": "pass",
 		"resolution": "720p",
-		"rtsp_port": 8555
+		"rtsp_port": 8555,
+		"nabto_driver": "cgo"
 	}`
 	err := os.WriteFile(optsFile, []byte(jsonContent), 0644)
 	assert.NoError(t, err)
@@ -163,6 +182,7 @@ func TestLayer4_CLIFlagsOverrideAll(t *testing.T) {
 	t.Setenv("CAMERA_PASSWORD", "pass_env")
 	t.Setenv("RESOLUTION", "360p")
 	t.Setenv("RTSP_PORT", "8556")
+	t.Setenv("NABTO_DRIVER", "cgo")
 
 	// Set explicit CLI flag set
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
@@ -172,8 +192,9 @@ func TestLayer4_CLIFlagsOverrideAll(t *testing.T) {
 	fs.String("pass", "", "")
 	fs.String("res", "", "")
 	fs.Int("port", 0, "")
+	fs.String("nabto-driver", "", "")
 
-	err = fs.Parse([]string{"-ip", "10.0.0.1", "-type", "l620", "-user", "admin_cli", "-pass", "secret_cli", "-res", "1080p", "-port", "9000"})
+	err = fs.Parse([]string{"-ip", "10.0.0.1", "-type", "l620", "-user", "admin_cli", "-pass", "secret_cli", "-res", "1080p", "-port", "9000", "-nabto-driver", "pure"})
 	assert.NoError(t, err)
 
 	cfg := resolveConfig(optsFile, fs)
@@ -185,6 +206,7 @@ func TestLayer4_CLIFlagsOverrideAll(t *testing.T) {
 	assert.Equal(t, "secret_cli", cfg.CameraPassword)
 	assert.Equal(t, "1080p", cfg.Resolution)
 	assert.Equal(t, 9000, cfg.RTSPPort)
+	assert.Equal(t, "pure", cfg.NabtoDriver)
 }
 
 func TestProbePort(t *testing.T) {
