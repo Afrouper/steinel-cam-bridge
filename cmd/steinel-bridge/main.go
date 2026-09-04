@@ -493,7 +493,7 @@ func resolveConfig(optionsPath string, fs *flag.FlagSet) *AppConfig {
 		MQTTTopic:          "steinel",
 		MQTTDiscovery:      "homeassistant",
 		SDCardSyncInterval: 30,
-		NabtoDriver:        "pure",
+		NabtoDriver:        "cgo",
 	}
 
 	// 2. Layer 2: Configuration File
@@ -599,7 +599,9 @@ func resolveConfig(optionsPath string, fs *flag.FlagSet) *AppConfig {
 	if nd := os.Getenv("NABTO_DRIVER"); nd != "" {
 		cfg.NabtoDriver = nd
 	}
-	if os.Getenv("USE_CGO_NABTO") == "true" || os.Getenv("USE_CGO_NABTO") == "1" {
+	if os.Getenv("USE_CGO_NABTO") == "false" || os.Getenv("USE_CGO_NABTO") == "0" {
+		cfg.NabtoDriver = "pure"
+	} else if os.Getenv("USE_CGO_NABTO") == "true" || os.Getenv("USE_CGO_NABTO") == "1" {
 		cfg.NabtoDriver = "cgo"
 	}
 	if envDebug := os.Getenv("DEBUG"); envDebug == "true" || envDebug == "1" {
@@ -702,8 +704,8 @@ func main() {
 	flag.String("audio-codec", "", "Audio codec for RTSP/ONVIF stream: 'aac' (transcoded, default) or 'pcmu' (raw passthrough)")
 	flag.Int("sync-interval", 30, "Interval in seconds to poll SD card for new recordings (default: 30s)")
 	flag.Int("sdcard-sync-interval", 30, "Interval in seconds to poll SD card for new recordings (alias)")
-	flag.String("nabto-driver", "pure", "Nabto Edge driver engine ('pure' for native Go stack, 'cgo' for C-SDK)")
-	flag.Bool("use-cgo", false, "Use C-SDK libnabto_client wrapper (alias for --nabto-driver=cgo)")
+	flag.String("nabto-driver", "cgo", "Nabto Edge driver engine ('cgo' for C-SDK, default; 'pure' for native Go)")
+	flag.Bool("use-cgo", true, "Use C-SDK libnabto_client wrapper (default: true)")
 	flag.Bool("debug", false, "Enable verbose debug logging")
 	betaFlag := flag.Bool("beta", false, "Identify as beta instance for IAM registration")
 	flag.Parse()
@@ -920,13 +922,13 @@ func main() {
 		for ctx.Err() == nil {
 			var client nabto.Driver
 			var err error
-			useCGO := appCfg.NabtoDriver == "cgo" || appCfg.NabtoDriver == "lib" || os.Getenv("USE_CGO_NABTO") == "true" || os.Getenv("USE_CGO_NABTO") == "1"
-			if useCGO {
-				log.Printf("[Driver] 🔧 Using C-SDK wrapper driver (libnabto_client.so)")
-				client, err = nabto.NewClient(cfg)
-			} else {
-				log.Printf("[Driver] 🚀 Using native Pure-Go Nabto driver")
+			usePure := appCfg.NabtoDriver == "pure" || os.Getenv("USE_CGO_NABTO") == "false" || os.Getenv("USE_CGO_NABTO") == "0"
+			if usePure {
+				log.Printf("[Driver] 🚀 Using native Pure-Go Nabto driver (experimental)")
 				client, err = nabtopure.NewClient(cfg)
+			} else {
+				log.Printf("[Driver] 🔧 Using C-SDK wrapper driver (libnabto_client.so, default)")
+				client, err = nabto.NewClient(cfg)
 			}
 			if err != nil {
 				log.Printf("[!] Nabto client init error: %v", err)

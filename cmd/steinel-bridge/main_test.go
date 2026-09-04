@@ -30,7 +30,7 @@ func TestLayer1_CodeDefaults(t *testing.T) {
 	assert.Equal(t, "", cfg.MQTTBroker)
 	assert.Equal(t, "steinel", cfg.MQTTTopic)
 	assert.Equal(t, "homeassistant", cfg.MQTTDiscovery)
-	assert.Equal(t, "pure", cfg.NabtoDriver)
+	assert.Equal(t, "cgo", cfg.NabtoDriver)
 }
 
 // TestLayer2_ConfigFileOverridesDefaults verifies that options.json overrides Layer 1 defaults

@@ -25,7 +25,7 @@ options:
   rtsp_port: 8554
   onvif_port: 8000
   sdcard_sync_interval: 30
-  nabto_driver: "pure"
+  nabto_driver: "cgo"
   debug: false
 schema:
   camera_ip: "str"
@@ -39,7 +39,7 @@ schema:
   rtsp_port: "port"
   onvif_port: "port"
   sdcard_sync_interval: "int(5,300)?"
-  nabto_driver: "list(pure|cgo)?"
+  nabto_driver: "list(cgo|pure)?"
   debug: "bool?"
   mqtt_broker: "str?"
   mqtt_user: "str?"

@@ -34,7 +34,7 @@ configuration:
     description: "Interval in seconds to check the camera's MicroSD card for new recordings (default: 30s)."
   nabto_driver:
     name: "Nabto Edge Driver (L 625)"
-    description: "Driver engine for L 625 CAM SC: 'pure' (native Go stack, no C-SDK) or 'cgo' (fallback using libnabto_client.so)."
+    description: "Driver engine for L 625 CAM SC: 'cgo' (official C-SDK, recommended & default) or 'pure' (native Go stack, experimental)."
   debug:
     name: "Debug Logging"
     description: "Enable verbose debug logging for troubleshooting."

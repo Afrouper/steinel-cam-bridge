@@ -34,7 +34,7 @@ configuration:
     description: "Intervall in Sekunden zur Hintergrundabfrage neuer Aufnahmen von der MicroSD-Karte (Standard: 30s)."
   nabto_driver:
     name: "Nabto Edge Treiber (L 625)"
-    description: "Treiber für die L 625 CAM SC: 'pure' (nativer Go-Stack, C-SDK-frei) oder 'cgo' (Fallback mit libnabto_client.so)."
+    description: "Treiber für die L 625 CAM SC: 'cgo' (offizielles C-SDK, empfohlen & Standard) oder 'pure' (nativer Go-Stack, experimentell)."
   debug:
     name: "Debug-Logging"
     description: "Aktiviert ausführliche Protokollausgaben zur Fehlersuche."
