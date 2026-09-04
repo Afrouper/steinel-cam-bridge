@@ -919,6 +919,7 @@ func main() {
 		const reconnectCooldown = 30 * time.Second
 
 		// Supervisor loop for Nabto + WebRTC
+	supervisorLoop:
 		for ctx.Err() == nil {
 			var client nabto.Driver
 			var err error
@@ -934,21 +935,44 @@ func main() {
 				log.Printf("[!] Nabto client init error: %v", err)
 				select {
 				case <-ctx.Done():
-					break
+					break supervisorLoop
 				case <-time.After(5 * time.Second):
 				}
 				continue
 			}
 
-			if err := client.Connect(); err != nil {
+			// Connect with timeout protection
+			connectDone := make(chan error, 1)
+			go func() {
+				connectDone <- client.Connect()
+			}()
+
+			var connectErr error
+			select {
+			case <-ctx.Done():
+				client.Close()
+				break supervisorLoop
+			case <-time.After(30 * time.Second):
+				connectErr = fmt.Errorf("connection timeout (30s) reached")
+			case err := <-connectDone:
+				connectErr = err
+			}
+
+			if connectErr != nil {
+				log.Printf("[Supervisor] ❌ Connect failed (%v)", connectErr)
+				log.Printf("[Supervisor] 🧹 Cleaning up camera connection state...")
 				client.Close()
 				if ctx.Err() != nil {
-					break
+					break supervisorLoop
 				}
-				log.Printf("[Supervisor] ⏳ Connect failed (%v). Waiting 30s before retry to allow camera reboot...", err)
+				if usePure {
+					log.Printf("[Supervisor] 🚨 Native Pure-Go Nabto driver failed to connect to camera.")
+					log.Printf("[Supervisor] 💡 Recommendation: Set 'nabto_driver: cgo' in Home Assistant Add-on config for official Nabto C-SDK support.")
+				}
+				log.Printf("[Supervisor] ⏳ Waiting 30s before retry to allow camera cooldown...")
 				select {
 				case <-ctx.Done():
-					break
+					break supervisorLoop
 				case <-time.After(reconnectCooldown):
 				}
 				continue
@@ -960,32 +984,88 @@ func main() {
 			}
 
 			log.Printf("[Supervisor] 🛰️ Querying WebRTC signaling port from camera...")
-			port, err := client.GetSignalingPort()
-			if err != nil {
+			type portResult struct {
+				port uint32
+				err  error
+			}
+			portCh := make(chan portResult, 1)
+			go func() {
+				p, e := client.GetSignalingPort()
+				portCh <- portResult{port: p, err: e}
+			}()
+
+			var port uint32
+			var portErr error
+			select {
+			case <-ctx.Done():
+				client.Close()
+				break supervisorLoop
+			case <-time.After(15 * time.Second):
+				portErr = fmt.Errorf("timeout (15s) while querying signaling port")
+			case res := <-portCh:
+				port = res.port
+				portErr = res.err
+			}
+
+			if portErr != nil {
+				log.Printf("[Supervisor] ❌ GetSignalingPort failed (%v)", portErr)
+				log.Printf("[Supervisor] 🧹 Cleaning up camera connection state...")
 				client.Close()
 				if ctx.Err() != nil {
-					break
+					break supervisorLoop
 				}
-				log.Printf("[Supervisor] ⏳ GetSignalingPort failed (%v). Waiting 30s before retry...", err)
+				if usePure {
+					log.Printf("[Supervisor] 🚨 Native Pure-Go Nabto driver failed to query signaling port from camera.")
+					log.Printf("[Supervisor] 💡 Recommendation: Set 'nabto_driver: cgo' in Home Assistant Add-on config for official Nabto C-SDK support.")
+				}
+				log.Printf("[Supervisor] ⏳ Waiting 30s before retry...")
 				select {
 				case <-ctx.Done():
-					break
+					break supervisorLoop
 				case <-time.After(reconnectCooldown):
 				}
 				continue
 			}
 
 			log.Printf("[Supervisor] 🔄 Opening Nabto signaling stream on port %d...", port)
-			stream, err := client.OpenSignalingStream(port)
-			if err != nil {
+			type streamResult struct {
+				stream nabto.StreamDriver
+				err    error
+			}
+			streamCh := make(chan streamResult, 1)
+			go func() {
+				s, e := client.OpenSignalingStream(port)
+				streamCh <- streamResult{stream: s, err: e}
+			}()
+
+			var stream nabto.StreamDriver
+			var streamErr error
+			select {
+			case <-ctx.Done():
+				client.Close()
+				break supervisorLoop
+			case <-time.After(15 * time.Second):
+				streamErr = fmt.Errorf("timeout (15s) while opening signaling stream on port %d", port)
+			case res := <-streamCh:
+				stream = res.stream
+				streamErr = res.err
+			}
+
+			if streamErr != nil {
+				log.Printf("[Supervisor] ❌ OpenSignalingStream failed (%v)", streamErr)
+				log.Printf("[Supervisor] 🧹 Cleaning up camera connection state...")
 				client.Close()
 				if ctx.Err() != nil {
-					break
+					break supervisorLoop
 				}
-				log.Printf("[Supervisor] ⏳ OpenSignalingStream failed (%v). Waiting 30s before retry...", err)
+				if usePure {
+					log.Printf("[Supervisor] 🚨 Native Pure-Go Nabto driver failed to open signaling stream with camera.")
+					log.Printf("[Supervisor] 💡 Recommendation: Set 'nabto_driver: cgo' in Home Assistant Add-on config for official Nabto C-SDK support.")
+				}
+				log.Printf("[Supervisor] ⏳ Waiting 30s before retry...")
 				select {
 				case <-ctx.Done():
-					break
+					break supervisorLoop
 				case <-time.After(reconnectCooldown):
 				}
 				continue
@@ -1002,13 +1082,14 @@ func main() {
 
 			bridgeMgr.SetBridge(nil)
 			stream.Close()
+			log.Printf("[Supervisor] 🧹 Closing camera session and releasing connection...")
 			client.Close()
 
 			if ctx.Err() == nil {
 				log.Printf("[Supervisor] ⏳ Stream session disconnected / Watchdog reset. Waiting 30s cooldown before reconnecting to allow camera reboot...")
 				select {
 				case <-ctx.Done():
-					break
+					break supervisorLoop
 				case <-time.After(reconnectCooldown):
 				}
 			}
