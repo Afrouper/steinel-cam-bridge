@@ -2,6 +2,15 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge** Add-on werden hier dokumentiert.
 
+## 1.3.3
+
+### 🐛 Fehlerbehebungen & SD-Karten-Optimierung
+- **SD-Karten Thumbnails & Hänge-Schutz (Issue #23)**:
+  - Bei Kameras, die Aufnahmen als reine MP4-Dateien ohne separate JPEG-Dateien auf der SD-Karte ablegen (z. B. Steinel L 625 CAM SC), blockiert der Abruf von `/api/sdcard/events/{id}/thumbnail.jpg` nicht mehr in einem 10-Sekunden-Timeout. Die Bridge antwortet sofort mit `HTTP 501 Not Implemented`, wodurch die SD-Karten-Schnittstelle nicht blockiert wird.
+  - Das MQTT-Event `steinel/.../recording` enthält das Feld `thumbnail_url` nur noch, wenn auch tatsächlich ein Snapshot vorhanden ist.
+- **Aufnahmedauer (Duration)**:
+  - Bei Ereignissen, bei denen die Kamera keine explizite `record_time` liefert (z. B. `0` s), wird die Standarddauer automatisch auf `30` Sekunden (die tatsächliche Clip-Länge der Steinel CAM) gesetzt.
+
 ## 1.3.2
 
 ### 🚀 Neuerungen & Verbesserungen

@@ -367,8 +367,10 @@ func (c *Client) PublishRecordingEvent(item storage.RecordingItem) {
 		"timestamp":       item.StartTime.Format(time.RFC3339),
 		"duration_sec":    item.DurationSeconds,
 		"file_size_bytes": item.FileSizeBytes,
-		"thumbnail_url":   fmt.Sprintf("%s%s", c.cfg.BridgeHTTPURL, item.ThumbnailURL),
 		"video_url":       fmt.Sprintf("%s%s", c.cfg.BridgeHTTPURL, item.VideoURL),
+	}
+	if item.ThumbnailURL != "" {
+		payload["thumbnail_url"] = fmt.Sprintf("%s%s", c.cfg.BridgeHTTPURL, item.ThumbnailURL)
 	}
 
 	data, err := json.Marshal(payload)

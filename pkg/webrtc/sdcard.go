@@ -160,7 +160,11 @@ func (m *SDCardManager) ListRecordings(ctx context.Context, start, end time.Time
 	items := make([]storage.RecordingItem, 0, len(rawResp.List))
 	for _, raw := range rawResp.List {
 		st := time.Unix(raw.TimeTag, 0).UTC()
-		et := st.Add(time.Duration(raw.RecordTime) * time.Second)
+		dur := raw.RecordTime
+		if dur <= 0 {
+			dur = 30 // Steinel CAM default recording clip duration is 30 seconds
+		}
+		et := st.Add(time.Duration(dur) * time.Second)
 		id := strconv.FormatInt(raw.TimeTag, 10)
 		name := raw.Name
 		if name == "" {
@@ -174,11 +178,11 @@ func (m *SDCardManager) ListRecordings(ctx context.Context, start, end time.Time
 			ID:              id,
 			StartTime:       st,
 			EndTime:         et,
-			DurationSeconds: raw.RecordTime,
+			DurationSeconds: dur,
 			EventType:       eType,
 			FileSizeBytes:   raw.FileSize,
 			FileName:        name,
-			ThumbnailURL:    fmt.Sprintf("/api/sdcard/events/%s/thumbnail.jpg", id),
+			ThumbnailURL:    "",
 			VideoURL:        fmt.Sprintf("/api/sdcard/events/%s/video.mp4", id),
 		})
 	}
@@ -205,7 +209,7 @@ func (m *SDCardManager) GetRecording(_ context.Context, id string) (*storage.Rec
 		DurationSeconds: 30,
 		EventType:       "motion",
 		FileName:        fmt.Sprintf("event_%s.mp4", id),
-		ThumbnailURL:    fmt.Sprintf("/api/sdcard/events/%s/thumbnail.jpg", id),
+		ThumbnailURL:    "",
 		VideoURL:        fmt.Sprintf("/api/sdcard/events/%s/video.mp4", id),
 	}, nil
 }
@@ -216,22 +220,9 @@ func (m *SDCardManager) StreamSnapshot(ctx context.Context, timestamp int64, w i
 }
 
 // StreamThumbnail implements storage.RecordingProvider
-func (m *SDCardManager) StreamThumbnail(ctx context.Context, id string, w io.Writer) error {
-	ts, err := strconv.ParseInt(id, 10, 64)
-	if err != nil {
-		return fmt.Errorf("invalid recording ID: %w", err)
-	}
-	err = m.StreamSnapshot(ctx, ts, w)
-	if errors.Is(err, ErrSDCardBusy) {
-		return storage.ErrStorageBusy
-	}
-	if errors.Is(err, ErrSDCardTimeout) {
-		return storage.ErrStorageTimeout
-	}
-	if errors.Is(err, ErrTransferAborted) {
-		return storage.ErrTransferAborted
-	}
-	return err
+func (m *SDCardManager) StreamThumbnail(_ context.Context, _ string, _ io.Writer) error {
+	// L 625 CAM SC stores MP4 recordings on SD card without standalone JPEG thumbnails
+	return storage.ErrFeatureDisabled
 }
 
 // StreamVideo implements storage.RecordingProvider
@@ -423,6 +414,26 @@ func (m *SDCardManager) HandleJSONMessage(msg map[string]interface{}) bool {
 
 		case "state":
 			// Progress update from camera
+
+		default:
+			log.Printf("[SDCard] ℹ️ Message for %s with action '%s': %v", resp, action, msg)
+			if action == "fail" || action == "error" {
+				select {
+				case t.errChan <- fmt.Errorf("camera reported transfer error: %s", action):
+				default:
+				}
+			}
+		}
+
+		if info != nil {
+			if code, ok := info["code"].(float64); ok && code != 200 && code != 0 {
+				errMsg, _ := info["msg"].(string)
+				log.Printf("[SDCard] ⚠️ Camera reported error code %v: %s", code, errMsg)
+				select {
+				case t.errChan <- fmt.Errorf("camera error %v: %s", code, errMsg):
+				default:
+				}
+			}
 		}
 		return true
 	}
