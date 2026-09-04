@@ -2,7 +2,7 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
-## 1.3.3-beta.1
+## 1.3.3
 
 ### 🐛 Fehlerbehebungen & SD-Karten-Optimierung
 - **SD-Karten Thumbnails & Hänge-Schutz (Issue #23)**:
