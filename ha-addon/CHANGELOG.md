@@ -2,6 +2,21 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge** Add-on werden hier dokumentiert.
 
+## 1.3.4
+
+### 🛡️ Verbindungsstabilität & Lifecycle-Härtung
+- **Entkoppelte Mutex & Sofort-Abbruch (CGo Treiber)**:
+  - Bei Timeouts oder Verbindungsabbrüchen blockiert `client.Close()` nicht mehr auf laufenden C-SDK Netzwerk-Futures (`future_wait`).
+  - `C.nabto_client_stop(ctx)` bricht alle wartenden C-SDK Aufrufe sofort ab.
+  - Goroutinen werden per `sync.WaitGroup` kontrolliert beendet, wodurch überlappende C-SDK-Instanzen und doppelte Freigaben (`nabto_client_connection_free`) ausgeschlossen sind.
+- **Supervisor-Timeout synchronisiert**:
+  - Der Watchdog-Timeout im Supervisor wurde für CGo auf 150 Sekunden angepasst, um dem 120-Sekunden-Timeout des C-SDK ausreichend Puffer zu geben.
+  - Striktes Goroutine-Draining stellt sicher, dass zu jedem Zeitpunkt maximal eine Verbindungsinstanz aktiv ist und der Kamera-Port 5592 nicht überflutet wird.
+- **Kamera-SoC Entlastung (MicroSD Polling)**:
+  - Das Standard-Intervall für die Hintergrundabfrage neuer SD-Karten-Aufnahmen (`sdcard_sync_interval`) wurde von 30 auf 60 Sekunden erhöht, um den Embedded-Prozessor der Kamera während gleichzeitiger Bewegungserkennungen und MP4-Encodings nicht zu überlasten.
+- **Dokumentation**:
+  - Sämtliche CLI-Flags (`-type`, `-user`, `-pass`, `-path`, `-nabto-driver`, `-use-cgo`, `-beta`) und Umgebungsvariablen sind nun vollständig dokumentiert.
+
 ## 1.3.3
 
 ### 🐛 Fehlerbehebungen & SD-Karten-Optimierung

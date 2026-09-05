@@ -2,7 +2,7 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
-## 1.3.4-beta.1
+## 1.3.4
 
 ### 🛡️ Verbindungsstabilität & Lifecycle-Härtung
 - **Entkoppelte Mutex & Sofort-Abbruch (CGo Treiber)**:
