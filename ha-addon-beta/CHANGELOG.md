@@ -2,6 +2,23 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.3.6-beta.1
+
+### 🚀 Enterprise Logging & Observability (Meilenstein 1)
+- **Zentrales Logging mit `log/slog`**:
+  - Vollständige Umstellung auf modernstes, strukturiertes Logging mit der Go-Standardbibliothek `log/slog` (0 externe Abhängigkeiten).
+  - Dynamische Level-Steuerung zur Laufzeit.
+- **Hierarchische Log-Level**:
+  - Konfigurierbare Level: `trace`, `debug`, `info` (Standard), `warning`, `error`.
+  - Vollständige Ablösung des alten booleschen `debug`-Flags durch `log_level` in CLI, Environment, Home Assistant Add-on Schema und Subsystemen.
+- **Early-Exit & Performance-Optimierung**:
+  - Printf-basierte Logging-Methoden mit direktem Early-Exit verhindern unnötige String-Formatierungen und Heap-Allokationen bei inaktiven Log-Levels.
+- **Datenschutz & Protokoll-Transparenz**:
+  - `trace`-Modus protokolliert Kommunikations- und Steuerprotokolle (CoAP, JSON-Befehle, MCU-Telemetrie, Sofia DVRIP) menschenlesbar formatiert.
+  - Strenger Schutz vor Video-Payloads (kein Dump von Video-RTP oder MP4-Dateien).
+- **Sicherheits-Audit & CWE-312 Fix (CodeQL)**:
+  - Vollständige Entkopplung und Maskierung sensibler Anmeldedaten beim Sofia-Login im Xiongmai-Treiber.
+
 ## 1.3.5
 
 ### 🐛 Kritischer Fix: Supervisor Reconnect Deadlock & Fast-Fail

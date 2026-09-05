@@ -35,9 +35,9 @@ configuration:
   nabto_driver:
     name: "Nabto Edge Driver (L 625)"
     description: "Driver engine for L 625 CAM SC: 'cgo' (official C-SDK, recommended & default) or 'pure' (native Go stack, experimental)."
-  debug:
-    name: "Debug Logging"
-    description: "Enable verbose debug logging for troubleshooting."
+  log_level:
+    name: "Log Level"
+    description: "Logging verbosity for troubleshooting and diagnostics ('error', 'warning', 'info' (default), 'debug', or 'trace' for detailed control protocol exchanges)."
   mqtt_broker:
     name: "MQTT Broker URL"
     description: "Optional custom MQTT broker URL (e.g. tcp://192.168.1.50:1883). Leave empty to use auto-discovered Home Assistant Mosquitto broker."
