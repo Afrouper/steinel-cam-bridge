@@ -6,43 +6,22 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/Afrouper/steinel-cam-bridge/pkg/config"
-	"github.com/Afrouper/steinel-cam-bridge/pkg/webrtc"
-	"github.com/Afrouper/steinel-cam-bridge/pkg/xiongmai"
+	"github.com/Afrouper/steinel-cam-bridge/pkg/driver"
+	"github.com/Afrouper/steinel-cam-bridge/pkg/events"
 )
 
-type mockBridgeController struct {
-	bridge   *webrtc.Bridge
-	xmDriver *xiongmai.Driver
-}
-
-func (m *mockBridgeController) SetBridge(b *webrtc.Bridge) {
-	m.bridge = b
-}
-
-func (m *mockBridgeController) SetXMDriver(d *xiongmai.Driver) {
-	m.xmDriver = d
-}
-
-type mockDeviceUpdater struct {
-	deviceID  string
-	productID string
-}
-
-func (m *mockDeviceUpdater) UpdateDeviceInfo(deviceID, productID string) {
-	m.deviceID = deviceID
-	m.productID = productID
-}
-
-func TestSupervisorContextCancellation(t *testing.T) {
+func TestSupervisorWithDriver(t *testing.T) {
 	cfg := config.NewDefaultConfig()
 	cfg.NabtoConfig.CameraIP = "127.0.0.1"
 
-	ctrl := &mockBridgeController{}
-	updater := &mockDeviceUpdater{}
+	// Instantiate mock/concrete L620 driver
+	d, err := driver.New(cfg, true, nil, events.GlobalBus, nil)
+	require.NoError(t, err)
 
-	sup := New(cfg, false, "L 625 CAM SC", nil, ctrl, updater)
+	sup := New(d)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -51,7 +30,6 @@ func TestSupervisorContextCancellation(t *testing.T) {
 		errCh <- sup.Run(ctx)
 	}()
 
-	// Cancel after 100ms
 	time.Sleep(100 * time.Millisecond)
 	cancel()
 
@@ -59,6 +37,12 @@ func TestSupervisorContextCancellation(t *testing.T) {
 	case err := <-errCh:
 		assert.NoError(t, err)
 	case <-time.After(5 * time.Second):
-		t.Fatal("Supervisor did not exit within 5s after context cancellation")
+		t.Fatal("Supervisor did not exit within 5s")
 	}
+}
+
+func TestSupervisorNilDriver(t *testing.T) {
+	sup := New(nil)
+	err := sup.Run(context.Background())
+	assert.Equal(t, driver.ErrCameraOffline, err)
 }

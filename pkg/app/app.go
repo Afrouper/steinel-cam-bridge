@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Afrouper/steinel-cam-bridge/pkg/config"
+	"github.com/Afrouper/steinel-cam-bridge/pkg/driver"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/events"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/logger"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/mqtt"
@@ -18,7 +19,7 @@ import (
 	"github.com/Afrouper/steinel-cam-bridge/pkg/supervisor"
 )
 
-// App orchestrates all services of the Steinel CAM Bridge (RTSP, ONVIF, MQTT, Camera Supervisor).
+// App orchestrates all services of the Steinel CAM Bridge (RTSP, ONVIF, MQTT, Camera Driver & Supervisor).
 type App struct {
 	cfg             *config.Config
 	isL620          bool
@@ -29,6 +30,7 @@ type App struct {
 	onvifServer     *onvif.Server
 	mqttClient      *mqtt.Client
 	recordingSyncer *storage.RecordingSyncer
+	cameraDriver    driver.CameraDriver
 	supervisor      *supervisor.Supervisor
 }
 
@@ -148,8 +150,21 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 		logger.Info("Config", "ℹ️ MQTT is disabled (no broker configured). To enable Home Assistant entities, configure 'mqtt_broker' in addon options or install an MQTT broker addon.")
 	}
 
-	// 4. Camera Supervisor
-	sup := supervisor.New(cfg, isL620, modelName, rtspServer, bridgeMgr, mqttClient)
+	// 4. Instantiate Polymorphic Camera Driver
+	onDeviceDiscovered := func(deviceID, productID string) {
+		if mqttClient != nil {
+			mqttClient.UpdateDeviceInfo(deviceID, productID)
+		}
+	}
+
+	camDriver, err := driver.New(cfg, isL620, rtspServer, events.GlobalBus, onDeviceDiscovered)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize camera driver: %w", err)
+	}
+	bridgeMgr.SetDriver(camDriver)
+
+	// 5. Generic Camera Supervisor
+	sup := supervisor.New(camDriver)
 
 	return &App{
 		cfg:             cfg,
@@ -161,6 +176,7 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 		onvifServer:     onvifServer,
 		mqttClient:      mqttClient,
 		recordingSyncer: recordingSyncer,
+		cameraDriver:    camDriver,
 		supervisor:      sup,
 	}, nil
 }
@@ -213,6 +229,9 @@ func (a *App) Run(ctx context.Context) error {
 
 // shutdown releases all server resources in deterministic order.
 func (a *App) shutdown() {
+	if a.cameraDriver != nil {
+		_ = a.cameraDriver.Close()
+	}
 	if a.rtspServer != nil {
 		a.rtspServer.Close()
 	}
