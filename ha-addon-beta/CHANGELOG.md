@@ -2,6 +2,25 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.3.6-beta.3
+
+### 🚀 Nabto Registry-Pattern & WebRTC Modularisierung
+- **Zentrales Nabto Registry & Factory-Pattern (`pkg/nabto`)**:
+  - Dynamische Selbstregistrierung von CGo- und Pure-Go Treibern (`cgo`, `pure`) nach dem Go `database/sql`-Standard.
+  - Sichere automatische Auflösung (`nabto.ResolveDriverType`) mit Priorisierung von `USE_CGO_NABTO`.
+  - Saubere Compile-Time Isolation via `//go:build cgo` und Graceful Fallback Stub für CGo-freie Builds.
+  - Explizite Compile-Time Interface Assertions (`var _ Driver = (*Client)(nil)`) und `DriverName() string`.
+  - Vollständige Entkopplung in `L625Driver`: kein direkter Code-Import von `pkg/nabtopure` mehr nötig.
+- **Entkernung und Modularisierung der WebRTC-Bridge (`pkg/webrtc`)**:
+  - `bridge.go` von 942 Zeilen auf 244 Zeilen reduziert.
+  - Saubere Aufteilung in vier fokussierte Subsysteme:
+    - `signaling.go`: TURN-Exchange, Vanilla-ICE Gathering, SDP Offer/Answer Negotiation & Sanitization.
+    - `media.go`: H.264 Video-Ingest, Audio-Ingest & AAC-Transcoder, 6s Silence-Watchdog & PLI-Burst/Intervallschleife.
+    - `backchannel.go`: Zwei-Wege-Audio (Kamera-Lautsprecher) mit 160-Byte G.711u Frame-Chunking und SSRC/Timestamp-Management.
+    - `mcu_dispatch.go`: DataChannel Message Handler, JSON-RPC Commands, Hex-MCU-Befehle, 30s Status-Polling und 10s PIR/Motion-Reset Timer.
+- **100% Erhalt aller Fachlogik & Concurrency-Garantien**:
+  - Alle Concurrency-Garantien, Timeouts, Cooldowns und Datenfluss-Routinen bleiben unverändert erhalten.
+
 ## 1.3.6-beta.2
 
 ### 🏗️ Architektur-Modernisierung & Treiber-Abstraktion (Meilensteine 2 & 3)
