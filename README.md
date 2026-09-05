@@ -257,7 +257,7 @@ LD_LIBRARY_PATH="$(pwd)/.sdk/lib" ./steinel-bridge \
 
 > [!NOTE]
 > Das bereitgestellte Docker-Image enthält keinerlei proprietäre Fremdbibliotheken. Da die Nabto Lizenz keine Distribution zulässt, wird beim allerersten Start
-> des Containers die benötigte `libnabto_client.so` vollautomatisch direkt von Nabtos offiziellem GitHub-Repository auf das System des Nutzers geladen
+> des Containers die benötigte `libnabto_client.so` vollautomatisch direkt von [Nabtos offiziellem GitHub-Repository](https://github.com/nabto/nabto-client-sdk-releases) auf das System des Nutzers geladen
 > und persistent im Cache (`/data/lib/`) gespeichert.
 
 > [!NOTE]
