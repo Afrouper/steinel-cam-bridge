@@ -197,8 +197,8 @@ func MaskPassword(pwd string) string {
 
 // loginLocked performs the OPUserLogin command with automated password format fallback.
 func (c *Client) loginLocked() error {
-	logger.Debug("Xiongmai", "🔍 Login check: user=%q, password=%s (length: %d chars)",
-		c.user, MaskPassword(c.password), len(c.password))
+	logger.Debug("Xiongmai", "🔍 Login check: user=%q (password configured: %v, length: %d chars)",
+		c.user, c.password != "", len(c.password))
 
 	candidates := c.getPasswordCandidates()
 	var lastErr error
@@ -217,9 +217,14 @@ func (c *Client) loginLocked() error {
 			return err
 		}
 
-		respData, err := c.sendPacketLocked(MsgLoginReq, payload)
+		// Send login packet via sendRawPacketLocked to prevent logging credentials in Trace mode (CodeQL: CWE-312)
+		logger.Trace("Xiongmai", "-> Sofia MsgID: %d (0x%04X), Seq: %d, Data: [LOGIN REQUEST MASKED]", MsgLoginReq, MsgLoginReq, c.sequence+1)
+		respData, respHdr, err := c.sendRawPacketLocked(MsgLoginReq, payload)
 		if err != nil {
 			return err
+		}
+		if respHdr != nil {
+			logger.Trace("Xiongmai", "<- Sofia MsgID: %d (0x%04X), Seq: %d, Data: %s", respHdr.MsgID, respHdr.MsgID, respHdr.Sequence, string(respData))
 		}
 
 		var resp LoginResp
@@ -452,10 +457,11 @@ func (c *Client) SendKeepAlive() error {
 	return err
 }
 
-// sendPacketLocked encodes the Sofia header, sends the packet and reads the response.
-func (c *Client) sendPacketLocked(msgID uint16, payload []byte) ([]byte, error) {
+// sendRawPacketLocked encodes the Sofia header, sends the packet and reads the response
+// without logging request payloads (essential to prevent sensitive credentials like PassWord from leaking).
+func (c *Client) sendRawPacketLocked(msgID uint16, payload []byte) ([]byte, *Header, error) {
 	if c.conn == nil {
-		return nil, errors.New("connection is closed")
+		return nil, nil, errors.New("connection is closed")
 	}
 
 	c.sequence++
@@ -473,37 +479,44 @@ func (c *Client) sendPacketLocked(msgID uint16, payload []byte) ([]byte, error) 
 
 	packet := append(hdr.Encode(), dataWithTerminator...)
 
-	logger.Trace("Xiongmai", "-> Sofia MsgID: %d (0x%04X), Seq: %d, Data: %s", msgID, msgID, c.sequence, string(payload))
-
 	_ = c.conn.SetDeadline(time.Now().Add(5 * time.Second))
 	if _, err := c.conn.Write(packet); err != nil {
-		return nil, fmt.Errorf("write error: %w", err)
+		return nil, nil, fmt.Errorf("write error: %w", err)
 	}
 
 	// Read response header (20 bytes)
 	respHdrBuf := make([]byte, HeaderLength)
 	if _, err := io.ReadFull(c.conn, respHdrBuf); err != nil {
-		return nil, fmt.Errorf("failed to read response header: %w", err)
+		return nil, nil, fmt.Errorf("failed to read response header: %w", err)
 	}
 
 	respHdr, err := DecodeHeader(respHdrBuf)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	if respHdr.DataLength > 65535 {
-		return nil, fmt.Errorf("response payload too large: %d bytes", respHdr.DataLength)
+		return nil, nil, fmt.Errorf("response payload too large: %d bytes", respHdr.DataLength)
 	}
 
 	respPayload := make([]byte, respHdr.DataLength)
 	if _, err := io.ReadFull(c.conn, respPayload); err != nil {
-		return nil, fmt.Errorf("failed to read response payload: %w", err)
+		return nil, nil, fmt.Errorf("failed to read response payload: %w", err)
 	}
 
 	// Trim trailing null/newlines
 	cleanPayload := strings.TrimRight(string(respPayload), "\x00\r\n ")
-	logger.Trace("Xiongmai", "<- Sofia MsgID: %d (0x%04X), Seq: %d, Data: %s", respHdr.MsgID, respHdr.MsgID, respHdr.Sequence, cleanPayload)
-	return []byte(cleanPayload), nil
+	return []byte(cleanPayload), respHdr, nil
+}
+
+// sendPacketLocked logs non-sensitive Sofia request/response payloads and delegates to sendRawPacketLocked.
+func (c *Client) sendPacketLocked(msgID uint16, payload []byte) ([]byte, error) {
+	logger.Trace("Xiongmai", "-> Sofia MsgID: %d (0x%04X), Seq: %d, Data: %s", msgID, msgID, c.sequence+1, string(payload))
+	cleanPayload, respHdr, err := c.sendRawPacketLocked(msgID, payload)
+	if err == nil && respHdr != nil {
+		logger.Trace("Xiongmai", "<- Sofia MsgID: %d (0x%04X), Seq: %d, Data: %s", respHdr.MsgID, respHdr.MsgID, respHdr.Sequence, string(cleanPayload))
+	}
+	return cleanPayload, err
 }
 
 // SendPacket sends a Sofia message and awaits the response.
