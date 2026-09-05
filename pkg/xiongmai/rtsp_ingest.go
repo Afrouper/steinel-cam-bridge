@@ -3,7 +3,6 @@ package xiongmai
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/url"
 	"regexp"
 	"strings"
@@ -12,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Afrouper/steinel-cam-bridge/pkg/audio"
+	"github.com/Afrouper/steinel-cam-bridge/pkg/logger"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/rtsp"
 	"github.com/bluenviron/gortsplib/v4"
 	"github.com/bluenviron/gortsplib/v4/pkg/base"
@@ -77,7 +77,6 @@ type RTSPIngest struct {
 	candidateURLs   []string
 	rtspServer      *rtsp.Server
 	audioTranscoder *audio.Transcoder
-	debug           bool
 	closeChan       chan struct{}
 	closed          atomic.Bool
 	mu              sync.Mutex
@@ -85,7 +84,7 @@ type RTSPIngest struct {
 }
 
 // NewRTSPIngest creates a new RTSP Ingest client with Steinel and Xiongmai streaming paths.
-func NewRTSPIngest(cameraIP string, port int, user, password string, streamSubtype int, rtspServer *rtsp.Server, debug bool) *RTSPIngest {
+func NewRTSPIngest(cameraIP string, port int, user, password string, streamSubtype int, rtspServer *rtsp.Server) *RTSPIngest {
 	candidateURLs := getCandidateURLs(cameraIP, port, user, password, streamSubtype)
 
 	var transcoder *audio.Transcoder
@@ -99,7 +98,6 @@ func NewRTSPIngest(cameraIP string, port int, user, password string, streamSubty
 		candidateURLs:   candidateURLs,
 		rtspServer:      rtspServer,
 		audioTranscoder: transcoder,
-		debug:           debug,
 		closeChan:       make(chan struct{}),
 	}
 }
@@ -123,13 +121,13 @@ func (ing *RTSPIngest) ingestLoop(ctx context.Context) {
 		default:
 		}
 
-		if ing.debug && len(ing.candidateURLs) > 0 {
-			log.Printf("[Xiongmai Ingest] 🔌 Connecting to camera RTSP stream at %s", SanitizeRTSPURL(ing.candidateURLs[0]))
+		if len(ing.candidateURLs) > 0 {
+			logger.Debug("Xiongmai Ingest", "🔌 Connecting to camera RTSP stream at %s", SanitizeRTSPURL(ing.candidateURLs[0]))
 		}
 
 		err := ing.runSession(ctx)
 		if err != nil && !ing.closed.Load() {
-			log.Printf("[Xiongmai Ingest] ⚠️ RTSP connection lost: %v (reconnecting in %v)", err, backoff)
+			logger.Warn("Xiongmai Ingest", "⚠️ RTSP connection lost: %v (reconnecting in %v)", err, backoff)
 			select {
 			case <-ctx.Done():
 				return
@@ -199,7 +197,7 @@ func (ing *RTSPIngest) runSession(_ context.Context) error {
 			if videoMedia != nil {
 				_, err := client.Setup(desc.BaseURL, videoMedia, 0, 0)
 				if err != nil {
-					log.Printf("[Xiongmai Ingest] ⚠️ Video track setup failed: %v", err)
+					logger.Warn("Xiongmai Ingest", "⚠️ Video track setup failed: %v", err)
 				} else {
 					client.OnPacketRTP(videoMedia, videoFormat, func(pkt *rtp.Packet) {
 						if ing.rtspServer != nil {
@@ -224,7 +222,7 @@ func (ing *RTSPIngest) runSession(_ context.Context) error {
 			if audioMedia != nil {
 				_, err := client.Setup(desc.BaseURL, audioMedia, 0, 0)
 				if err != nil {
-					log.Printf("[Xiongmai Ingest] ⚠️ Audio track setup failed: %v", err)
+					logger.Warn("Xiongmai Ingest", "⚠️ Audio track setup failed: %v", err)
 				} else {
 					client.OnPacketRTP(audioMedia, audioFormat, func(pkt *rtp.Packet) {
 						if ing.audioTranscoder != nil {
@@ -241,7 +239,7 @@ func (ing *RTSPIngest) runSession(_ context.Context) error {
 				return fmt.Errorf("play error: %w", err)
 			}
 
-			log.Printf("[Xiongmai Ingest] ▶️ Streaming active from camera RTSP server via %s", SanitizeRTSPURL(rawURL))
+			logger.Info("Xiongmai Ingest", "▶️ Streaming active from camera RTSP server via %s", SanitizeRTSPURL(rawURL))
 
 			// Block until connection is closed or error occurs
 			return client.Wait()
@@ -252,9 +250,7 @@ func (ing *RTSPIngest) runSession(_ context.Context) error {
 		}
 
 		lastErr = err
-		if ing.debug {
-			log.Printf("[Xiongmai Ingest] ℹ️ Candidate URL %s failed: %v", SanitizeRTSPURL(rawURL), err)
-		}
+		logger.Debug("Xiongmai Ingest", "ℹ️ Candidate URL %s failed: %v", SanitizeRTSPURL(rawURL), err)
 	}
 
 	return lastErr

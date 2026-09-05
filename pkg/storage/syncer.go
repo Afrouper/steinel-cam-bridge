@@ -2,9 +2,10 @@ package storage
 
 import (
 	"context"
-	"log"
 	"sync"
 	"time"
+
+	"github.com/Afrouper/steinel-cam-bridge/pkg/logger"
 )
 
 // RecordingSyncer manages initial and periodic synchronization of SD card recordings
@@ -46,7 +47,7 @@ func (s *RecordingSyncer) TriggerSync() {
 
 // Start runs the periodic and event-driven sync loops until ctx is cancelled.
 func (s *RecordingSyncer) Start(ctx context.Context) {
-	log.Printf("[Recording Sync] 🚀 Background sync engine started (Interval: %v)", s.pollInterval)
+	logger.Info("Recording Sync", "🚀 Background sync engine started (Interval: %v)", s.pollInterval)
 
 	// Step 1: Initial Sync after 3 seconds startup delay
 	select {
@@ -101,11 +102,15 @@ func (s *RecordingSyncer) syncOnce(ctx context.Context, isInitial bool) {
 		startTime = lastTime.Add(-10 * time.Second)
 	}
 
+	logger.Trace("Recording Sync", "Querying recordings since: %v", startTime)
+
 	// Query latest recordings (epoch 0 on initial sync, or since lastSeenTime on periodic polls)
 	resp, err := provider.ListRecordings(reqCtx, startTime, time.Time{}, 0, 5, "")
 	if err != nil {
 		if isInitial {
-			log.Printf("[Recording Sync] ⚠️ Initial sync query returned error: %v", err)
+			logger.Warn("Recording Sync", "⚠️ Initial sync query returned error: %v", err)
+		} else {
+			logger.Debug("Recording Sync", "Periodic sync query error: %v", err)
 		}
 		return
 	}
@@ -125,10 +130,11 @@ func (s *RecordingSyncer) syncOnce(ctx context.Context, isInitial bool) {
 		s.mu.Unlock()
 
 		if isFirst {
-			log.Printf("[Recording Sync] 📌 Initial sync: Found latest recording %s (%s)", latest.ID, latest.FileName)
+			logger.Info("Recording Sync", "📌 Initial sync: Found latest recording %s (%s)", latest.ID, latest.FileName)
 		} else {
-			log.Printf("[Recording Sync] 🆕 New recording detected on SD card: %s (%s)", latest.ID, latest.FileName)
+			logger.Info("Recording Sync", "🆕 New recording detected on SD card: %s (%s)", latest.ID, latest.FileName)
 		}
+		logger.Trace("Recording Sync", "Recording details: %+v", latest)
 
 		if s.onNewRecording != nil {
 			s.onNewRecording(latest)

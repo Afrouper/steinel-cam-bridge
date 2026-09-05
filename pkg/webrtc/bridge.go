@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/Afrouper/steinel-cam-bridge/pkg/audio"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/events"
+	"github.com/Afrouper/steinel-cam-bridge/pkg/logger"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/mcu"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/nabto"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/rtsp"
@@ -42,11 +42,10 @@ type Bridge struct {
 	backchannelTs    uint32
 	backchannelCount atomic.Uint64
 	backchannelMu    sync.Mutex
-	debug            bool
 	mu               sync.Mutex
 }
 
-func NewBridge(client nabto.Driver, stream nabto.StreamDriver, rtspServer *rtsp.Server, resolution string, pliInterval time.Duration, debug bool) *Bridge {
+func NewBridge(client nabto.Driver, stream nabto.StreamDriver, rtspServer *rtsp.Server, resolution string, pliInterval time.Duration) *Bridge {
 	if resolution == "" {
 		resolution = "1080p"
 	}
@@ -59,12 +58,10 @@ func NewBridge(client nabto.Driver, stream nabto.StreamDriver, rtspServer *rtsp.
 		rtspServer:  rtspServer,
 		resolution:  resolution,
 		pliInterval: pliInterval,
-		debug:       debug,
 	}
 
 	// Initialize SD Card Manager using DataChannel JSON command dispatcher
 	b.sdcardManager = NewSDCardManager(b.sendJSONCmd)
-	b.sdcardManager.SetDebug(debug)
 
 	// Register audio backchannel handler with RTSP server
 	if rtspServer != nil {
@@ -186,16 +183,16 @@ func (b *Bridge) Run(ctx context.Context) error {
 
 	// WebRTC connection state listener
 	pc.OnConnectionStateChange(func(state pion.PeerConnectionState) {
-		log.Printf("[WebRTC] Peer connection state changed to: %s", state)
+		logger.Debug("WebRTC", "Peer connection state changed to: %s", state)
 		if state == pion.PeerConnectionStateFailed || state == pion.PeerConnectionStateDisconnected || state == pion.PeerConnectionStateClosed {
-			log.Printf("[WebRTC] ⚠️ Connection dropped (%s). Terminating session...", state)
+			logger.Warn("WebRTC", "⚠️ Connection dropped (%s). Terminating session...", state)
 			sessCancel()
 		}
 	})
 
 	pc.OnICEConnectionStateChange(func(state pion.ICEConnectionState) {
 		if state == pion.ICEConnectionStateFailed || state == pion.ICEConnectionStateDisconnected || state == pion.ICEConnectionStateClosed {
-			log.Printf("[WebRTC] ⚠️ ICE connection dropped (%s). Terminating session...", state)
+			logger.Warn("WebRTC", "⚠️ ICE connection dropped (%s). Terminating session...", state)
 			sessCancel()
 		}
 	})
@@ -232,6 +229,7 @@ func (b *Bridge) Run(ctx context.Context) error {
 			Data: string(candData),
 		}
 		candBytes, _ := MarshalSignalMessage(candMsg)
+		logger.Trace("WebRTC", "Sending ICE Candidate: mid=%s", candWrap.SDPMid)
 		_ = b.stream.WriteMsg(candBytes)
 	})
 
@@ -249,7 +247,7 @@ func (b *Bridge) Run(ctx context.Context) error {
 	})
 
 	dc.OnOpen(func() {
-		log.Printf("[DataChannel] 📡 DataChannel 'test' opened. Configuring initial video quality: %s", b.resolution)
+		logger.Info("DataChannel", "📡 DataChannel 'test' opened. Configuring initial video quality: %s", b.resolution)
 
 		// Request resolution
 		_ = b.SetResolution(b.resolution)
@@ -325,16 +323,15 @@ func (b *Bridge) Run(ctx context.Context) error {
 			if err := json.Unmarshal([]byte(msg.Data), &sdpWrap); err != nil {
 				continue
 			}
-			if b.debug {
-				log.Printf("[WebRTC Signaling] 📥 Received SDP Answer from camera")
-			}
+			logger.Debug("WebRTC Signaling", "📥 Received SDP Answer from camera")
+			logger.Trace("WebRTC Signaling", "SDP Answer payload:\n%s", sdpWrap.SDP)
 			if pc.SignalingState() == pion.SignalingStateHaveLocalOffer {
 				if err := pc.SetRemoteDescription(pion.SessionDescription{
 					Type: pion.SDPTypeAnswer,
 					SDP:  sdpWrap.SDP,
 				}); err != nil {
-					log.Printf("[WebRTC Signaling] ⚠️ SetRemoteDescription (Answer) error: %v", err)
-				} else if b.debug {
+					logger.Warn("WebRTC Signaling", "⚠️ SetRemoteDescription (Answer) error: %v", err)
+				} else {
 					logTransceivers(pc)
 				}
 			}
@@ -344,15 +341,14 @@ func (b *Bridge) Run(ctx context.Context) error {
 			if err := json.Unmarshal([]byte(msg.Data), &sdpWrap); err != nil {
 				continue
 			}
-			if b.debug {
-				log.Printf("[WebRTC Signaling] 📥 Received renegotiation SDP Offer from camera")
-			}
+			logger.Debug("WebRTC Signaling", "📥 Received renegotiation SDP Offer from camera")
+			logger.Trace("WebRTC Signaling", "SDP Offer payload:\n%s", sdpWrap.SDP)
 
 			if err := pc.SetRemoteDescription(pion.SessionDescription{
 				Type: pion.SDPTypeOffer,
 				SDP:  sdpWrap.SDP,
 			}); err != nil {
-				log.Printf("[WebRTC Signaling] ⚠️ SetRemoteDescription (Offer) error: %v", err)
+				logger.Warn("WebRTC Signaling", "⚠️ SetRemoteDescription (Offer) error: %v", err)
 				continue
 			}
 
@@ -364,27 +360,23 @@ func (b *Bridge) Run(ctx context.Context) error {
 							_ = tr.Sender().ReplaceTrack(b.audioSendTrack)
 						}
 					}
-					if b.debug {
-						log.Printf("[WebRTC] 🎙️ Attached audioSendTrack to camera audio transceiver (mid=%s)", tr.Mid())
-					}
+					logger.Debug("WebRTC", "🎙️ Attached audioSendTrack to camera audio transceiver (mid=%s)", tr.Mid())
 				}
 			}
 
 			answer, err := pc.CreateAnswer(nil)
 			if err != nil {
-				log.Printf("[WebRTC Signaling] ⚠️ CreateAnswer error: %v", err)
+				logger.Warn("WebRTC Signaling", "⚠️ CreateAnswer error: %v", err)
 				continue
 			}
 
 			ansGatherComplete := pion.GatheringCompletePromise(pc)
 			if err := pc.SetLocalDescription(answer); err != nil {
-				log.Printf("[WebRTC Signaling] ⚠️ SetLocalDescription (Answer) error: %v", err)
+				logger.Warn("WebRTC Signaling", "⚠️ SetLocalDescription (Answer) error: %v", err)
 				continue
 			}
 			<-ansGatherComplete
-			if b.debug {
-				logTransceivers(pc)
-			}
+			logTransceivers(pc)
 
 			var tracks []MetadataTrack
 			if msg.Metadata != nil && len(msg.Metadata.Tracks) > 0 {
@@ -427,6 +419,9 @@ func (b *Bridge) Run(ctx context.Context) error {
 }
 
 func logTransceivers(pc *pion.PeerConnection) {
+	if !logger.IsDebug() {
+		return
+	}
 	for _, tr := range pc.GetTransceivers() {
 		kind := tr.Kind().String()
 		mid := tr.Mid()
@@ -438,7 +433,7 @@ func logTransceivers(pc *pion.PeerConnection) {
 		if tr.Sender() != nil && tr.Sender().Track() != nil {
 			trackInfo += fmt.Sprintf("txTrack=%s (ID=%s) ", tr.Sender().Track().Kind().String(), tr.Sender().Track().ID())
 		}
-		log.Printf("[WebRTC] 📡 Transceiver mid=%s kind=%s direction=%s %s", mid, kind, dir, trackInfo)
+		logger.Debug("WebRTC", "📡 Transceiver mid=%s kind=%s direction=%s %s", mid, kind, dir, trackInfo)
 	}
 }
 
@@ -486,14 +481,16 @@ func (b *Bridge) WriteAudioBackchannel(pkt *rtp.Packet) error {
 
 		cnt := b.backchannelCount.Add(1)
 		if cnt == 1 {
-			log.Printf("[Audio Backchannel] 🎙️ Two-way audio active: forwarding to camera speaker")
-		} else if b.debug && cnt%50 == 0 {
-			log.Printf("[Audio Backchannel] 🎙️ Forwarded 20ms PCMU frame #%d to camera speaker (seq=%d, ts=%d)",
+			logger.Info("Audio Backchannel", "🎙️ Two-way audio active: forwarding to camera speaker")
+		} else if cnt%50 == 0 {
+			logger.Debug("Audio Backchannel", "🎙️ Forwarded 20ms PCMU frame #%d to camera speaker (seq=%d, ts=%d)",
 				cnt, outPkt.SequenceNumber, outPkt.Timestamp)
+		} else {
+			logger.Trace("Audio Backchannel", "Forwarded 20ms frame #%d (seq=%d, ts=%d)", cnt, outPkt.SequenceNumber, outPkt.Timestamp)
 		}
 
 		if err := track.WriteRTP(outPkt); err != nil {
-			log.Printf("[Audio Backchannel] ⚠️ WriteRTP error: %v", err)
+			logger.Warn("Audio Backchannel", "⚠️ WriteRTP error: %v", err)
 			return err
 		}
 	}
@@ -526,7 +523,8 @@ func (b *Bridge) SetResolution(resolution string) error {
 		},
 	}
 	data, _ := json.Marshal(cmd)
-	log.Printf("[DataChannel] 🎦 Requesting camera resolution: %s", resolution)
+	logger.Debug("DataChannel", "🎦 Requesting camera resolution: %s", resolution)
+	logger.Trace("DataChannel", "SetResolution payload: %s", string(data))
 	return dc.Send(data)
 }
 
@@ -547,7 +545,8 @@ func (b *Bridge) SendCommand(cmdName string, info map[string]interface{}) error 
 		"info":  info,
 	}
 	data, _ := json.Marshal(cmd)
-	log.Printf("[DataChannel] 📤 Sending command '%s': %s", cmdName, string(data))
+	logger.Debug("DataChannel", "📤 Sending command '%s'", cmdName)
+	logger.Trace("DataChannel", "Command '%s' payload: %s", cmdName, string(data))
 	return dc.Send(data)
 }
 
@@ -620,9 +619,8 @@ func (b *Bridge) sendJSONCmd(cmdName string, info map[string]interface{}) error 
 		cmd["info"] = infoCopy
 	}
 	data, _ := json.Marshal(cmd)
-	if b.debug {
-		log.Printf("[DataChannel] 📤 Sending JSON command '%s'", cmdName)
-	}
+	logger.Debug("DataChannel", "📤 Sending JSON command '%s'", cmdName)
+	logger.Trace("DataChannel", "📤 Sending JSON command '%s': %s", cmdName, string(data))
 	return dc.Send(data)
 }
 
@@ -648,8 +646,9 @@ func (b *Bridge) handleDataChannelMessage(data []byte) {
 				if b64Data, ok := infoMap["data"].(string); ok && b64Data != "" {
 					cfg, err := mcu.ParseBase64Data(b64Data)
 					if err != nil {
-						log.Printf("[MCU] ⚠️ Failed to parse MCU Base64 '%s': %v", b64Data, err)
+						logger.Warn("MCU", "⚠️ Failed to parse MCU Base64 '%s': %v", b64Data, err)
 					} else if cfg != nil {
+						logger.Trace("MCU", "Received MCU Base64 '%s': %+v", b64Data, cfg)
 						b.onMCUStatus(cfg)
 					}
 					return
@@ -675,10 +674,10 @@ func (b *Bridge) handleDataChannelMessage(data []byte) {
 				strings.Contains(lowerStr, "pir") ||
 				strings.Contains(lowerStr, "event") ||
 				strings.Contains(lowerStr, "doorbell") {
-				log.Printf("[DataChannel] 🚨 Motion / Event notification received from camera: %s", str)
+				logger.Info("DataChannel", "🚨 Motion / Event notification received from camera: %s", str)
 				events.GlobalBus.SetMotion(true)
-			} else if b.debug {
-				log.Printf("[DataChannel] 📩 Received JSON message: %s", str)
+			} else {
+				logger.Debug("DataChannel", "📩 Received JSON message: %s", str)
 			}
 
 			return
@@ -716,7 +715,7 @@ func (b *Bridge) onMCUStatus(cfg *mcu.ConfigInfo) {
 		} else if cfg.PhotosensitiveDetection {
 			motionType = "Kamera-Bilderkennung"
 		}
-		log.Printf("[MCU] 🚨 Bewegung erkannt (%s)! (Lux: %d, Mode: %d)", motionType, cfg.Lux, cfg.Mode)
+		logger.Info("MCU", "🚨 Bewegung erkannt (%s)! (Lux: %d, Mode: %d)", motionType, cfg.Lux, cfg.Mode)
 		events.GlobalBus.SetMotion(true)
 
 		b.mu.Lock()
@@ -724,7 +723,7 @@ func (b *Bridge) onMCUStatus(cfg *mcu.ConfigInfo) {
 			b.motionResetTimer.Stop()
 		}
 		b.motionResetTimer = time.AfterFunc(10*time.Second, func() {
-			log.Printf("[MCU] ⚪ Motion cleared (10s timeout)")
+			logger.Info("MCU", "⚪ Motion cleared (10s timeout)")
 			events.GlobalBus.SetMotion(false)
 		})
 		b.mu.Unlock()
@@ -749,7 +748,7 @@ func (b *Bridge) runMCUPollingLoop(ctx context.Context) {
 }
 
 func (b *Bridge) readVideoLoop(ctx context.Context, track *pion.TrackRemote, cancel context.CancelFunc) {
-	log.Printf("[Video] 🎬 1080p H.264 video stream active")
+	logger.Info("Video", "🎬 1080p H.264 video stream active")
 	for {
 		select {
 		case <-ctx.Done():
@@ -760,7 +759,7 @@ func (b *Bridge) readVideoLoop(ctx context.Context, track *pion.TrackRemote, can
 		pkt, _, err := track.ReadRTP()
 		if err != nil {
 			if ctx.Err() == nil {
-				log.Printf("[Video] ⚠️ Video track read ended: %v. Terminating session...", err)
+				logger.Warn("Video", "⚠️ Video track read ended: %v. Terminating session...", err)
 				cancel()
 			}
 			return
@@ -779,7 +778,7 @@ func (b *Bridge) readAudioLoop(ctx context.Context, track *pion.TrackRemote) {
 		codec = b.rtspServer.GetAudioCodec()
 	}
 	if codec == "aac" {
-		log.Printf("[Audio] 🔊 Transcoding audio: G.711u (8kHz) -> AAC-LC (16kHz) (Microphone -> Clients)")
+		logger.Info("Audio", "🔊 Transcoding audio: G.711u (8kHz) -> AAC-LC (16kHz) (Microphone -> Clients)")
 		transcoder := audio.NewTranscoder(func(au []byte, pts time.Duration) {
 			if b.rtspServer != nil {
 				b.rtspServer.WriteAACFrame(au, pts)
@@ -800,7 +799,7 @@ func (b *Bridge) readAudioLoop(ctx context.Context, track *pion.TrackRemote) {
 			_ = transcoder.ProcessPCMU(pkt.Payload)
 		}
 	} else {
-		log.Printf("[Audio] 🔊 PCMU audio stream active (Microphone -> Clients)")
+		logger.Info("Audio", "🔊 PCMU audio stream active (Microphone -> Clients)")
 		for {
 			select {
 			case <-ctx.Done():
@@ -838,7 +837,7 @@ func (b *Bridge) runWatchdogLoop(ctx context.Context, cancel context.CancelFunc)
 		case <-ticker.C:
 			lastNano := b.lastVideoPacket.Load()
 			if lastNano == 0 {
-				log.Printf("[Watchdog] ⚠️ Silence detected: No video packets received within 8s of session start. Camera might be unresponsive. Triggering session reset...")
+				logger.Warn("Watchdog", "⚠️ Silence detected: No video packets received within 8s of session start. Camera might be unresponsive. Triggering session reset...")
 				cancel()
 				return
 			}
@@ -846,7 +845,7 @@ func (b *Bridge) runWatchdogLoop(ctx context.Context, cancel context.CancelFunc)
 			lastTime := time.Unix(0, lastNano)
 			silence := time.Since(lastTime)
 			if silence > 6*time.Second {
-				log.Printf("[Watchdog] ⚠️ Silence detected: No video packets received for %.1fs (threshold 6s). Camera might be rebooting. Triggering session reset...", silence.Seconds())
+				logger.Warn("Watchdog", "⚠️ Silence detected: No video packets received for %.1fs (threshold 6s). Camera might be rebooting. Triggering session reset...", silence.Seconds())
 				cancel()
 				return
 			}

@@ -5,10 +5,10 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"log"
 	"sync"
 	"time"
 
+	"github.com/Afrouper/steinel-cam-bridge/pkg/logger"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/nabto"
 )
 
@@ -78,9 +78,7 @@ func (s *Stream) HandleIncomingPacket(raw []byte) {
 
 // Open establishes the virtual Nabto stream via SYN/ACK handshake.
 func (s *Stream) Open(timeout time.Duration) error {
-	if s.client.cfg.Debug {
-		log.Printf("[NabtoPure Stream] 🔄 Opening stream on port %d (streamID: %d)...", s.port, s.streamID)
-	}
+	logger.Debug("NabtoPure Stream", "🔄 Opening stream on port %d (streamID: %d)...", s.port, s.streamID)
 
 	s.clientSeq = 1 // SYN sequence number
 
@@ -104,23 +102,17 @@ func (s *Stream) Open(timeout time.Duration) error {
 
 		hdr, extensions, err := s.parseStreamPacket(raw)
 		if err != nil {
-			if s.client.cfg.Debug {
-				log.Printf("[NabtoPure Stream] ⚠️ parse error in Open: %v", err)
-			}
+			logger.Debug("NabtoPure Stream", "⚠️ parse error in Open: %v", err)
 			continue
 		}
 
 		s.serverTs = hdr.timestampValue
-		if s.client.cfg.Debug {
-			log.Printf("[NabtoPure Stream] 📥 Open received packet flags=0x%02x, ts=%d, raw hex: %x", hdr.flags, s.serverTs, raw)
-		}
+		logger.Trace("NabtoPure Stream", "📥 Open received packet flags=0x%02x, ts=%d, raw: %s", hdr.flags, s.serverTs, logger.FormatBinary(raw, 32))
 
 		if (hdr.flags & (StreamFlagSYN | StreamFlagACK)) == (StreamFlagSYN | StreamFlagACK) {
 			// Extract server sequence number, max segment sizes and nonce from SYN|ACK
 			for _, ext := range extensions {
-				if s.client.cfg.Debug {
-					log.Printf("[NabtoPure Stream] 📦 Extension 0x%04x (len %d): %x", ext.extType, len(ext.data), ext.data)
-				}
+				logger.Trace("NabtoPure Stream", "📦 Extension 0x%04x (len %d): %s", ext.extType, len(ext.data), logger.FormatBinary(ext.data, 32))
 				if ext.extType == ExtSYN && len(ext.data) >= 4 {
 					s.serverSeq = binary.BigEndian.Uint32(ext.data[:4])
 				}
@@ -141,18 +133,14 @@ func (s *Stream) Open(timeout time.Duration) error {
 
 			// Send ACK to finalize handshake
 			ackPkt := s.buildACKPacket(nil)
-			if s.client.cfg.Debug {
-				log.Printf("[NabtoPure Stream] 📤 Sending ACK packet (%d bytes): %x", len(ackPkt), ackPkt)
-			}
+			logger.Trace("NabtoPure Stream", "📤 Sending ACK packet (%d bytes): %s", len(ackPkt), logger.FormatBinary(ackPkt, 32))
 			_ = s.client.writeRawStream(ackPkt)
 
 			s.mu.Lock()
 			s.established = true
 			s.mu.Unlock()
 
-			if s.client.cfg.Debug {
-				log.Printf("[NabtoPure Stream] ✅ Stream established on port %d! (serverSeq: %d, maxSendSeg: %d)", s.port, s.serverSeq, s.maxSendSegmentSize)
-			}
+			logger.Info("NabtoPure Stream", "✅ Stream established on port %d! (serverSeq: %d, maxSendSeg: %d)", s.port, s.serverSeq, s.maxSendSegmentSize)
 			return nil
 		}
 	}
@@ -204,15 +192,11 @@ func (s *Stream) ReadMsg() ([]byte, error) {
 
 		hdr, extensions, err := s.parseStreamPacket(raw)
 		if err != nil {
-			if s.client.cfg.Debug {
-				log.Printf("[NabtoPure Stream] ⚠️ parse error: %v (raw %d bytes: %x)", err, len(raw), raw)
-			}
+			logger.Debug("NabtoPure Stream", "⚠️ parse error: %v (raw %d bytes: %s)", err, len(raw), logger.FormatBinary(raw, 32))
 			continue
 		}
 
-		if s.client.cfg.Debug {
-			log.Printf("[NabtoPure Stream] 📥 Received stream packet: %d bytes, flags=0x%02x, %d extensions", len(raw), hdr.flags, len(extensions))
-		}
+		logger.Trace("NabtoPure Stream", "📥 Received stream packet: %d bytes, flags=0x%02x, %d extensions", len(raw), hdr.flags, len(extensions))
 		s.serverTs = hdr.timestampValue
 
 		hasNewData := false
@@ -227,9 +211,7 @@ func (s *Stream) ReadMsg() ([]byte, error) {
 					s.serverSeq = dataSeq
 					s.mu.Unlock()
 					hasNewData = true
-					if s.client.cfg.Debug {
-						log.Printf("[NabtoPure Stream] 📝 Received DATA %d bytes (serverSeq now %d)", len(payload), s.serverSeq)
-					}
+					logger.Trace("NabtoPure Stream", "📝 Received DATA %d bytes (serverSeq now %d)", len(payload), s.serverSeq)
 				}
 			}
 		}
@@ -272,9 +254,7 @@ func (s *Stream) WriteMsg(payload []byte) error {
 		chunk := framedBytes[offset:end]
 
 		dataPkt := s.buildACKPacket(chunk)
-		if s.client.cfg.Debug {
-			log.Printf("[NabtoPure Stream] 📤 Sending DATA packet (%d bytes, clientSeq=%d): %x", len(dataPkt), s.clientSeq, dataPkt)
-		}
+		logger.Trace("NabtoPure Stream", "📤 Sending DATA packet (%d bytes, clientSeq=%d): %s", len(dataPkt), s.clientSeq, logger.FormatBinary(dataPkt, 32))
 		if err := s.client.writeRawStream(dataPkt); err != nil {
 			return fmt.Errorf("failed to write stream data packet: %w", err)
 		}

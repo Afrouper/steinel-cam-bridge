@@ -7,13 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Afrouper/steinel-cam-bridge/pkg/events"
+	"github.com/Afrouper/steinel-cam-bridge/pkg/logger"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/storage"
 
 	"github.com/google/uuid"
@@ -94,19 +94,19 @@ func NewServer(
 }
 
 func (s *Server) Start(ctx context.Context) error {
-	log.Printf("[ONVIF] 🚀 ONVIF Profile S/T Server listening at http://0.0.0.0:%d/onvif/device_service", s.port)
+	logger.Info("ONVIF", "🚀 ONVIF Profile S/T Server listening at http://0.0.0.0:%d/onvif/device_service", s.port)
 
 	// Start WS-Discovery in background
 	go func() {
 		if err := s.discovery.Start(ctx); err != nil {
-			log.Printf("[WS-Discovery] ⚠️ Discovery error: %v", err)
+			logger.Warn("WS-Discovery", "⚠️ Discovery error: %v", err)
 		}
 	}()
 
 	// Start HTTP Server in background
 	go func() {
 		if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Printf("[ONVIF] ⚠️ HTTP server error: %v", err)
+			logger.Warn("ONVIF", "⚠️ HTTP server error: %v", err)
 		}
 	}()
 
@@ -136,6 +136,8 @@ func (s *Server) handleSOAP(w http.ResponseWriter, r *http.Request) {
 	var handleErr error
 
 	path := r.URL.Path
+	logger.Trace("ONVIF", "SOAP request path=%s action=%s", path, action)
+
 	switch {
 	case strings.HasSuffix(path, "device_service"):
 		innerResp, handleErr = s.deviceHandler.Handle(action, reqStr, host)
@@ -171,6 +173,7 @@ func (s *Server) handleSOAP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if handleErr != nil || innerResp == "" {
+		logger.Debug("ONVIF", "SOAP response fault for action %s: %v", action, handleErr)
 		w.Header().Set("Content-Type", "application/soap+xml; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(wrapSOAPFault(action, handleErr)))
@@ -303,7 +306,7 @@ func (s *Server) handleAPISDCardItem(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "Thumbnail not supported on this model", http.StatusNotImplemented)
 				return
 			}
-			log.Printf("[SDCard] Snapshot streaming error: %v", err)
+			logger.Warn("SDCard", "Snapshot streaming error: %v", err)
 			http.Error(w, fmt.Sprintf("Failed to load snapshot: %v", err), http.StatusInternalServerError)
 			return
 		}
@@ -335,7 +338,7 @@ func (s *Server) handleAPISDCardItem(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if !errors.Is(err, storage.ErrTransferAborted) {
-				log.Printf("[SDCard] Video streaming error: %v", err)
+				logger.Warn("SDCard", "Video streaming error: %v", err)
 			}
 		}
 

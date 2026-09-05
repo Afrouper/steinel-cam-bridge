@@ -4,11 +4,11 @@ import (
 	"context"
 	"encoding/xml"
 	"fmt"
-	"log"
 	"net"
 	"strings"
 	"time"
 
+	"github.com/Afrouper/steinel-cam-bridge/pkg/logger"
 	"github.com/google/uuid"
 )
 
@@ -37,10 +37,10 @@ func (d *DiscoveryServer) Start(ctx context.Context) error {
 	conn, err := net.ListenMulticastUDP("udp4", nil, addr)
 	if err != nil {
 		// Fallback to unicast if multicast socket permission is restricted
-		log.Printf("[WS-Discovery] ⚠️ Could not bind 239.255.255.250:3702 (%v). Retrying on 0.0.0.0:3702...", err)
+		logger.Warn("WS-Discovery", "⚠️ Could not bind 239.255.255.250:3702 (%v). Retrying on 0.0.0.0:3702...", err)
 		conn, err = net.ListenUDP("udp4", &net.UDPAddr{Port: 3702})
 		if err != nil {
-			log.Printf("[WS-Discovery] ⚠️ UDP 3702 bind failed: %v. WS-Discovery disabled.", err)
+			logger.Warn("WS-Discovery", "⚠️ UDP 3702 bind failed: %v. WS-Discovery disabled.", err)
 			return nil
 		}
 	}
@@ -48,7 +48,7 @@ func (d *DiscoveryServer) Start(ctx context.Context) error {
 		_ = conn.Close()
 	}()
 
-	log.Printf("[WS-Discovery] 🛰️ Listening for ONVIF probes on 239.255.255.250:3702")
+	logger.Info("WS-Discovery", "🛰️ Listening for ONVIF probes on 239.255.255.250:3702")
 
 	buf := make([]byte, 8192)
 	for {
@@ -78,6 +78,8 @@ func (d *DiscoveryServer) Start(ctx context.Context) error {
 }
 
 func (d *DiscoveryServer) handleProbe(conn net.PacketConn, src net.Addr, raw string) {
+	logger.Trace("WS-Discovery", "Received probe from %v", src)
+
 	var probe ProbeEnvelope
 	_ = xml.Unmarshal([]byte(raw), &probe)
 

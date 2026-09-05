@@ -62,14 +62,21 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
 
 - **`cmd/steinel-bridge/main.go`**:
   - Konfigurations-Hierarchie (Precedence):
-    1. CLI-Flags (`-ip`, `-type`, `-user`, `-pass`, `-qr`, `-key`, `-port`, `-path`, `-res`, `-audio-codec`, `-onvif`, `-reset-pairing`, `-mqtt-broker`, `-sync-interval`, `-debug`, etc.)
-    2. Umgebungsvariablen (`CAMERA_IP`, `CAMERA_TYPE`, `CAMERA_USER`, `CAMERA_PASSWORD`, `QR_CODE`, `KEY_PATH`, `RESOLUTION`, `AUDIO_CODEC`, `RTSP_PORT`, `ONVIF_PORT`, `MQTT_BROKER`, `SDCARD_SYNC_INTERVAL`, `USE_CGO_NABTO`, `DEBUG`, etc.)
+    1. CLI-Flags (`-ip`, `-type`, `-user`, `-pass`, `-qr`, `-key`, `-port`, `-path`, `-res`, `-audio-codec`, `-onvif`, `-reset-pairing`, `-mqtt-broker`, `-sync-interval`, `-log-level`, etc.)
+    2. Umgebungsvariablen (`CAMERA_IP`, `CAMERA_TYPE`, `CAMERA_USER`, `CAMERA_PASSWORD`, `QR_CODE`, `KEY_PATH`, `RESOLUTION`, `AUDIO_CODEC`, `RTSP_PORT`, `ONVIF_PORT`, `MQTT_BROKER`, `SDCARD_SYNC_INTERVAL`, `USE_CGO_NABTO`, `LOG_LEVEL`, `LOG_FORMAT`, etc.)
     3. Home Assistant Add-on Konfigurationsdatei (`/data/options.json` & Home Assistant Supervisor MQTT Auto-Discovery API via `X-Supervisor-Token`)
     4. Standardwerte (Layer 1)
   - **Modell-Erkennung**: Prüft per `-type` bzw. führt bei `auto` einen schnellen TCP-Probe auf Port `34567` durch, um automatisch zwischen `L 620 CAM` (Xiongmai Sofia) und `L 625 CAM SC` (Nabto Edge) zu unterscheiden.
   - **Treiber-Auswahl (L 625)**: Nutzt standardmäßig den CGo-Wrapper (`pkg/nabto`) mit dem offiziellen Nabto Client SDK. Über die Add-on Option `nabto_driver: "pure"` (bzw. Umgebungsvariable `USE_CGO_NABTO=false` / CLI-Flag `-nabto-driver=pure`) kann auf den nativen Pure-Go Treiber (`pkg/nabtopure`, experimentell) gewechselt werden.
   - Initialisiert Server (`rtsp.Server`, `onvif.Server`, `mqtt.Client`, `storage.RecordingSyncer`).
   - **Supervisor-Loop (Nabto)**: Fängt Verbindungsabbrüche, Session-Beendigungen oder Watchdog-Resets ab und erzwingt einen sauberen **30-Sekunden-Cooldown**, damit neu startende Kameras stabil hochfahren können.
+
+- **`pkg/logger/`** *(Neu in Milestone 1)*:
+  - Zentrales, hierarchisches Logging-Framework auf Basis von Go 1.21+ `log/slog`.
+  - Unterstützt Level: `Trace` (-8, Steuersignale), `Debug` (-4), `Info` (0, Standard), `Warn` (4), `Error` (8).
+  - Formatierung wahlweise `console` (menschenlesbar mit Zeitstempel & Komponenten-Tag `[Component]`) oder `json`.
+  - `logger.FormatBinary`: Hex-Dump für binäre Steuerpakete (MCU-Frames, Sofia-Pakete).
+  - Eiserne Restriktion: Reines Durchschleifen von Mediadaten (H.264 NAL-Units, SD-Karten MP4-Videochunks) wird niemals im Log ausgegeben.
 
 - **`pkg/nabtopure/`** *(Neu in v1.3.0)*:
   - `client.go`: 100 % nativer Pure-Go Nabto Edge Client. Verwaltet ECC-Schlüssel (NIST P-256), DTLS 1.2 Handshake via Pion DTLS, KeepAlive-Ping (5s) und 18-Byte Echo (`0x04 0x02` + Nonce) für unterbrechungsfreien Dauerbetrieb.

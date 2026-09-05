@@ -4,13 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/Afrouper/steinel-cam-bridge/pkg/events"
+	"github.com/Afrouper/steinel-cam-bridge/pkg/logger"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/storage"
 
 	paho "github.com/eclipse/paho.mqtt.golang"
@@ -27,7 +27,6 @@ type Config struct {
 	ProductID       string // e.g. "pr-qtatbtbi"
 	Model           string // e.g. "L 625 CAM SC"
 	BridgeHTTPURL   string
-	Debug           bool
 }
 
 type Callbacks struct {
@@ -97,7 +96,7 @@ func (c *Client) UpdateDeviceInfo(deviceID, productID string) {
 		c.mu.Unlock()
 		return
 	}
-	log.Printf("[MQTT] 🔄 Updating DeviceID: '%s' -> '%s'", c.cfg.DeviceID, deviceID)
+	logger.Info("MQTT", "🔄 Updating DeviceID: '%s' -> '%s'", c.cfg.DeviceID, deviceID)
 	c.cfg.DeviceID = deviceID
 	if productID != "" {
 		c.cfg.ProductID = productID
@@ -141,7 +140,7 @@ func (c *Client) Start(_ context.Context) error {
 		c.client = client
 		c.mu.Unlock()
 
-		log.Printf("[MQTT] 🔌 Connected to MQTT broker: %s (Topic: %s)", c.cfg.Broker, c.baseTopic)
+		logger.Info("MQTT", "🔌 Connected to MQTT broker: %s (Topic: %s)", c.cfg.Broker, c.baseTopic)
 		// 1. Publish Online Status
 		client.Publish(availTopic, 1, true, "online")
 
@@ -159,7 +158,7 @@ func (c *Client) Start(_ context.Context) error {
 	}
 
 	opts.OnConnectionLost = func(_ paho.Client, err error) {
-		log.Printf("[MQTT] ⚠️ Connection lost: %v", err)
+		logger.Warn("MQTT", "⚠️ Connection lost: %v", err)
 	}
 
 	client := paho.NewClient(opts)
@@ -343,7 +342,7 @@ func (c *Client) publishDiscovery(client paho.Client) {
 		"event_types": []string{"motion", "manual", "alarm", "record", "plan", "all"},
 	})
 
-	log.Printf("[MQTT] 📢 Published Home Assistant Auto-Discovery entities for %s under %s", c.nodeID, c.cfg.DiscoveryPrefix)
+	logger.Info("MQTT", "📢 Published Home Assistant Auto-Discovery entities for %s under %s", c.nodeID, c.cfg.DiscoveryPrefix)
 }
 
 // PublishRecordingEvent publishes a new recording event to Home Assistant MQTT
@@ -375,9 +374,7 @@ func (c *Client) PublishRecordingEvent(item storage.RecordingItem) {
 
 	data, err := json.Marshal(payload)
 	if err == nil {
-		if c.cfg.Debug {
-			log.Printf("[MQTT] 📢 Publishing recording event to %s/event/recording: %s", c.baseTopic, string(data))
-		}
+		logger.Debug("MQTT", "📢 Publishing recording event to %s/event/recording: %s", c.baseTopic, string(data))
 		token := cl.Publish(fmt.Sprintf("%s/event/recording", c.baseTopic), 1, false, data)
 		_ = token.WaitTimeout(2 * time.Second)
 	}
@@ -409,6 +406,8 @@ func (c *Client) publishStatus(st events.DeviceStatus) {
 	if cl == nil || !cl.IsConnected() {
 		return
 	}
+
+	logger.Trace("MQTT", "Publishing device status: mode=%d res=%s pir=%v lux=%d", st.LampMode, st.Resolution, st.PIRActive, st.Lux)
 
 	pub := func(subTopic string, val string) {
 		cl.Publish(fmt.Sprintf("%s/%s", c.baseTopic, subTopic), 1, true, val)
@@ -457,7 +456,7 @@ func (c *Client) publishStatus(st events.DeviceStatus) {
 func (c *Client) handleCommand(_ paho.Client, msg paho.Message) {
 	topic := msg.Topic()
 	payload := strings.TrimSpace(string(msg.Payload()))
-	log.Printf("[MQTT] 📩 Command received on %s: %s", topic, payload)
+	logger.Info("MQTT", "📩 Command received on %s: %s", topic, payload)
 
 	switch {
 	case strings.HasSuffix(topic, "/highlight/set"), strings.HasSuffix(topic, "/light/brightness/set"):

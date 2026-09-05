@@ -2,10 +2,10 @@ package onvif
 
 import (
 	"fmt"
-	"log"
 	"strings"
 
 	"github.com/Afrouper/steinel-cam-bridge/pkg/events"
+	"github.com/Afrouper/steinel-cam-bridge/pkg/logger"
 )
 
 type MediaHandler struct {
@@ -220,7 +220,7 @@ func (h *MediaHandler) setVideoEncoderConfiguration(reqXML string) string {
 		targetRes = "360p"
 	}
 
-	log.Printf("[ONVIF] 🔄 Received SetVideoEncoderConfiguration -> applying %s", targetRes)
+	logger.Info("ONVIF", "🔄 Received SetVideoEncoderConfiguration -> applying %s", targetRes)
 	if h.changeResFunc != nil {
 		_ = h.changeResFunc(targetRes)
 	}

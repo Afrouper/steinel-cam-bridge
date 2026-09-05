@@ -4,10 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"sync"
 	"time"
 
+	"github.com/Afrouper/steinel-cam-bridge/pkg/logger"
 	"github.com/pion/rtp"
 )
 
@@ -17,14 +17,12 @@ type TalkClient struct {
 	talkActive bool
 	mu         sync.Mutex
 	lastAudio  time.Time
-	debug      bool
 }
 
 // NewTalkClient creates a new 2-Way Talk client.
-func NewTalkClient(client *Client, debug bool) *TalkClient {
+func NewTalkClient(client *Client) *TalkClient {
 	return &TalkClient{
 		client: client,
-		debug:  debug,
 	}
 }
 
@@ -83,9 +81,7 @@ func (t *TalkClient) startTalkLocked() error {
 		return nil
 	}
 
-	if t.debug {
-		log.Printf("[Xiongmai Talk] 🎙️ Claiming audio talk channel (MsgTalkClaimReq)...")
-	}
+	logger.Debug("Xiongmai Talk", "🎙️ Claiming audio talk channel (MsgTalkClaimReq)...")
 
 	// 1. Claim talk channel (MsgID 1434 / 1410)
 	claimReq := OPTalkReq{
@@ -117,7 +113,7 @@ func (t *TalkClient) startTalkLocked() error {
 
 	t.talkActive = true
 	t.lastAudio = time.Now()
-	log.Printf("[Xiongmai Talk] 🎙️ Two-way audio active: forwarding to camera speaker (Port %d)", DefaultPort)
+	logger.Info("Xiongmai Talk", "🎙️ Two-way audio active: forwarding to camera speaker (Port %d)", DefaultPort)
 	return nil
 }
 
@@ -140,8 +136,6 @@ func (t *TalkClient) StopTalk() error {
 	payload, _ := json.Marshal(req)
 	_, _ = t.client.sendPacketLocked(MsgTalkControlReq, payload)
 	t.talkActive = false
-	if t.debug {
-		log.Printf("[Xiongmai Talk] ⏹️ Audio channel closed")
-	}
+	logger.Debug("Xiongmai Talk", "⏹️ Audio channel closed")
 	return nil
 }

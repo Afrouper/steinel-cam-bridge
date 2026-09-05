@@ -59,12 +59,13 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"strings"
 	"sync"
 	"time"
 	"unsafe"
+
+	"github.com/Afrouper/steinel-cam-bridge/pkg/logger"
 )
 
 type Client struct {
@@ -164,9 +165,9 @@ func (c *Client) Connect() error {
 	var privKey string
 	if err != nil {
 		if !os.IsNotExist(err) {
-			log.Printf("[Nabto] ⚠️ Warning: Could not read key file '%s': %v", c.cfg.KeyPath, err)
+			logger.Warn("Nabto", "⚠️ Could not read key file '%s': %v", c.cfg.KeyPath, err)
 		}
-		log.Printf("[Nabto] Key file not found at %s. Generating new EC private key...", c.cfg.KeyPath)
+		logger.Info("Nabto", "Key file not found at %s. Generating new EC private key...", c.cfg.KeyPath)
 		var cKey *C.char
 		errCode := C.nabto_client_create_private_key(ctx, &cKey)
 		if errCode != C.NABTO_CLIENT_EC_OK || cKey == nil {
@@ -186,7 +187,7 @@ func (c *Client) Connect() error {
 	cIP := C.CString(c.cfg.CameraIP)
 	defer C.free(unsafe.Pointer(cIP))
 
-	log.Printf("[Nabto] Sending mDNS wake-up to %s...", c.cfg.CameraIP)
+	logger.Debug("Nabto", "Sending mDNS wake-up to %s...", c.cfg.CameraIP)
 	C.send_mdns_wakeup_c(cIP, C.int(c.cfg.CameraPort))
 
 	conn := C.nabto_client_connection_new(ctx)
@@ -229,7 +230,7 @@ func (c *Client) Connect() error {
 	}
 	c.mu.Unlock()
 
-	log.Printf("[Nabto] Connecting to camera %s:%d...", c.cfg.CameraIP, c.cfg.CameraPort)
+	logger.Info("Nabto", "Connecting to camera %s:%d...", c.cfg.CameraIP, c.cfg.CameraPort)
 	fut := C.nabto_client_future_new(ctx)
 	C.nabto_client_connection_connect(conn, fut)
 	C.nabto_client_future_wait(fut)
@@ -243,23 +244,23 @@ func (c *Client) Connect() error {
 		return fmt.Errorf("connection aborted: client closed")
 	}
 	if errCode == C.NABTO_CLIENT_EC_OK {
-		log.Printf("[Nabto] ✅ Connected successfully!")
+		logger.Info("Nabto", "✅ Connected successfully!")
 		c.conn = conn
 		c.mu.Unlock()
 
 		if isNewKey {
 			if c.cfg.PairPwd == "" || c.cfg.PairPwd == "xxxx" {
-				log.Printf("[IAM] ⚠️ Warning: New client key generated, but no QR code ('qr_code') is configured. Initial pairing requires a valid QR code!")
+				logger.Warn("IAM", "⚠️ Warning: New client key generated, but no QR code ('qr_code') is configured. Initial pairing requires a valid QR code!")
 			} else {
-				log.Printf("[IAM] Performing initial pairing for new client key...")
+				logger.Info("IAM", "Performing initial pairing for new client key...")
 				if err := c.pairPassword(c.cfg.PairPwd); err != nil {
-					log.Printf("[IAM] ❌ Initial pairing failed: %v", err)
+					logger.Error("IAM", "❌ Initial pairing failed: %v", err)
 					return fmt.Errorf("initial pairing failed: %w", err)
 				}
 				if err := os.WriteFile(c.cfg.KeyPath, []byte(c.privateKey), 0600); err != nil {
-					log.Printf("[!] Warning: Could not save key to %s: %v", c.cfg.KeyPath, err)
+					logger.Warn("Nabto", "⚠️ Could not save key to %s: %v", c.cfg.KeyPath, err)
 				} else {
-					log.Printf("[IAM] ✅ Saved paired key to: %s", c.cfg.KeyPath)
+					logger.Info("IAM", "✅ Saved paired key to: %s", c.cfg.KeyPath)
 				}
 			}
 		}
@@ -351,18 +352,18 @@ func (c *Client) pairPassword(password string) error {
 		}
 		C.nabto_client_coap_free(coap)
 
-		log.Printf("[IAM] Pairing response status for '%s': %d", username, statusCode)
+		logger.Debug("IAM", "Pairing response status for '%s': %d", username, statusCode)
 		lastStatus = statusCode
 
 		if statusCode == 201 || statusCode == 200 {
-			log.Printf("[IAM] ✅ Successfully paired as '%s'", username)
+			logger.Info("IAM", "✅ Successfully paired as '%s'", username)
 			return nil
 		}
 
 		if statusCode != 409 {
 			break
 		}
-		log.Printf("[IAM] ⚠️ Username '%s' already registered (409 Conflict). Retrying with new ID (attempt %d/%d)...", username, attempt, maxPairAttempts)
+		logger.Warn("IAM", "⚠️ Username '%s' already registered (409 Conflict). Retrying with new ID (attempt %d/%d)...", username, attempt, maxPairAttempts)
 	}
 
 	return fmt.Errorf("pairing returned status code %d", lastStatus)
@@ -411,7 +412,7 @@ func (c *Client) GetSignalingPort() (uint32, error) {
 
 	if statusCode == 205 && payload != nil && payloadLen > 0 {
 		respStr := C.GoStringN((*C.char)(payload), C.int(payloadLen))
-		log.Printf("[CoAP] /p2p/webrtc-info response: %s", respStr)
+		logger.Debug("CoAP", "/p2p/webrtc-info response: %s", respStr)
 
 		var port uint32
 		if _, err := fmt.Sscanf(respStr, "{\"SignalingStreamPort\":%d}", &port); err == nil && port > 0 {
@@ -428,7 +429,7 @@ func (c *Client) GetSignalingPort() (uint32, error) {
 		}
 	}
 
-	return 0, fmt.Errorf("invalid response from /p2p/webrtc-info (status %d)", statusCode)
+	return 0, fmt.Errorf("failed to retrieve signaling stream port, status=%d", statusCode)
 }
 
 // RequestTracks sends CoAP POST /webrtc/tracks to request video and audio streams
@@ -472,13 +473,13 @@ func (c *Client) RequestTracks() (uint16, error) {
 	var statusCode C.uint16_t
 	if errCode == C.NABTO_CLIENT_EC_OK {
 		C.nabto_client_coap_get_response_status_code(coap, &statusCode)
-		log.Printf("[CoAP] /webrtc/tracks response status=%d", statusCode)
+		logger.Debug("CoAP", "/webrtc/tracks response status=%d", statusCode)
 		if statusCode == 401 {
 			if c.cfg.PairPwd != "" && c.cfg.PairPwd != "xxxx" {
-				log.Printf("[CoAP] ❌ /webrtc/tracks returned 401 Unauthorized: Stored key '%s' is not authorized by camera IAM. Auto-removing invalid key file to re-pair with configured QR code on next connect...", c.cfg.KeyPath)
+				logger.Error("CoAP", "❌ /webrtc/tracks returned 401 Unauthorized: Stored key '%s' is not authorized by camera IAM. Auto-removing invalid key file to re-pair with configured QR code on next connect...", c.cfg.KeyPath)
 				_ = os.Remove(c.cfg.KeyPath)
 			} else {
-				log.Printf("[CoAP] ❌ /webrtc/tracks returned 401 Unauthorized: Stored key '%s' is not authorized by camera IAM! Re-pairing requires a valid 'qr_code' in your configuration.", c.cfg.KeyPath)
+				logger.Error("CoAP", "❌ /webrtc/tracks returned 401 Unauthorized: Stored key '%s' is not authorized by camera IAM! Re-pairing requires a valid 'qr_code' in your configuration.", c.cfg.KeyPath)
 			}
 		}
 		return uint16(statusCode), nil

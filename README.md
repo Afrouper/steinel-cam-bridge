@@ -216,14 +216,14 @@ DYLD_LIBRARY_PATH="$(pwd)/.sdk/lib" ./steinel-bridge \
   -ip 192.168.1.100 \
   -qr "did=de-xxxxxxx,pid=pr-xxxxx,sct=xxxx,pairPwd=xxxx" \
   -key ./data/local_client.key \
-  -debug
+  -log-level debug
 
 # Linux (Steinel L 625 CAM SC via Nabto Edge CGo):
 LD_LIBRARY_PATH="$(pwd)/.sdk/lib" ./steinel-bridge \
   -ip 192.168.1.100 \
   -qr "did=de-xxxxxxx,pid=pr-xxxxx,sct=xxxx,pairPwd=xxxx" \
   -key ./data/local_client.key \
-  -debug
+  -log-level debug
 
 # Steinel L 620 CAM / XLED CAM 1 (kein CGo / Nabto SDK erforderlich):
 ./steinel-bridge \
@@ -231,7 +231,7 @@ LD_LIBRARY_PATH="$(pwd)/.sdk/lib" ./steinel-bridge \
   -type l620 \
   -user admin \
   -pass "meinpasswort" \
-  -debug
+  -log-level debug
 ```
 
 ---
@@ -273,7 +273,8 @@ Die Konfiguration erfolgt nach den Grundsätzen einer [12-Factor App](https://12
 |---|---|---|---|
 | `NABTO_DRIVER` | `-nabto-driver` | `cgo` | Nabto-Treiber-Engine: `cgo` (offizielles C-SDK, empfohlen & Standard) oder `pure` (nativer Go-Stack, experimentell) |
 | `USE_CGO_NABTO` | `-use-cgo` | `true` | Boolean-Schalter für CGo-Treiber (`true` = cgo, `false` = pure) |
-| `DEBUG` | `-debug` | `false` | Ausführliches Debug-Logging für RTSP, WebRTC, Signaling & MCU |
+| `LOG_LEVEL` | `-log-level` | `info` | Log-Level zur System- und Fehleranalyse: `error`, `warning` / `warn`, `info` (Standard), `debug` (ausführlich), `trace` (inkl. Steuersignale & Pakete) |
+| `LOG_FORMAT` | — | `console` | Ausgabeformat der Logs: `console` (menschenlesbar mit Timestamps) oder `json` (strukturiertes JSON) |
 | `IS_BETA` / `BETA` | `-beta` | `false` | Kennzeichnet die Instanz bei der IAM-Registrierung auf der Kamera als Beta (`steinel-bridge-beta-...`) |
 
 ### MQTT & Home Assistant Integration

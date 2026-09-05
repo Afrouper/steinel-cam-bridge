@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"os"
@@ -21,6 +20,7 @@ import (
 	"github.com/pion/rtp"
 
 	"github.com/Afrouper/steinel-cam-bridge/pkg/events"
+	"github.com/Afrouper/steinel-cam-bridge/pkg/logger"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/mcu"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/mqtt"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/nabto"
@@ -276,7 +276,7 @@ type AppConfig struct {
 	MQTTPassword       string
 	MQTTTopic          string
 	MQTTDiscovery      string
-	Debug              bool
+	LogLevel           string
 	SDCardSyncInterval int
 	NabtoDriver        string // "pure" (default) or "cgo" / "lib"
 }
@@ -285,7 +285,7 @@ func loadHomeAssistantOptionsFromPath(path string, cfg *AppConfig) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if !os.IsNotExist(err) {
-			log.Printf("[HA Addon] ⚠️ Warning: Failed to read %s: %v", path, err)
+			logger.Warn("HA Addon", "⚠️ Warning: Failed to read %s: %v", path, err)
 		}
 		return
 	}
@@ -308,18 +308,18 @@ func loadHomeAssistantOptionsFromPath(path string, cfg *AppConfig) {
 		MQTTPassword        string `json:"mqtt_password"`
 		MQTTTopicPrefix     string `json:"mqtt_topic_prefix"`
 		MQTTDiscoveryPrefix string `json:"mqtt_discovery_prefix"`
-		Debug               bool   `json:"debug"`
+		LogLevel            string `json:"log_level"`
 		SDCardSyncInterval  int    `json:"sdcard_sync_interval"`
 		NabtoDriver         string `json:"nabto_driver"`
 		UseCGONabto         bool   `json:"use_cgo_nabto"`
 	}
 
 	if err := json.Unmarshal(data, &opts); err != nil {
-		log.Printf("[HA Addon] ⚠️ Warning: Failed to parse %s: %v", path, err)
+		logger.Warn("HA Addon", "⚠️ Warning: Failed to parse %s: %v", path, err)
 		return
 	}
 
-	log.Printf("[HA Addon] 🏠 Loaded configuration from %s", path)
+	logger.Info("HA Addon", "🏠 Loaded configuration from %s", path)
 
 	if opts.CameraIP != "" {
 		cfg.NabtoConfig.CameraIP = opts.CameraIP
@@ -372,8 +372,8 @@ func loadHomeAssistantOptionsFromPath(path string, cfg *AppConfig) {
 	if opts.MQTTDiscoveryPrefix != "" {
 		cfg.MQTTDiscovery = opts.MQTTDiscoveryPrefix
 	}
-	if opts.Debug {
-		cfg.Debug = true
+	if opts.LogLevel != "" {
+		cfg.LogLevel = opts.LogLevel
 	}
 	if opts.SDCardSyncInterval > 0 {
 		cfg.SDCardSyncInterval = opts.SDCardSyncInterval
@@ -492,6 +492,7 @@ func resolveConfig(optionsPath string, fs *flag.FlagSet) *AppConfig {
 		MQTTPassword:       "",
 		MQTTTopic:          "steinel",
 		MQTTDiscovery:      "homeassistant",
+		LogLevel:           "info",
 		SDCardSyncInterval: 60,
 		NabtoDriver:        "cgo",
 	}
@@ -507,12 +508,12 @@ func resolveConfig(optionsPath string, fs *flag.FlagSet) *AppConfig {
 			cfg.MQTTBroker = broker
 			cfg.MQTTUser = user
 			cfg.MQTTPassword = pass
-			log.Printf("[HA Addon] 📡 Auto-discovered Home Assistant MQTT service: %s (User: %s)", broker, user)
+			logger.Info("HA Addon", "📡 Auto-discovered Home Assistant MQTT service: %s (User: %s)", broker, user)
 		} else if err != nil && os.Getenv("SUPERVISOR_TOKEN") != "" {
 			if strings.Contains(err.Error(), "not enabled") {
-				log.Printf("[HA Addon] ℹ️ MQTT broker detected, but service binding is not yet active in Supervisor. Please restart the MQTT broker add-on once, or configure 'mqtt_broker' in add-on options.")
+				logger.Info("HA Addon", "ℹ️ MQTT broker detected, but service binding is not yet active in Supervisor. Please restart the MQTT broker add-on once, or configure 'mqtt_broker' in add-on options.")
 			} else {
-				log.Printf("[HA Addon] ℹ️ MQTT auto-discovery check: %v", err)
+				logger.Info("HA Addon", "ℹ️ MQTT auto-discovery check: %v", err)
 			}
 		}
 	}
@@ -604,8 +605,8 @@ func resolveConfig(optionsPath string, fs *flag.FlagSet) *AppConfig {
 	} else if os.Getenv("USE_CGO_NABTO") == "true" || os.Getenv("USE_CGO_NABTO") == "1" {
 		cfg.NabtoDriver = "cgo"
 	}
-	if envDebug := os.Getenv("DEBUG"); envDebug == "true" || envDebug == "1" {
-		cfg.Debug = true
+	if envLogLevel := os.Getenv("LOG_LEVEL"); envLogLevel != "" {
+		cfg.LogLevel = envLogLevel
 	}
 
 	// 4. Layer 4: Explicit CLI Flags (POSIX)
@@ -662,10 +663,8 @@ func resolveConfig(optionsPath string, fs *flag.FlagSet) *AppConfig {
 				if b, err := strconv.ParseBool(f.Value.String()); err == nil && b {
 					cfg.NabtoDriver = "cgo"
 				}
-			case "debug":
-				if b, err := strconv.ParseBool(f.Value.String()); err == nil {
-					cfg.Debug = b
-				}
+			case "log-level", "loglevel":
+				cfg.LogLevel = f.Value.String()
 			}
 		})
 	}
@@ -706,7 +705,7 @@ func main() {
 	flag.Int("sdcard-sync-interval", 60, "Interval in seconds to poll SD card for new recordings (alias)")
 	flag.String("nabto-driver", "cgo", "Nabto Edge driver engine ('cgo' for C-SDK, default; 'pure' for native Go)")
 	flag.Bool("use-cgo", true, "Use C-SDK libnabto_client wrapper (default: true)")
-	flag.Bool("debug", false, "Enable verbose debug logging")
+	flag.String("log-level", "info", "Log level (trace, debug, info, warn, error)")
 	betaFlag := flag.Bool("beta", false, "Identify as beta instance for IAM registration")
 	flag.Parse()
 
@@ -718,6 +717,7 @@ func main() {
 
 	// Resolve configuration according to POSIX & 12-Factor App hierarchy
 	appCfg := resolveConfig("/data/options.json", flag.CommandLine)
+	logger.Init(appCfg.LogLevel, os.Getenv("LOG_FORMAT"))
 	cfg := appCfg.NabtoConfig
 	cfg.IsBeta = *betaFlag ||
 		strings.Contains(strings.ToLower(AppVersion), "beta") ||
@@ -726,7 +726,8 @@ func main() {
 		os.Getenv("BETA") == "true"
 
 	if cfg.CameraIP == "" {
-		log.Fatalf("[Config] ❌ Error: Camera IP address is mandatory! Please configure 'camera_ip' in Home Assistant or supply -ip / CAMERA_IP.")
+		logger.Error("Config", "❌ Error: Camera IP address is mandatory! Please configure 'camera_ip' in Home Assistant or supply -ip / CAMERA_IP.")
+		os.Exit(1)
 	}
 
 	// Model Selection: Explicit configuration vs. Auto-Detection via Port 34567 Probe
@@ -734,18 +735,18 @@ func main() {
 	switch strings.ToLower(strings.TrimSpace(appCfg.CameraType)) {
 	case "l620":
 		isL620 = true
-		log.Printf("[Config] 📷 Camera model configured explicitly: Steinel L 620 CAM / XLED CAM 1 (Xiongmai Sofia)")
+		logger.Info("Config", "📷 Camera model configured explicitly: Steinel L 620 CAM / XLED CAM 1 (Xiongmai Sofia)")
 	case "l625":
 		isL620 = false
-		log.Printf("[Config] 📷 Camera model configured explicitly: Steinel L 625 CAM SC (Nabto Edge)")
+		logger.Info("Config", "📷 Camera model configured explicitly: Steinel L 625 CAM SC (Nabto Edge)")
 	default: // "auto" or unspecified
-		log.Printf("[Config] 🔍 Camera model set to 'auto': Probing %s on Port 34567...", cfg.CameraIP)
+		logger.Info("Config", "🔍 Camera model set to 'auto': Probing %s on Port 34567...", cfg.CameraIP)
 		if probePort(cfg.CameraIP, 34567, 1500*time.Millisecond) {
 			isL620 = true
-			log.Printf("[Config] 🎯 Auto-detected Steinel L 620 CAM / XLED CAM 1 (Port 34567 Xiongmai Sofia is open)")
+			logger.Info("Config", "🎯 Auto-detected Steinel L 620 CAM / XLED CAM 1 (Port 34567 Xiongmai Sofia is open)")
 		} else {
 			isL620 = false
-			log.Printf("[Config] 🎯 Auto-detected Steinel L 625 CAM SC (Port 34567 closed, selecting Nabto Edge driver)")
+			logger.Info("Config", "🎯 Auto-detected Steinel L 625 CAM SC (Port 34567 closed, selecting Nabto Edge driver)")
 		}
 	}
 
@@ -772,19 +773,19 @@ func main() {
 	// Handle pairing reset
 	if appCfg.ResetPairing && !isL620 {
 		if cfg.PairPwd == "" || cfg.PairPwd == "xxxx" {
-			log.Printf("[Reset] ⚠️ Warning: Pairing reset requested, but no valid QR code ('qr_code') is configured! Re-pairing requires a valid QR code.")
+			logger.Warn("Reset", "⚠️ Warning: Pairing reset requested, but no valid QR code ('qr_code') is configured! Re-pairing requires a valid QR code.")
 		} else {
-			log.Printf("[Reset] 🔄 Pairing reset requested: Removing client key '%s' to force fresh EC key generation & re-pairing with configured QR code...", cfg.KeyPath)
+			logger.Info("Reset", "🔄 Pairing reset requested: Removing client key '%s' to force fresh EC key generation & re-pairing with configured QR code...", cfg.KeyPath)
 		}
 		if err := os.Remove(cfg.KeyPath); err != nil && !os.IsNotExist(err) {
-			log.Printf("[Reset] ⚠️ Warning: Could not delete '%s': %v", cfg.KeyPath, err)
+			logger.Warn("Reset", "⚠️ Warning: Could not delete '%s': %v", cfg.KeyPath, err)
 		} else {
-			log.Printf("[Reset] ✅ Existing key removed. Fresh pairing will be performed on connect.")
+			logger.Info("Reset", "✅ Existing key removed. Fresh pairing will be performed on connect.")
 		}
 	}
 
 	if !isL620 && cfg.DeviceID == "" && cfg.SCT == "" {
-		log.Printf("[!] Note: No QR code provided. Local direct connection mode will be used for %s.", cfg.CameraIP)
+		logger.Info("Config", "ℹ️ Note: No QR code provided. Local direct connection mode will be used for %s.", cfg.CameraIP)
 	}
 
 	// Ensure key directory exists
@@ -792,13 +793,13 @@ func main() {
 		_ = os.MkdirAll(dir, 0755)
 	}
 
-	log.Printf("[Config] Camera: %s (Type: %s, Model: %s, Res: %s, Audio: %s, Debug: %v)", cfg.CameraIP, appCfg.CameraType, modelName, appCfg.Resolution, appCfg.AudioCodec, appCfg.Debug)
+	logger.Info("Config", "Camera: %s (Type: %s, Model: %s, Res: %s, Audio: %s, LogLevel: %s)", cfg.CameraIP, appCfg.CameraType, modelName, appCfg.Resolution, appCfg.AudioCodec, appCfg.LogLevel)
 	if !isL620 {
-		log.Printf("[Config] Key:    %s", cfg.KeyPath)
+		logger.Info("Config", "Key:    %s", cfg.KeyPath)
 	}
-	log.Printf("[Config] Ports:  RTSP=%d, ONVIF=%d, WS-Discovery=3702/udp", appCfg.RTSPPort, appCfg.ONVIFPort)
+	logger.Info("Config", "Ports:  RTSP=%d, ONVIF=%d, WS-Discovery=3702/udp", appCfg.RTSPPort, appCfg.ONVIFPort)
 	if appCfg.MQTTBroker != "" {
-		log.Printf("[Config] MQTT:   Broker=%s, BaseTopic=%s, Discovery=%s", appCfg.MQTTBroker, appCfg.MQTTTopic, appCfg.MQTTDiscovery)
+		logger.Info("Config", "MQTT:   Broker=%s, BaseTopic=%s, Discovery=%s", appCfg.MQTTBroker, appCfg.MQTTTopic, appCfg.MQTTDiscovery)
 	}
 
 	// Context and signal trap for graceful shutdown
@@ -809,16 +810,17 @@ func main() {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		sig := <-sigChan
-		log.Printf("\n[*] Received %v. Stopping bridge gracefully...", sig)
+		logger.Info("Main", "Received %v. Stopping bridge gracefully...", sig)
 		cancel()
 	}()
 
 	bridgeMgr := &BridgeManager{}
 
 	// 1. Start embedded RTSP Server (with Profile T 2-Way Audio Backchannel)
-	rtspServer, err := rtsp.NewServer(appCfg.RTSPPort, appCfg.RTSPPath, appCfg.AudioCodec, appCfg.Debug)
+	rtspServer, err := rtsp.NewServer(appCfg.RTSPPort, appCfg.RTSPPath, appCfg.AudioCodec)
 	if err != nil {
-		log.Fatalf("[!] Failed to initialize RTSP server: %v", err)
+		logger.Error("RTSP", "❌ Failed to initialize RTSP server: %v", err)
+		os.Exit(1)
 	}
 	defer rtspServer.Close()
 
@@ -826,7 +828,8 @@ func main() {
 	rtspServer.SetAudioBackchannelHandler(bridgeMgr.WriteAudioBackchannel)
 
 	if err := rtspServer.Start(); err != nil {
-		log.Fatalf("[!] Failed to start RTSP server: %v", err)
+		logger.Error("RTSP", "❌ Failed to start RTSP server: %v", err)
+		os.Exit(1)
 	}
 
 	// 2. Start embedded ONVIF Profile S/T Server (WS-Discovery + Media + Events + DeviceIO)
@@ -839,7 +842,7 @@ func main() {
 		cfg.ProductID,
 		bridgeMgr.SetResolution,
 		func() error {
-			log.Printf("[ONVIF] Reboot requested")
+			logger.Info("ONVIF", "Reboot requested")
 			return nil
 		},
 		bridgeMgr.SetLampState,
@@ -849,7 +852,7 @@ func main() {
 	defer onvifServer.Close()
 
 	if err := onvifServer.Start(ctx); err != nil {
-		log.Printf("[!] Warning: Could not start ONVIF server: %v", err)
+		logger.Warn("ONVIF", "⚠️ Could not start ONVIF server: %v", err)
 	}
 
 	var mqttClient *mqtt.Client
@@ -866,7 +869,6 @@ func main() {
 			ProductID:       cfg.ProductID,
 			Model:           modelName,
 			BridgeHTTPURL:   fmt.Sprintf("http://%s:%d", getLocalBridgeIP(cfg.CameraIP), appCfg.ONVIFPort),
-			Debug:           appCfg.Debug,
 		}, mqtt.Callbacks{
 			SetLampMode:       bridgeMgr.SetLampState,
 			SetHighlight:      bridgeMgr.SetHighlight,
@@ -880,7 +882,7 @@ func main() {
 		})
 		go func() {
 			if err := mqttClient.Start(ctx); err != nil {
-				log.Printf("[MQTT] ⚠️ MQTT client error: %v", err)
+				logger.Warn("MQTT", "⚠️ MQTT client error: %v", err)
 			}
 		}()
 
@@ -898,19 +900,19 @@ func main() {
 			}
 		})
 	} else {
-		log.Printf("[Config] ℹ️ MQTT is disabled (no broker configured). To enable Home Assistant entities, configure 'mqtt_broker' in addon options or install an MQTT broker addon.")
+		logger.Info("Config", "ℹ️ MQTT is disabled (no broker configured). To enable Home Assistant entities, configure 'mqtt_broker' in addon options or install an MQTT broker addon.")
 	}
 
 	// 4. Branch: Xiongmai Sofia Driver (L 620 CAM) vs. Nabto WebRTC Driver (L 625 CAM SC)
 	if isL620 {
-		log.Printf("[Bridge] 🚀 [ONLINE] Steinel L 620 CAM stream ready at rtsp://0.0.0.0:%d/%s", appCfg.RTSPPort, appCfg.RTSPPath)
-		log.Printf("[Bridge] 🛰️ [ONVIF] Endpoints active at http://0.0.0.0:%d/onvif/device_service", appCfg.ONVIFPort)
+		logger.Info("Bridge", "🚀 [ONLINE] Steinel L 620 CAM stream ready at rtsp://0.0.0.0:%d/%s", appCfg.RTSPPort, appCfg.RTSPPath)
+		logger.Info("Bridge", "🛰️ [ONVIF] Endpoints active at http://0.0.0.0:%d/onvif/device_service", appCfg.ONVIFPort)
 
-		xmDriver := xiongmai.NewDriver(cfg.CameraIP, appCfg.CameraUser, appCfg.CameraPassword, appCfg.Resolution, rtspServer, events.GlobalBus, appCfg.Debug)
+		xmDriver := xiongmai.NewDriver(cfg.CameraIP, appCfg.CameraUser, appCfg.CameraPassword, appCfg.Resolution, rtspServer, events.GlobalBus)
 		bridgeMgr.SetXMDriver(xmDriver)
 
 		if err := xmDriver.Start(ctx); err != nil {
-			log.Printf("[Xiongmai] ⚠️ Driver initialization warning: %v", err)
+			logger.Warn("Xiongmai", "⚠️ Driver initialization warning: %v", err)
 		}
 		defer func() { _ = xmDriver.Close() }()
 
@@ -925,14 +927,14 @@ func main() {
 			var err error
 			usePure := appCfg.NabtoDriver == "pure" || os.Getenv("USE_CGO_NABTO") == "false" || os.Getenv("USE_CGO_NABTO") == "0"
 			if usePure {
-				log.Printf("[Driver] 🚀 Using native Pure-Go Nabto driver (experimental)")
+				logger.Info("Driver", "🚀 Using native Pure-Go Nabto driver (experimental)")
 				client, err = nabtopure.NewClient(cfg)
 			} else {
-				log.Printf("[Driver] 🔧 Using C-SDK wrapper driver (libnabto_client.so, default)")
+				logger.Info("Driver", "🔧 Using C-SDK wrapper driver (libnabto_client.so, default)")
 				client, err = nabto.NewClient(cfg)
 			}
 			if err != nil {
-				log.Printf("[!] Nabto client init error: %v", err)
+				logger.Error("Nabto", "❌ Nabto client init error: %v", err)
 				select {
 				case <-ctx.Done():
 					break supervisorLoop
@@ -964,24 +966,24 @@ func main() {
 				select {
 				case <-connectDone:
 				case <-time.After(3 * time.Second):
-					log.Printf("[Supervisor] ⚠️ Warning: connect goroutine did not exit within 3s after Close")
+					logger.Warn("Supervisor", "⚠️ Warning: connect goroutine did not exit within 3s after Close")
 				}
 			case err := <-connectDone:
 				connectErr = err
 			}
 
 			if connectErr != nil {
-				log.Printf("[Supervisor] ❌ Connect failed (%v)", connectErr)
-				log.Printf("[Supervisor] 🧹 Cleaning up camera connection state...")
+				logger.Error("Supervisor", "❌ Connect failed (%v)", connectErr)
+				logger.Info("Supervisor", "🧹 Cleaning up camera connection state...")
 				client.Close()
 				if ctx.Err() != nil {
 					break supervisorLoop
 				}
 				if usePure {
-					log.Printf("[Supervisor] 🚨 Native Pure-Go Nabto driver failed to connect to camera.")
-					log.Printf("[Supervisor] 💡 Recommendation: Set 'nabto_driver: cgo' in Home Assistant Add-on config for official Nabto C-SDK support.")
+					logger.Warn("Supervisor", "🚨 Native Pure-Go Nabto driver failed to connect to camera.")
+					logger.Info("Supervisor", "💡 Recommendation: Set 'nabto_driver: cgo' in Home Assistant Add-on config for official Nabto C-SDK support.")
 				}
-				log.Printf("[Supervisor] ⏳ Waiting 15s before retry to allow camera cooldown...")
+				logger.Info("Supervisor", "⏳ Waiting 15s before retry to allow camera cooldown...")
 				select {
 				case <-ctx.Done():
 					break supervisorLoop
@@ -995,7 +997,7 @@ func main() {
 				mqttClient.UpdateDeviceInfo(cfg.DeviceID, cfg.ProductID)
 			}
 
-			log.Printf("[Supervisor] 🛰️ Querying WebRTC signaling port from camera...")
+			logger.Info("Supervisor", "🛰️ Querying WebRTC signaling port from camera...")
 			type portResult struct {
 				port uint32
 				err  error
@@ -1022,7 +1024,7 @@ func main() {
 				select {
 				case <-portCh:
 				case <-time.After(3 * time.Second):
-					log.Printf("[Supervisor] ⚠️ Warning: port query goroutine did not exit within 3s after Close")
+					logger.Warn("Supervisor", "⚠️ Warning: port query goroutine did not exit within 3s after Close")
 				}
 			case res := <-portCh:
 				port = res.port
@@ -1030,17 +1032,17 @@ func main() {
 			}
 
 			if portErr != nil {
-				log.Printf("[Supervisor] ❌ GetSignalingPort failed (%v)", portErr)
-				log.Printf("[Supervisor] 🧹 Cleaning up camera connection state...")
+				logger.Error("Supervisor", "❌ GetSignalingPort failed (%v)", portErr)
+				logger.Info("Supervisor", "🧹 Cleaning up camera connection state...")
 				client.Close()
 				if ctx.Err() != nil {
 					break supervisorLoop
 				}
 				if usePure {
-					log.Printf("[Supervisor] 🚨 Native Pure-Go Nabto driver failed to query signaling port from camera.")
-					log.Printf("[Supervisor] 💡 Recommendation: Set 'nabto_driver: cgo' in Home Assistant Add-on config for official Nabto C-SDK support.")
+					logger.Warn("Supervisor", "🚨 Native Pure-Go Nabto driver failed to query signaling port from camera.")
+					logger.Info("Supervisor", "💡 Recommendation: Set 'nabto_driver: cgo' in Home Assistant Add-on config for official Nabto C-SDK support.")
 				}
-				log.Printf("[Supervisor] ⏳ Waiting 15s before retry...")
+				logger.Info("Supervisor", "⏳ Waiting 15s before retry...")
 				select {
 				case <-ctx.Done():
 					break supervisorLoop
@@ -1049,7 +1051,7 @@ func main() {
 				continue
 			}
 
-			log.Printf("[Supervisor] 🔄 Opening Nabto signaling stream on port %d...", port)
+			logger.Info("Supervisor", "🔄 Opening Nabto signaling stream on port %d...", port)
 			type streamResult struct {
 				stream nabto.StreamDriver
 				err    error
@@ -1076,7 +1078,7 @@ func main() {
 				select {
 				case <-streamCh:
 				case <-time.After(3 * time.Second):
-					log.Printf("[Supervisor] ⚠️ Warning: stream open goroutine did not exit within 3s after Close")
+					logger.Warn("Supervisor", "⚠️ Warning: stream open goroutine did not exit within 3s after Close")
 				}
 			case res := <-streamCh:
 				stream = res.stream
@@ -1084,17 +1086,17 @@ func main() {
 			}
 
 			if streamErr != nil {
-				log.Printf("[Supervisor] ❌ OpenSignalingStream failed (%v)", streamErr)
-				log.Printf("[Supervisor] 🧹 Cleaning up camera connection state...")
+				logger.Error("Supervisor", "❌ OpenSignalingStream failed (%v)", streamErr)
+				logger.Info("Supervisor", "🧹 Cleaning up camera connection state...")
 				client.Close()
 				if ctx.Err() != nil {
 					break supervisorLoop
 				}
 				if usePure {
-					log.Printf("[Supervisor] 🚨 Native Pure-Go Nabto driver failed to open signaling stream with camera.")
-					log.Printf("[Supervisor] 💡 Recommendation: Set 'nabto_driver: cgo' in Home Assistant Add-on config for official Nabto C-SDK support.")
+					logger.Warn("Supervisor", "🚨 Native Pure-Go Nabto driver failed to open signaling stream with camera.")
+					logger.Info("Supervisor", "💡 Recommendation: Set 'nabto_driver: cgo' in Home Assistant Add-on config for official Nabto C-SDK support.")
 				}
-				log.Printf("[Supervisor] ⏳ Waiting 15s before retry...")
+				logger.Info("Supervisor", "⏳ Waiting 15s before retry...")
 				select {
 				case <-ctx.Done():
 					break supervisorLoop
@@ -1102,23 +1104,23 @@ func main() {
 				}
 				continue
 			}
-			log.Printf("[Supervisor] ✅ Nabto signaling stream connected on port %d", port)
+			logger.Info("Supervisor", "✅ Nabto signaling stream connected on port %d", port)
 
-			log.Printf("[Bridge] 🚀 [ONLINE] Stream ready at rtsp://0.0.0.0:%d/%s", appCfg.RTSPPort, appCfg.RTSPPath)
-			log.Printf("[Bridge] 🛰️ [ONVIF] Endpoints active at http://0.0.0.0:%d/onvif/device_service", appCfg.ONVIFPort)
+			logger.Info("Bridge", "🚀 [ONLINE] Stream ready at rtsp://0.0.0.0:%d/%s", appCfg.RTSPPort, appCfg.RTSPPath)
+			logger.Info("Bridge", "🛰️ [ONVIF] Endpoints active at http://0.0.0.0:%d/onvif/device_service", appCfg.ONVIFPort)
 
-			bridge := webrtc.NewBridge(client, stream, rtspServer, appCfg.Resolution, 1*time.Second, appCfg.Debug)
+			bridge := webrtc.NewBridge(client, stream, rtspServer, appCfg.Resolution, 1*time.Second)
 			bridgeMgr.SetBridge(bridge)
 
 			_ = bridge.Run(ctx)
 
 			bridgeMgr.SetBridge(nil)
 			stream.Close()
-			log.Printf("[Supervisor] 🧹 Closing camera session and releasing connection...")
+			logger.Info("Supervisor", "🧹 Closing camera session and releasing connection...")
 			client.Close()
 
 			if ctx.Err() == nil {
-				log.Printf("[Supervisor] ⏳ Stream session disconnected / Watchdog reset. Waiting 30s cooldown before reconnecting to allow camera reboot...")
+				logger.Info("Supervisor", "⏳ Stream session disconnected / Watchdog reset. Waiting 30s cooldown before reconnecting to allow camera reboot...")
 				select {
 				case <-ctx.Done():
 					break supervisorLoop
@@ -1130,7 +1132,7 @@ func main() {
 
 	rtspServer.Close()
 	onvifServer.Close()
-	log.Printf("[*] Standalone Go Bridge stopped cleanly.")
+	logger.Info("Main", "Standalone Go Bridge stopped cleanly.")
 }
 
 func getLocalBridgeIP(target string) string {

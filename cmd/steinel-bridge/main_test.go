@@ -26,7 +26,7 @@ func TestLayer1_CodeDefaults(t *testing.T) {
 	assert.Equal(t, "steinel", cfg.RTSPPath)
 	assert.Equal(t, 8000, cfg.ONVIFPort)
 	assert.False(t, cfg.ResetPairing)
-	assert.False(t, cfg.Debug)
+	assert.Equal(t, "info", cfg.LogLevel)
 	assert.Equal(t, "", cfg.MQTTBroker)
 	assert.Equal(t, "steinel", cfg.MQTTTopic)
 	assert.Equal(t, "homeassistant", cfg.MQTTDiscovery)
@@ -47,7 +47,7 @@ func TestLayer2_ConfigFileOverridesDefaults(t *testing.T) {
 		"rtsp_port": 8555,
 		"onvif_port": 8001,
 		"reset_pairing": true,
-		"debug": true,
+		"log_level": "debug",
 		"mqtt_broker": "tcp://192.168.88.10:1883",
 		"mqtt_user": "user_test",
 		"mqtt_password": "pwd_test",
@@ -70,7 +70,7 @@ func TestLayer2_ConfigFileOverridesDefaults(t *testing.T) {
 	assert.Equal(t, 8555, cfg.RTSPPort)
 	assert.Equal(t, 8001, cfg.ONVIFPort)
 	assert.True(t, cfg.ResetPairing)
-	assert.True(t, cfg.Debug)
+	assert.Equal(t, "debug", cfg.LogLevel)
 	assert.Equal(t, "tcp://192.168.88.10:1883", cfg.MQTTBroker)
 	assert.Equal(t, "user_test", cfg.MQTTUser)
 	assert.Equal(t, "pwd_test", cfg.MQTTPassword)
@@ -149,6 +149,7 @@ func TestLayer3_EnvironmentOverridesConfigFile(t *testing.T) {
 	t.Setenv("RESOLUTION", "360p")
 	t.Setenv("RTSP_PORT", "8556")
 	t.Setenv("NABTO_DRIVER", "cgo")
+	t.Setenv("LOG_LEVEL", "warn")
 
 	cfg := resolveConfig(optsFile, nil)
 
@@ -157,6 +158,7 @@ func TestLayer3_EnvironmentOverridesConfigFile(t *testing.T) {
 	assert.Equal(t, "360p", cfg.Resolution)
 	assert.Equal(t, 8556, cfg.RTSPPort)
 	assert.Equal(t, "cgo", cfg.NabtoDriver)
+	assert.Equal(t, "warn", cfg.LogLevel)
 }
 
 // TestLayer4_CLIFlagsOverrideAll verifies POSIX principle (explicit CLI flags override environment & config files)
@@ -184,6 +186,7 @@ func TestLayer4_CLIFlagsOverrideAll(t *testing.T) {
 	t.Setenv("RESOLUTION", "360p")
 	t.Setenv("RTSP_PORT", "8556")
 	t.Setenv("NABTO_DRIVER", "cgo")
+	t.Setenv("LOG_LEVEL", "warn")
 
 	// Set explicit CLI flag set
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
@@ -194,8 +197,9 @@ func TestLayer4_CLIFlagsOverrideAll(t *testing.T) {
 	fs.String("res", "", "")
 	fs.Int("port", 0, "")
 	fs.String("nabto-driver", "", "")
+	fs.String("log-level", "", "")
 
-	err = fs.Parse([]string{"-ip", "10.0.0.1", "-type", "l620", "-user", "admin_cli", "-pass", "secret_cli", "-res", "1080p", "-port", "9000", "-nabto-driver", "pure"})
+	err = fs.Parse([]string{"-ip", "10.0.0.1", "-type", "l620", "-user", "admin_cli", "-pass", "secret_cli", "-res", "1080p", "-port", "9000", "-nabto-driver", "pure", "-log-level", "trace"})
 	assert.NoError(t, err)
 
 	cfg := resolveConfig(optsFile, fs)
@@ -208,6 +212,7 @@ func TestLayer4_CLIFlagsOverrideAll(t *testing.T) {
 	assert.Equal(t, "1080p", cfg.Resolution)
 	assert.Equal(t, 9000, cfg.RTSPPort)
 	assert.Equal(t, "pure", cfg.NabtoDriver)
+	assert.Equal(t, "trace", cfg.LogLevel)
 }
 
 func TestProbePort(t *testing.T) {

@@ -11,7 +11,6 @@ type Config struct {
 	KeyPath    string
 	IsBeta     bool
 	ClientName string
-	Debug      bool
 }
 
 // Driver defines the common interface for communicating with a Nabto Edge camera.
