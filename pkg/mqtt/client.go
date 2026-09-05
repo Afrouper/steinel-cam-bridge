@@ -2,20 +2,18 @@ package mqtt
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/Afrouper/steinel-cam-bridge/pkg/events"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/logger"
-	"github.com/Afrouper/steinel-cam-bridge/pkg/storage"
 
 	paho "github.com/eclipse/paho.mqtt.golang"
 )
 
+// Config holds the configuration options for connecting to an MQTT broker and defining Home Assistant entities.
 type Config struct {
 	Broker          string
 	Username        string
@@ -29,6 +27,7 @@ type Config struct {
 	BridgeHTTPURL   string
 }
 
+// Callbacks holds function hooks for executing device control actions triggered via MQTT command topics.
 type Callbacks struct {
 	SetLampMode       func(mode string) error
 	SetHighlight      func(percent int) error
@@ -41,6 +40,7 @@ type Callbacks struct {
 	SetResolution     func(res string) error
 }
 
+// Client manages the MQTT connection, Home Assistant discovery, state publishing, and command reception.
 type Client struct {
 	cfg       Config
 	cb        Callbacks
@@ -50,6 +50,7 @@ type Client struct {
 	mu        sync.RWMutex
 }
 
+// NewClient initializes a new MQTT client instance.
 func NewClient(cfg Config, cb Callbacks) *Client {
 	if cfg.DiscoveryPrefix == "" {
 		cfg.DiscoveryPrefix = "homeassistant"
@@ -79,14 +80,12 @@ func NewClient(cfg Config, cb Callbacks) *Client {
 		cfg.ClientID = fmt.Sprintf("steinel_bridge_%s", cleanDID)
 	}
 
-	c := &Client{
+	return &Client{
 		cfg:       cfg,
 		cb:        cb,
 		nodeID:    nodeID,
 		baseTopic: fullBaseTopic,
 	}
-
-	return c
 }
 
 // UpdateDeviceInfo updates the device identifiers and re-publishes discovery & availability.
@@ -119,6 +118,7 @@ func (c *Client) UpdateDeviceInfo(deviceID, productID string) {
 	}
 }
 
+// Start connects to the MQTT broker, configures LWT, subscribes to commands, and publishes initial discovery & state.
 func (c *Client) Start(_ context.Context) error {
 	opts := paho.NewClientOptions()
 	opts.AddBroker(c.cfg.Broker)
@@ -193,6 +193,7 @@ func (c *Client) Start(_ context.Context) error {
 	return nil
 }
 
+// Close gracefully disconnects from the MQTT broker after publishing offline availability.
 func (c *Client) Close() {
 	c.mu.RLock()
 	cl := c.client
@@ -202,361 +203,5 @@ func (c *Client) Close() {
 		availTopic := fmt.Sprintf("%s/availability", c.baseTopic)
 		cl.Publish(availTopic, 1, true, "offline").Wait()
 		cl.Disconnect(250)
-	}
-}
-
-// --- Home Assistant Auto-Discovery ---
-
-func (c *Client) publishDiscovery(client paho.Client) {
-	availTopic := fmt.Sprintf("%s/availability", c.baseTopic)
-	devMap := map[string]interface{}{
-		"identifiers":  []string{c.nodeID},
-		"name":         fmt.Sprintf("Steinel %s (%s)", c.cfg.Model, c.cfg.DeviceID),
-		"manufacturer": "STEINEL",
-		"model":        c.cfg.Model,
-		"sw_version":   "2.0.0",
-	}
-	if c.cfg.BridgeHTTPURL != "" {
-		devMap["configuration_url"] = c.cfg.BridgeHTTPURL
-	}
-
-	// Helper for publishing a single discovery entity
-	publishEntity := func(component string, objectID string, config map[string]interface{}) {
-		config["availability_topic"] = availTopic
-		config["device"] = devMap
-		if _, ok := config["unique_id"]; !ok {
-			config["unique_id"] = fmt.Sprintf("%s_%s", c.nodeID, objectID)
-		}
-
-		discTopic := fmt.Sprintf("%s/%s/%s/%s/config", c.cfg.DiscoveryPrefix, component, c.nodeID, objectID)
-		payload, _ := json.Marshal(config)
-		client.Publish(discTopic, 1, true, payload)
-	}
-
-	// 1. Number (Hauptlicht Helligkeit: 10 - 100%)
-	publishEntity("number", "highlight", map[string]interface{}{
-		"name":                "Hauptlicht Helligkeit",
-		"min":                 10,
-		"max":                 100,
-		"step":                5,
-		"unit_of_measurement": "%",
-		"icon":                "mdi:brightness-percent",
-		"entity_category":     "config",
-		"state_topic":         fmt.Sprintf("%s/highlight/state", c.baseTopic),
-		"command_topic":       fmt.Sprintf("%s/highlight/set", c.baseTopic),
-	})
-
-	// 2. Select (Betriebsmodus: Sensor, Dauerlicht, Aus)
-	publishEntity("select", "mode", map[string]interface{}{
-		"name":          "Betriebsmodus",
-		"options":       []string{"Sensor", "Dauerlicht", "Aus"},
-		"state_topic":   fmt.Sprintf("%s/mode/state", c.baseTopic),
-		"command_topic": fmt.Sprintf("%s/mode/set", c.baseTopic),
-		"icon":          "mdi:theme-light-dark",
-	})
-
-	// 3. Binary Sensor (PIR Status)
-	publishEntity("binary_sensor", "pir_status", map[string]interface{}{
-		"name":            "PIR Sensor aktiv",
-		"device_class":    "running",
-		"entity_category": "diagnostic",
-		"state_topic":     fmt.Sprintf("%s/pir/state", c.baseTopic),
-		"icon":            "mdi:motion-sensor",
-	})
-
-	// 5. Number (PIR Sensitivity: 0 - 100%)
-	publishEntity("number", "pir_sensitivity", map[string]interface{}{
-		"name":                "PIR Empfindlichkeit",
-		"min":                 0,
-		"max":                 100,
-		"step":                1,
-		"unit_of_measurement": "%",
-		"icon":                "mdi:tune",
-		"entity_category":     "config",
-		"state_topic":         fmt.Sprintf("%s/pir_sensitivity/state", c.baseTopic),
-		"command_topic":       fmt.Sprintf("%s/pir_sensitivity/set", c.baseTopic),
-	})
-
-	// 6. Number (Lux Threshold: 2 - 1000 lx)
-	publishEntity("number", "lux_threshold", map[string]interface{}{
-		"name":                "Dämmerungsschwelle",
-		"min":                 2,
-		"max":                 1000,
-		"step":                5,
-		"unit_of_measurement": "lx",
-		"icon":                "mdi:weather-sunset",
-		"entity_category":     "config",
-		"state_topic":         fmt.Sprintf("%s/lux_threshold/state", c.baseTopic),
-		"command_topic":       fmt.Sprintf("%s/lux_threshold/set", c.baseTopic),
-	})
-
-	// 8. Number (Duration: 5 - 900s)
-	publishEntity("number", "duration", map[string]interface{}{
-		"name":                "Nachlaufzeit",
-		"min":                 5,
-		"max":                 900,
-		"step":                5,
-		"unit_of_measurement": "s",
-		"icon":                "mdi:timer-outline",
-		"entity_category":     "config",
-		"state_topic":         fmt.Sprintf("%s/duration/state", c.baseTopic),
-		"command_topic":       fmt.Sprintf("%s/duration/set", c.baseTopic),
-	})
-
-	// 9. Number (Grundlicht: 0 - 50%)
-	publishEntity("number", "lowlight", map[string]interface{}{
-		"name":                "Grundlicht Helligkeit",
-		"min":                 0,
-		"max":                 50,
-		"step":                5,
-		"unit_of_measurement": "%",
-		"icon":                "mdi:lightbulb-night",
-		"entity_category":     "config",
-		"state_topic":         fmt.Sprintf("%s/lowlight/state", c.baseTopic),
-		"command_topic":       fmt.Sprintf("%s/lowlight/set", c.baseTopic),
-	})
-
-	// 10. Siren (Warnton / Alarm)
-	publishEntity("siren", "siren", map[string]interface{}{
-		"name":          "Sirene",
-		"icon":          "mdi:bullhorn",
-		"state_topic":   fmt.Sprintf("%s/siren/state", c.baseTopic),
-		"command_topic": fmt.Sprintf("%s/siren/set", c.baseTopic),
-	})
-
-	// 11. Select (Video Auflösung)
-	publishEntity("select", "resolution", map[string]interface{}{
-		"name":            "Video Auflösung",
-		"options":         []string{"1080p", "720p", "360p"},
-		"icon":            "mdi:video-vintage",
-		"entity_category": "config",
-		"state_topic":     fmt.Sprintf("%s/resolution/state", c.baseTopic),
-		"command_topic":   fmt.Sprintf("%s/resolution/set", c.baseTopic),
-	})
-
-	// 12. Event (Letzte SD-Aufnahme)
-	publishEntity("event", "recording", map[string]interface{}{
-		"name":        "Letzte SD-Aufnahme",
-		"icon":        "mdi:video-box",
-		"state_topic": fmt.Sprintf("%s/event/recording", c.baseTopic),
-		"event_types": []string{"motion", "manual", "alarm", "record", "plan", "all"},
-	})
-
-	logger.Info("MQTT", "📢 Published Home Assistant Auto-Discovery entities for %s under %s", c.nodeID, c.cfg.DiscoveryPrefix)
-}
-
-// PublishRecordingEvent publishes a new recording event to Home Assistant MQTT
-func (c *Client) PublishRecordingEvent(item storage.RecordingItem) {
-	c.mu.RLock()
-	cl := c.client
-	c.mu.RUnlock()
-
-	if cl == nil || !cl.IsConnected() {
-		return
-	}
-
-	eventType := strings.ToLower(item.EventType)
-	if eventType == "" || (eventType != "manual" && eventType != "alarm" && eventType != "record" && eventType != "plan") {
-		eventType = "motion"
-	}
-
-	payload := map[string]interface{}{
-		"event_type":      eventType,
-		"id":              item.ID,
-		"timestamp":       item.StartTime.Format(time.RFC3339),
-		"duration_sec":    item.DurationSeconds,
-		"file_size_bytes": item.FileSizeBytes,
-		"video_url":       fmt.Sprintf("%s%s", c.cfg.BridgeHTTPURL, item.VideoURL),
-	}
-	if item.ThumbnailURL != "" {
-		payload["thumbnail_url"] = fmt.Sprintf("%s%s", c.cfg.BridgeHTTPURL, item.ThumbnailURL)
-	}
-
-	data, err := json.Marshal(payload)
-	if err == nil {
-		logger.Debug("MQTT", "📢 Publishing recording event to %s/event/recording: %s", c.baseTopic, string(data))
-		token := cl.Publish(fmt.Sprintf("%s/event/recording", c.baseTopic), 1, false, data)
-		_ = token.WaitTimeout(2 * time.Second)
-	}
-}
-
-// --- State Publication ---
-
-func (c *Client) publishMotion(isMotion bool) {
-	c.mu.RLock()
-	cl := c.client
-	c.mu.RUnlock()
-
-	if cl == nil || !cl.IsConnected() {
-		return
-	}
-
-	state := "OFF"
-	if isMotion {
-		state = "ON"
-	}
-	cl.Publish(fmt.Sprintf("%s/motion/state", c.baseTopic), 1, false, state)
-}
-
-func (c *Client) publishStatus(st events.DeviceStatus) {
-	c.mu.RLock()
-	cl := c.client
-	c.mu.RUnlock()
-
-	if cl == nil || !cl.IsConnected() {
-		return
-	}
-
-	logger.Trace("MQTT", "Publishing device status: mode=%d res=%s pir=%v lux=%d", st.LampMode, st.Resolution, st.PIRActive, st.Lux)
-
-	pub := func(subTopic string, val string) {
-		cl.Publish(fmt.Sprintf("%s/%s", c.baseTopic, subTopic), 1, true, val)
-	}
-
-	// 1. Lamp State & Mode
-	switch st.LampMode {
-	case 1:
-		pub("light/state", "ON")
-		pub("mode/state", "Dauerlicht")
-	case 2:
-		pub("light/state", "ON")
-		pub("mode/state", "Sensor")
-	default:
-		pub("light/state", "OFF")
-		pub("mode/state", "Aus")
-	}
-
-	// 2. Brightness & Dimm values
-	if st.Highlight > 0 {
-		pub("highlight/state", strconv.Itoa(st.Highlight))
-		pub("light/brightness/state", strconv.Itoa(st.Highlight))
-	}
-	pub("duration/state", strconv.Itoa(st.HighlightTime))
-	pub("lowlight/state", strconv.Itoa(st.Lowlight))
-
-	// 3. Sensor values & thresholds
-	pub("lux_threshold/state", strconv.Itoa(st.Lux))
-	pub("lux/state", strconv.Itoa(st.Lux))
-	pub("pir_sensitivity/state", strconv.Itoa(st.PIRSensitivity))
-
-	pirState := "OFF"
-	if st.PIRActive {
-		pirState = "ON"
-	}
-	pub("pir/state", pirState)
-
-	// 4. Resolution
-	if st.Resolution != "" {
-		pub("resolution/state", st.Resolution)
-	}
-}
-
-// --- Command Dispatching ---
-
-func (c *Client) handleCommand(_ paho.Client, msg paho.Message) {
-	topic := msg.Topic()
-	payload := strings.TrimSpace(string(msg.Payload()))
-	logger.Info("MQTT", "📩 Command received on %s: %s", topic, payload)
-
-	switch {
-	case strings.HasSuffix(topic, "/highlight/set"), strings.HasSuffix(topic, "/light/brightness/set"):
-		if val, err := strconv.Atoi(payload); err == nil {
-			if c.cb.SetHighlight != nil {
-				_ = c.cb.SetHighlight(val)
-			}
-		}
-
-	case strings.HasSuffix(topic, "/light/set"):
-		if strings.EqualFold(payload, "ON") {
-			if c.cb.SetLampMode != nil {
-				_ = c.cb.SetLampMode("on")
-			}
-		} else {
-			if c.cb.SetLampMode != nil {
-				_ = c.cb.SetLampMode("off")
-			}
-		}
-
-	case strings.HasSuffix(topic, "/mode/set"):
-		switch strings.ToLower(payload) {
-		case "sensor", "auto", "2":
-			if c.cb.SetLampMode != nil {
-				_ = c.cb.SetLampMode("auto")
-			}
-		case "dauerlicht", "on", "1":
-			if c.cb.SetLampMode != nil {
-				_ = c.cb.SetLampMode("on")
-			}
-		case "aus", "off", "0":
-			if c.cb.SetLampMode != nil {
-				_ = c.cb.SetLampMode("off")
-			}
-		}
-
-	case strings.HasSuffix(topic, "/pir_sensitivity/set"):
-		if val, err := strconv.Atoi(payload); err == nil {
-			if c.cb.SetPIRSensitivity != nil {
-				_ = c.cb.SetPIRSensitivity(val)
-			}
-		}
-
-	case strings.HasSuffix(topic, "/lux_threshold/set"), strings.HasSuffix(topic, "/lux/set"):
-		if val, err := strconv.Atoi(payload); err == nil {
-			if c.cb.SetLuxThreshold != nil {
-				_ = c.cb.SetLuxThreshold(val)
-			}
-			c.mu.RLock()
-			cl := c.client
-			c.mu.RUnlock()
-			if cl != nil && cl.IsConnected() {
-				cl.Publish(fmt.Sprintf("%s/lux_threshold/state", c.baseTopic), 1, true, strconv.Itoa(val))
-				cl.Publish(fmt.Sprintf("%s/lux/state", c.baseTopic), 1, true, strconv.Itoa(val))
-			}
-		}
-
-	case strings.HasSuffix(topic, "/duration/set"):
-		if val, err := strconv.Atoi(payload); err == nil {
-			if c.cb.SetHighlightTime != nil {
-				_ = c.cb.SetHighlightTime(val)
-			}
-		}
-
-	case strings.HasSuffix(topic, "/lowlight/set"):
-		if val, err := strconv.Atoi(payload); err == nil {
-			if c.cb.SetLowlight != nil {
-				_ = c.cb.SetLowlight(val)
-			}
-		}
-
-	case strings.HasSuffix(topic, "/siren/set"):
-		var on bool
-		if strings.HasPrefix(payload, "{") {
-			var sirenCmd struct {
-				State string `json:"state"`
-			}
-			if err := json.Unmarshal([]byte(payload), &sirenCmd); err == nil {
-				on = strings.EqualFold(sirenCmd.State, "ON") || sirenCmd.State == "1" || strings.EqualFold(sirenCmd.State, "true")
-			}
-		} else {
-			on = strings.EqualFold(payload, "ON") || payload == "1" || strings.EqualFold(payload, "true")
-		}
-		if c.cb.SetSiren != nil {
-			_ = c.cb.SetSiren(on)
-		}
-		stateStr := "OFF"
-		if on {
-			stateStr = "ON"
-		}
-		c.mu.RLock()
-		cl := c.client
-		c.mu.RUnlock()
-		if cl != nil && cl.IsConnected() {
-			cl.Publish(fmt.Sprintf("%s/siren/state", c.baseTopic), 1, true, stateStr)
-		}
-
-	case strings.HasSuffix(topic, "/resolution/set"):
-		if c.cb.SetResolution != nil {
-			_ = c.cb.SetResolution(payload)
-		}
 	}
 }
