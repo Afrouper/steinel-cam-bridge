@@ -24,7 +24,7 @@ options:
   audio_codec: "aac"
   rtsp_port: 8554
   onvif_port: 8000
-  sdcard_sync_interval: 30
+  sdcard_sync_interval: 60
   nabto_driver: "cgo"
   debug: false
 schema:

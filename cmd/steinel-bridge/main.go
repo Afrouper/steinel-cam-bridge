@@ -492,7 +492,7 @@ func resolveConfig(optionsPath string, fs *flag.FlagSet) *AppConfig {
 		MQTTPassword:       "",
 		MQTTTopic:          "steinel",
 		MQTTDiscovery:      "homeassistant",
-		SDCardSyncInterval: 30,
+		SDCardSyncInterval: 60,
 		NabtoDriver:        "cgo",
 	}
 
@@ -702,8 +702,8 @@ func main() {
 	flag.String("mqtt-topic", "", "MQTT base topic prefix (default: steinel)")
 	flag.String("mqtt-disc", "", "MQTT Home Assistant Discovery Prefix")
 	flag.String("audio-codec", "", "Audio codec for RTSP/ONVIF stream: 'aac' (transcoded, default) or 'pcmu' (raw passthrough)")
-	flag.Int("sync-interval", 30, "Interval in seconds to poll SD card for new recordings (default: 30s)")
-	flag.Int("sdcard-sync-interval", 30, "Interval in seconds to poll SD card for new recordings (alias)")
+	flag.Int("sync-interval", 60, "Interval in seconds to poll SD card for new recordings (default: 60s)")
+	flag.Int("sdcard-sync-interval", 60, "Interval in seconds to poll SD card for new recordings (alias)")
 	flag.String("nabto-driver", "cgo", "Nabto Edge driver engine ('cgo' for C-SDK, default; 'pure' for native Go)")
 	flag.Bool("use-cgo", true, "Use C-SDK libnabto_client wrapper (default: true)")
 	flag.Bool("debug", false, "Enable verbose debug logging")
@@ -941,7 +941,12 @@ func main() {
 				continue
 			}
 
-			// Connect with timeout protection
+			// Connect with driver-appropriate timeout protection
+			connectTimeout := 30 * time.Second
+			if !usePure {
+				connectTimeout = 150 * time.Second // C-SDK single attempt can take up to 120s
+			}
+
 			connectDone := make(chan error, 1)
 			go func() {
 				connectDone <- client.Connect()
@@ -951,9 +956,10 @@ func main() {
 			select {
 			case <-ctx.Done():
 				client.Close()
+				<-connectDone
 				break supervisorLoop
-			case <-time.After(30 * time.Second):
-				connectErr = fmt.Errorf("connection timeout (30s) reached")
+			case <-time.After(connectTimeout):
+				connectErr = fmt.Errorf("connection timeout (%v) reached", connectTimeout)
 			case err := <-connectDone:
 				connectErr = err
 			}
@@ -962,6 +968,7 @@ func main() {
 				log.Printf("[Supervisor] ❌ Connect failed (%v)", connectErr)
 				log.Printf("[Supervisor] 🧹 Cleaning up camera connection state...")
 				client.Close()
+				<-connectDone // Wait for connect goroutine to exit cleanly (stopped by client.Close)
 				if ctx.Err() != nil {
 					break supervisorLoop
 				}
@@ -999,6 +1006,7 @@ func main() {
 			select {
 			case <-ctx.Done():
 				client.Close()
+				<-portCh
 				break supervisorLoop
 			case <-time.After(15 * time.Second):
 				portErr = fmt.Errorf("timeout (15s) while querying signaling port")
@@ -1011,6 +1019,7 @@ func main() {
 				log.Printf("[Supervisor] ❌ GetSignalingPort failed (%v)", portErr)
 				log.Printf("[Supervisor] 🧹 Cleaning up camera connection state...")
 				client.Close()
+				<-portCh
 				if ctx.Err() != nil {
 					break supervisorLoop
 				}
@@ -1043,6 +1052,7 @@ func main() {
 			select {
 			case <-ctx.Done():
 				client.Close()
+				<-streamCh
 				break supervisorLoop
 			case <-time.After(15 * time.Second):
 				streamErr = fmt.Errorf("timeout (15s) while opening signaling stream on port %d", port)
@@ -1055,6 +1065,7 @@ func main() {
 				log.Printf("[Supervisor] ❌ OpenSignalingStream failed (%v)", streamErr)
 				log.Printf("[Supervisor] 🧹 Cleaning up camera connection state...")
 				client.Close()
+				<-streamCh
 				if ctx.Err() != nil {
 					break supervisorLoop
 				}

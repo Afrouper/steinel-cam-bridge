@@ -211,18 +211,26 @@ CGO_LDFLAGS="-L$(pwd)/.sdk/lib -lnabto_client" CGO_CFLAGS="-I$(pwd)/.sdk/include
 
 ### 4. Bridge lokal starten
 ```bash
-# macOS:
+# macOS (Steinel L 625 CAM SC via Nabto Edge CGo):
 DYLD_LIBRARY_PATH="$(pwd)/.sdk/lib" ./steinel-bridge \
   -ip 192.168.1.100 \
   -qr "did=de-xxxxxxx,pid=pr-xxxxx,sct=xxxx,pairPwd=xxxx" \
   -key ./data/local_client.key \
   -debug
 
-# Linux:
+# Linux (Steinel L 625 CAM SC via Nabto Edge CGo):
 LD_LIBRARY_PATH="$(pwd)/.sdk/lib" ./steinel-bridge \
   -ip 192.168.1.100 \
   -qr "did=de-xxxxxxx,pid=pr-xxxxx,sct=xxxx,pairPwd=xxxx" \
   -key ./data/local_client.key \
+  -debug
+
+# Steinel L 620 CAM / XLED CAM 1 (kein CGo / Nabto SDK erforderlich):
+./steinel-bridge \
+  -ip 192.168.1.100 \
+  -type l620 \
+  -user admin \
+  -pass "meinpasswort" \
   -debug
 ```
 
@@ -230,23 +238,53 @@ LD_LIBRARY_PATH="$(pwd)/.sdk/lib" ./steinel-bridge \
 
 ## ⚙️ Konfiguration & Umgebungsvariablen
 
-| Variable / Flag | CLI-Flag | Standard | Beschreibung |
+Die Konfiguration erfolgt nach den Grundsätzen einer [12-Factor App](https://12factor.net/config) in folgender Prioritätsreihenfolge:
+1. **Explizite CLI-Flags** (höchste Priorität)
+2. **Umgebungsvariablen**
+3. **Konfigurationsdatei** (`/data/options.json` im Home Assistant Add-on)
+4. **Interne Defaults**
+
+### Kameraverbindung & Authentifizierung
+
+| Umgebungsvariable | CLI-Flag | Standard | Beschreibung |
 |---|---|---|---|
-| `CAMERA_IP` | `-ip` | `192.168.1.2` | Lokale IP-Adresse der Steinel-Kamera |
-| `QR_CODE` | `-qr` | `""` | QR-Code Payload aus der Steinel App für automatisches Pairing |
-| `KEY_PATH` | `-key` | `data/client.key` | Speicherpfad für den persistenten ECC-Schlüssel |
-| `RESOLUTION` | `-res` | `1080p` | Videoauflösung (`1080p`, `720p`, `360p`) |
-| `AUDIO_CODEC` | `-audio-codec` | `aac` | Audio-Codec des RTSP/ONVIF Streams: `aac` (nativ transkodiert) oder `pcmu` (Raw Passthrough) |
+| `CAMERA_IP` | `-ip` | `""` | Lokale IP-Adresse der Steinel-Kamera im Heimnetz *(Pflicht)* |
+| `CAMERA_TYPE` | `-type` | `auto` | Kameramodell: `auto` (automatische Erkennung), `l625` (L 625 CAM SC), `l620` (L 620 CAM / XLED CAM 1) |
+| `CAMERA_USER` | `-user` | `admin` | Benutzername für L 620 CAM (Standard: `admin`) |
+| `CAMERA_PASSWORD` / `CAMERA_PASS` | `-pass` *(oder `-password`)* | `""` | Geräte-Passwort für L 620 CAM (in der Steinel-App vergeben) |
+| `QR_CODE` | `-qr` | `""` | QR-Code Payload aus der Steinel App ("Kamera teilen") für automatisches Pairing der L 625 CAM SC |
+| `KEY_PATH` | `-key` | `data/client.key` | Speicherpfad für den persistenten ECC-Schlüssel (L 625 CAM SC) |
+| `RESET_PAIRING` | `-reset-pairing` | `false` | Löscht den gespeicherten Private Key und erzwingt ein erneutes Pairing mit dem angegebenen QR-Code |
+
+### Streaming & Server-Ports
+
+| Umgebungsvariable | CLI-Flag | Standard | Beschreibung |
+|---|---|---|---|
+| `RESOLUTION` | `-res` | `1080p` | Videoauflösung: `1080p`, `720p`, `360p` |
+| `AUDIO_CODEC` | `-audio-codec` | `aac` | Audio-Codec des RTSP/ONVIF Streams: `aac` (nativ transkodiert, empfohlen) oder `pcmu` (Raw Passthrough) |
 | `RTSP_PORT` | `-port` | `8554` | Port des integrierten RTSP-Servers |
-| `ONVIF_PORT` | `-onvif` | `8000` | Port des integrierten ONVIF HTTP-Servers |
-| `SDCARD_SYNC_INTERVAL` | `-sync-interval` | `30` | Intervall in Sekunden für die Hintergrundabfrage neuer MicroSD-Aufnahmen |
-| `MQTT_BROKER` | `-mqtt-broker` | `""` | MQTT Broker URL (z. B. `tcp://192.168.1.100:1883`) |
+| `RTSP_PATH` | `-path` | `steinel` | Stream-Pfad des RTSP-Servers (`rtsp://<host>:<port>/<path>`) |
+| `ONVIF_PORT` | `-onvif` | `8000` | Port des integrierten ONVIF HTTP- und SD-Karten REST API-Servers |
+| `SDCARD_SYNC_INTERVAL` / `SYNC_INTERVAL` | `-sync-interval` *(oder `-sdcard-sync-interval`)* | `60` | Intervall in Sekunden für die Hintergrundabfrage neuer MicroSD-Aufnahmen (5–300 s) |
+
+### Nabto Edge Treiber & Diagnose (L 625 CAM SC)
+
+| Umgebungsvariable | CLI-Flag | Standard | Beschreibung |
+|---|---|---|---|
+| `NABTO_DRIVER` | `-nabto-driver` | `cgo` | Nabto-Treiber-Engine: `cgo` (offizielles C-SDK, empfohlen & Standard) oder `pure` (nativer Go-Stack, experimentell) |
+| `USE_CGO_NABTO` | `-use-cgo` | `true` | Boolean-Schalter für CGo-Treiber (`true` = cgo, `false` = pure) |
+| `DEBUG` | `-debug` | `false` | Ausführliches Debug-Logging für RTSP, WebRTC, Signaling & MCU |
+| `IS_BETA` / `BETA` | `-beta` | `false` | Kennzeichnet die Instanz bei der IAM-Registrierung auf der Kamera als Beta (`steinel-bridge-beta-...`) |
+
+### MQTT & Home Assistant Integration
+
+| Umgebungsvariable | CLI-Flag | Standard | Beschreibung |
+|---|---|---|---|
+| `MQTT_BROKER` | `-mqtt-broker` | `""` | MQTT Broker URL (z. B. `tcp://192.168.1.100:1883`). Leer lassen für automatische Supervisor-Erkennung im Home Assistant Add-on |
 | `MQTT_USER` | `-mqtt-user` | `""` | MQTT Benutzername |
 | `MQTT_PASSWORD` | `-mqtt-pass` | `""` | MQTT Passwort |
-| `MQTT_TOPIC_PREFIX` | `-mqtt-topic` | `steinel` | MQTT Basis-Topic (Geräte-ID wird automatisch angehängt) |
+| `MQTT_TOPIC_PREFIX` | `-mqtt-topic` | `steinel` | MQTT Basis-Topic (Geräte-ID wird automatisch angehängt: `<prefix>/<did>/...`) |
 | `MQTT_DISCOVERY_PREFIX` | `-mqtt-disc` | `homeassistant` | Home Assistant MQTT Auto-Discovery Prefix |
-| `DEBUG` | `-debug` | `false` | Ausführliches Debug-Logging für RTSP, WebRTC, Signaling & MCU |
-| `RESET_PAIRING` | `-reset-pairing` | `false` | Löscht den gespeicherten Private Key und erzwingt ein erneutes Pairing mit dem angegebenen QR-Code |
 
 ---
 
