@@ -2,6 +2,15 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.3.5
+
+### 🐛 Kritischer Fix: Supervisor Reconnect Deadlock & Fast-Fail
+- **Supervisor-Deadlock behoben**:
+  - Wurde ein Verbindungsfehler oder Timeout empfangen, las der Supervisor den Result-Channel fälschlicherweise ein zweites Mal (`<-connectDone`, `<-portCh`, `<-streamCh`). Da der Kanal bereits im `select` geleert war, blockierte der Supervisor dauerhaft und führte keine automatischen Neuverbindungsversuche mehr aus.
+  - Channels werden nun ausschließlich bei vorzeitigem Timeout oder Context-Abbruch per guarded Timeout-Select (max. 3s) geleert.
+- **CGo Fast-Fail (`ConnectTimeout: 25s`)**:
+  - Der interne Timeout des Nabto C-SDK für Verbindungsversuche wurde von 120s auf 25s (`ConnectTimeout: 25000`) gesenkt. Reagiert die Kamera während eines Reboots nicht, schlägt der Versuch nach 25s fehl und der Supervisor versucht es nach 15s Cooldown sofort erneut (statt 2 Minuten zu blockieren).
+
 ## 1.3.4
 
 ### 🛡️ Verbindungsstabilität & Lifecycle-Härtung

@@ -216,6 +216,11 @@ func (c *Client) Connect() error {
 	C.nabto_client_connection_add_direct_candidate(conn, cIP, C.uint16_t(c.cfg.CameraPort))
 	C.nabto_client_connection_end_of_direct_candidates(conn)
 
+	// Set connection attempt timeout to 25s (instead of C-SDK default 120s) so unreachable camera fails fast
+	cOpts := C.CString("{\"ConnectTimeout\":25000}")
+	_ = C.nabto_client_connection_set_options(conn, cOpts)
+	C.free(unsafe.Pointer(cOpts))
+
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
