@@ -1,3 +1,5 @@
+//go:build cgo
+
 package nabto
 
 /*
@@ -76,6 +78,23 @@ type Client struct {
 	closed     bool
 	wg         sync.WaitGroup
 	mu         sync.Mutex
+}
+
+// Ensure Client and Stream satisfy nabto interfaces at compile time.
+var (
+	_ Driver       = (*Client)(nil)
+	_ StreamDriver = (*Stream)(nil)
+)
+
+func init() {
+	Register("cgo", func(cfg *Config) (Driver, error) {
+		return NewClient(cfg)
+	})
+}
+
+// DriverName returns the driver backend name ("cgo").
+func (c *Client) DriverName() string {
+	return "cgo"
 }
 
 func NewClient(cfg *Config) (*Client, error) {

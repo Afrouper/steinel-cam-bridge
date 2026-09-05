@@ -3,7 +3,6 @@ package driver
 import (
 	"context"
 	"fmt"
-	"os"
 	"sync"
 	"time"
 
@@ -13,7 +12,7 @@ import (
 	"github.com/Afrouper/steinel-cam-bridge/pkg/logger"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/mcu"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/nabto"
-	"github.com/Afrouper/steinel-cam-bridge/pkg/nabtopure"
+	_ "github.com/Afrouper/steinel-cam-bridge/pkg/nabtopure"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/rtsp"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/storage"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/webrtc"
@@ -58,16 +57,7 @@ func (d *L625Driver) Run(ctx context.Context) error {
 
 connectionLoop:
 	for ctx.Err() == nil {
-		var client nabto.Driver
-		var err error
-		usePure := d.cfg.NabtoDriver == "pure" || os.Getenv("USE_CGO_NABTO") == "false" || os.Getenv("USE_CGO_NABTO") == "0"
-		if usePure {
-			logger.Info("Driver", "🚀 Using native Pure-Go Nabto driver (experimental)")
-			client, err = nabtopure.NewClient(cfg)
-		} else {
-			logger.Info("Driver", "🔧 Using C-SDK wrapper driver (libnabto_client.so, default)")
-			client, err = nabto.NewClient(cfg)
-		}
+		client, err := nabto.New(d.cfg.NabtoDriver, cfg)
 		if err != nil {
 			logger.Error("Nabto", "❌ Nabto client init error: %v", err)
 			select {
@@ -114,7 +104,7 @@ connectionLoop:
 			if ctx.Err() != nil {
 				break connectionLoop
 			}
-			if usePure {
+			if client.DriverName() == "pure" {
 				logger.Warn("Supervisor", "🚨 Native Pure-Go Nabto driver failed to connect to camera.")
 				logger.Info("Supervisor", "💡 Recommendation: Set 'nabto_driver: cgo' in Home Assistant Add-on config for official Nabto C-SDK support.")
 			}
@@ -173,7 +163,7 @@ connectionLoop:
 			if ctx.Err() != nil {
 				break connectionLoop
 			}
-			if usePure {
+			if client.DriverName() == "pure" {
 				logger.Warn("Supervisor", "🚨 Native Pure-Go Nabto driver failed to query signaling port from camera.")
 				logger.Info("Supervisor", "💡 Recommendation: Set 'nabto_driver: cgo' in Home Assistant Add-on config for official Nabto C-SDK support.")
 			}
@@ -227,7 +217,7 @@ connectionLoop:
 			if ctx.Err() != nil {
 				break connectionLoop
 			}
-			if usePure {
+			if client.DriverName() == "pure" {
 				logger.Warn("Supervisor", "🚨 Native Pure-Go Nabto driver failed to open signaling stream with camera.")
 				logger.Info("Supervisor", "💡 Recommendation: Set 'nabto_driver: cgo' in Home Assistant Add-on config for official Nabto C-SDK support.")
 			}

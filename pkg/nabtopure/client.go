@@ -44,6 +44,17 @@ type Client struct {
 // Ensure Client satisfies nabto.Driver interface.
 var _ nabto.Driver = (*Client)(nil)
 
+func init() {
+	nabto.Register("pure", func(cfg *nabto.Config) (nabto.Driver, error) {
+		return NewClient(cfg)
+	})
+}
+
+// DriverName returns the driver backend name ("pure").
+func (c *Client) DriverName() string {
+	return "pure"
+}
+
 // NewClient initializes a new pure-Go Nabto driver.
 func NewClient(cfg *Config) (*Client, error) {
 	if cfg == nil {
