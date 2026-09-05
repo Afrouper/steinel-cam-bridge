@@ -31,7 +31,7 @@ configuration:
     description: "Port for the integrated ONVIF and SD card REST API server (default: 8000)."
   sdcard_sync_interval:
     name: "SD Card Sync Interval"
-    description: "Interval in seconds to check the camera's MicroSD card for new recordings (default: 30s)."
+    description: "Interval in seconds to check the camera's MicroSD card for new recordings (default: 60s)."
   nabto_driver:
     name: "Nabto Edge Driver (L 625)"
     description: "Driver engine for L 625 CAM SC: 'cgo' (official C-SDK, recommended & default) or 'pure' (native Go stack, experimental)."

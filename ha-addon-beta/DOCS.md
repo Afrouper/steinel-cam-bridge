@@ -28,9 +28,15 @@ Der QR Code wird initial für das Pairing benötigt. Danach muss er nicht mehr z
 | `audio_codec` | Liste | `aac` | Audio-Codec des RTSP-Streams: `aac` (nativ transkodiert) oder `pcmu` |
 | `rtsp_port` | Port | `8554` | RTSP Server Port |
 | `onvif_port` | Port | `8000` | ONVIF HTTP & SD-Karten REST API Service Port |
-| `sdcard_sync_interval` | Ganzzahl | `30` | Intervall in Sekunden für die Hintergrundabfrage neuer SD-Karten-Aufnahmen (5–300 s) |
+| `sdcard_sync_interval` | Ganzzahl | `60` | Intervall in Sekunden für die Hintergrundabfrage neuer SD-Karten-Aufnahmen (5–300 s) |
+| `nabto_driver` | Liste | `cgo` | Nabto-Treiber-Engine für L 625: `cgo` (offizielles C-SDK, empfohlen & Standard) oder `pure` (nativer Go-Stack, experimentell) |
 | `reset_pairing` | Boolean | `false` | Setzen Sie diese Option auf `true`, um den gespeicherten Schlüssel zu löschen und ein erneutes Pairing der L 625 mit dem angegebenen `qr_code` zu erzwingen |
 | `debug` | Boolean | `false` | Ausführliches Debug-Logging für Diagnosezwecke aktivieren |
+| `mqtt_broker` | String | `""` | Optional: Benutzerdefinierte MQTT-Broker-URL (z. B. `tcp://192.168.1.50:1883`). Leer lassen für automatische Erkennung des Home Assistant Mosquitto Brokers |
+| `mqtt_user` | String | `""` | Optional: MQTT Benutzername |
+| `mqtt_password` | Passwort | `""` | Optional: MQTT Passwort |
+| `mqtt_topic_prefix` | String | `steinel` | MQTT Basis-Topic |
+| `mqtt_discovery_prefix` | String | `homeassistant` | Home Assistant Auto-Discovery Prefix |
 
 ---
 
