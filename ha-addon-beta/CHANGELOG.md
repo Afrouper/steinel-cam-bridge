@@ -2,6 +2,27 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.3.6-beta.2
+
+### 🏗️ Architektur-Modernisierung & Treiber-Abstraktion (Meilensteine 2 & 3)
+- **Entkernung der Anwendungsarchitektur (Meilenstein 2)**:
+  - `cmd/steinel-bridge/main.go` von 1.152 Zeilen auf 64 Zeilen modularisiert.
+  - Saubere Trennung in dedizierte Pakete:
+    - `pkg/config`: Validierter Konfigurationsparser für CLI-Flags und Umgebungsvariablen.
+    - `pkg/supervisor`: Robuster, autonomer Überwachungs- und Reconnect-Lifecycle.
+    - `pkg/app`: Dependency Injection, Subsystem-Initialisierung (WebRTC/RTSP, ONVIF, MQTT, WebUI) und Graceful Shutdown.
+- **Einheitliches Treiber-Interface (Meilenstein 3)**:
+  - Einführung des `driver.CameraDriver` Interfaces (`Run`, `Close`, `GetStatus`, `SetLight`, `TriggerAlarm`, etc.).
+  - Vollständige Entkopplung der modellspezifischen Logik in isolierte Treiber:
+    - `L625Driver`: Autonome 4-Phasen Nabto Edge P2P Statemachine, CoAP-Steuerung, WebRTC-Ingest und Watchdog-Handling.
+    - `L620Driver`: Sofia DVRIP Ingest, RTSP-Relay, MCU-Statusabfrage und Keepalive-Worker.
+  - Dynamische Treiber-Instanziierung über `driver.New(...)` Factory ohne globale Zustände.
+  - Vollständige Bereinigung aller modellspezifischen Sonderabfragen (`isL620`, `currentBridge`, `currentXMDriver`) aus `BridgeManager` und `Supervisor`.
+- **100% Erhalt aller Concurrency- & Robustheitsgarantien**:
+  - C-SDK Concurrency (`C.nabto_client_stop`, WaitGroups, Non-Blocking Mutex-Calls).
+  - Watchdog-Überwachung (35s Connect, 15s Signaling Port/Stream, 1s Media Watchdog) mit guarded 3s Goroutine Draining.
+  - Cooldown-Phasen (15s Retry-Cooldown, 30s Kamera-Reboot-Cooldown).
+
 ## 1.3.6-beta.1
 
 ### 🚀 Enterprise Logging & Observability (Meilenstein 1)
