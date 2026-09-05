@@ -31,7 +31,7 @@ Der QR Code wird initial für das Pairing benötigt. Danach muss er nicht mehr z
 | `sdcard_sync_interval` | Ganzzahl | `60` | Intervall in Sekunden für die Hintergrundabfrage neuer SD-Karten-Aufnahmen (5–300 s) |
 | `nabto_driver` | Liste | `cgo` | Nabto-Treiber-Engine für L 625: `cgo` (offizielles C-SDK, empfohlen & Standard) oder `pure` (nativer Go-Stack, experimentell) |
 | `reset_pairing` | Boolean | `false` | Setzen Sie diese Option auf `true`, um den gespeicherten Schlüssel zu löschen und ein erneutes Pairing der L 625 mit dem angegebenen `qr_code` zu erzwingen |
-| `debug` | Boolean | `false` | Ausführliches Debug-Logging für Diagnosezwecke aktivieren |
+| `log_level` | Liste | `info` | Detaillierungsgrad des Loggings: `trace`, `debug`, `info` (Standard), `warning`, `error` |
 | `mqtt_broker` | String | `""` | Optional: Benutzerdefinierte MQTT-Broker-URL (z. B. `tcp://192.168.1.50:1883`). Leer lassen für automatische Erkennung des Home Assistant Mosquitto Brokers |
 | `mqtt_user` | String | `""` | Optional: MQTT Benutzername |
 | `mqtt_password` | Passwort | `""` | Optional: MQTT Passwort |
