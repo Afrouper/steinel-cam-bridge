@@ -72,6 +72,8 @@ type Client struct {
 	ctx        *C.NabtoClient
 	conn       *C.NabtoClientConnection
 	privateKey string
+	closed     bool
+	wg         sync.WaitGroup
 	mu         sync.Mutex
 }
 
@@ -108,123 +110,161 @@ func NewClient(cfg *Config) (*Client, error) {
 
 func (c *Client) Close() {
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	if c.closed {
+		c.mu.Unlock()
+		return
+	}
+	c.closed = true
+	ctx := c.ctx
+	conn := c.conn
+	c.conn = nil
+	c.mu.Unlock()
 
-	if c.conn != nil && c.ctx != nil {
-		fut := C.nabto_client_future_new(c.ctx)
+	// Stop context first to immediately cancel any in-flight futures/connects without blocking
+	if ctx != nil {
+		C.nabto_client_stop(ctx)
+	}
+
+	// Wait for in-flight operations (Connect, CoAP, Stream open) to complete
+	c.wg.Wait()
+
+	if conn != nil && ctx != nil {
+		fut := C.nabto_client_future_new(ctx)
 		if fut != nil {
-			C.nabto_client_connection_close(c.conn, fut)
+			C.nabto_client_connection_close(conn, fut)
 			C.nabto_client_future_wait(fut)
 			C.nabto_client_future_free(fut)
 		}
-		C.nabto_client_connection_free(c.conn)
-		c.conn = nil
+		C.nabto_client_connection_free(conn)
 	}
 
-	if c.ctx != nil {
-		C.nabto_client_stop(c.ctx)
-		C.nabto_client_free(c.ctx)
+	if ctx != nil {
+		c.mu.Lock()
 		c.ctx = nil
+		c.mu.Unlock()
+		C.nabto_client_free(ctx)
 	}
 }
 
 // Connect establishes the Nabto Edge P2P tunnel to the camera and handles auto-pairing
 func (c *Client) Connect() error {
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	if c.closed || c.ctx == nil {
+		c.mu.Unlock()
+		return fmt.Errorf("client is closed")
+	}
+	c.wg.Add(1)
+	ctx := c.ctx
+	c.mu.Unlock()
+	defer c.wg.Done()
 
 	// Load or generate private key
 	keyBytes, err := os.ReadFile(c.cfg.KeyPath)
 	isNewKey := false
+	var privKey string
 	if err != nil {
 		if !os.IsNotExist(err) {
 			log.Printf("[Nabto] ⚠️ Warning: Could not read key file '%s': %v", c.cfg.KeyPath, err)
 		}
 		log.Printf("[Nabto] Key file not found at %s. Generating new EC private key...", c.cfg.KeyPath)
 		var cKey *C.char
-		errCode := C.nabto_client_create_private_key(c.ctx, &cKey)
+		errCode := C.nabto_client_create_private_key(ctx, &cKey)
 		if errCode != C.NABTO_CLIENT_EC_OK || cKey == nil {
 			return fmt.Errorf("failed to generate EC private key")
 		}
-		c.privateKey = C.GoString(cKey)
+		privKey = C.GoString(cKey)
 		C.nabto_client_string_free(cKey)
 		isNewKey = true
 	} else {
-		c.privateKey = string(keyBytes)
+		privKey = string(keyBytes)
 	}
+
+	c.mu.Lock()
+	c.privateKey = privKey
+	c.mu.Unlock()
 
 	cIP := C.CString(c.cfg.CameraIP)
 	defer C.free(unsafe.Pointer(cIP))
 
-	const maxRetries = 3
-	for attempt := 1; attempt <= maxRetries; attempt++ {
-		log.Printf("[Nabto] Sending mDNS wake-up to %s...", c.cfg.CameraIP)
-		C.send_mdns_wakeup_c(cIP, C.int(c.cfg.CameraPort))
+	log.Printf("[Nabto] Sending mDNS wake-up to %s...", c.cfg.CameraIP)
+	C.send_mdns_wakeup_c(cIP, C.int(c.cfg.CameraPort))
 
-		conn := C.nabto_client_connection_new(c.ctx)
-		if conn == nil {
-			return fmt.Errorf("failed to create Nabto connection object")
-		}
-
-		cProd := C.CString(c.cfg.ProductID)
-		cDev := C.CString(c.cfg.DeviceID)
-		cSCT := C.CString(c.cfg.SCT)
-		cPrivKey := C.CString(c.privateKey)
-		serverURL := C.CString(fmt.Sprintf("https://%s.devices.nabto.net", c.cfg.ProductID))
-
-		C.nabto_client_connection_set_product_id(conn, cProd)
-		C.nabto_client_connection_set_device_id(conn, cDev)
-		C.nabto_client_connection_set_server_connect_token(conn, cSCT)
-		C.nabto_client_connection_set_private_key(conn, cPrivKey)
-		C.nabto_client_connection_set_server_url(conn, serverURL)
-
-		C.free(unsafe.Pointer(cProd))
-		C.free(unsafe.Pointer(cDev))
-		C.free(unsafe.Pointer(cSCT))
-		C.free(unsafe.Pointer(cPrivKey))
-		C.free(unsafe.Pointer(serverURL))
-
-		C.nabto_client_connection_enable_direct_candidates(conn)
-		C.nabto_client_connection_add_direct_candidate(conn, cIP, C.uint16_t(c.cfg.CameraPort))
-		C.nabto_client_connection_end_of_direct_candidates(conn)
-
-		log.Printf("[Nabto] Connecting to camera (attempt %d/%d)...", attempt, maxRetries)
-		fut := C.nabto_client_future_new(c.ctx)
-		C.nabto_client_connection_connect(conn, fut)
-		C.nabto_client_future_wait(fut)
-		errCode := C.nabto_client_future_error_code(fut)
-		C.nabto_client_future_free(fut)
-
-		if errCode == C.NABTO_CLIENT_EC_OK {
-			log.Printf("[Nabto] ✅ Connected successfully!")
-			c.conn = conn
-
-			if isNewKey {
-				if c.cfg.PairPwd == "" || c.cfg.PairPwd == "xxxx" {
-					log.Printf("[IAM] ⚠️ Warning: New client key generated, but no QR code ('qr_code') is configured. Initial pairing requires a valid QR code!")
-				} else {
-					log.Printf("[IAM] Performing initial pairing for new client key...")
-					if err := c.pairPassword(c.cfg.PairPwd); err != nil {
-						log.Printf("[IAM] ❌ Initial pairing failed: %v", err)
-						return fmt.Errorf("initial pairing failed: %w", err)
-					}
-					if err := os.WriteFile(c.cfg.KeyPath, []byte(c.privateKey), 0600); err != nil {
-						log.Printf("[!] Warning: Could not save key to %s: %v", c.cfg.KeyPath, err)
-					} else {
-						log.Printf("[IAM] ✅ Saved paired key to: %s", c.cfg.KeyPath)
-					}
-				}
-			}
-			return nil
-		}
-
-		errMsg := C.GoString(C.nabto_client_error_get_message(errCode))
-		log.Printf("[Nabto] Attempt %d failed: %s. Retrying in 2s...", attempt, errMsg)
-		C.nabto_client_connection_free(conn)
-		time.Sleep(2 * time.Second)
+	conn := C.nabto_client_connection_new(ctx)
+	if conn == nil {
+		return fmt.Errorf("failed to create Nabto connection object")
 	}
 
-	return fmt.Errorf("connection failed after %d attempts", maxRetries)
+	cProd := C.CString(c.cfg.ProductID)
+	cDev := C.CString(c.cfg.DeviceID)
+	cSCT := C.CString(c.cfg.SCT)
+	cPrivKey := C.CString(privKey)
+	serverURL := C.CString(fmt.Sprintf("https://%s.devices.nabto.net", c.cfg.ProductID))
+
+	C.nabto_client_connection_set_product_id(conn, cProd)
+	C.nabto_client_connection_set_device_id(conn, cDev)
+	C.nabto_client_connection_set_server_connect_token(conn, cSCT)
+	C.nabto_client_connection_set_private_key(conn, cPrivKey)
+	C.nabto_client_connection_set_server_url(conn, serverURL)
+
+	C.free(unsafe.Pointer(cProd))
+	C.free(unsafe.Pointer(cDev))
+	C.free(unsafe.Pointer(cSCT))
+	C.free(unsafe.Pointer(cPrivKey))
+	C.free(unsafe.Pointer(serverURL))
+
+	C.nabto_client_connection_enable_direct_candidates(conn)
+	C.nabto_client_connection_add_direct_candidate(conn, cIP, C.uint16_t(c.cfg.CameraPort))
+	C.nabto_client_connection_end_of_direct_candidates(conn)
+
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		C.nabto_client_connection_free(conn)
+		return fmt.Errorf("client closed before connect")
+	}
+	c.mu.Unlock()
+
+	log.Printf("[Nabto] Connecting to camera %s:%d...", c.cfg.CameraIP, c.cfg.CameraPort)
+	fut := C.nabto_client_future_new(ctx)
+	C.nabto_client_connection_connect(conn, fut)
+	C.nabto_client_future_wait(fut)
+	errCode := C.nabto_client_future_error_code(fut)
+	C.nabto_client_future_free(fut)
+
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		C.nabto_client_connection_free(conn)
+		return fmt.Errorf("connection aborted: client closed")
+	}
+	if errCode == C.NABTO_CLIENT_EC_OK {
+		log.Printf("[Nabto] ✅ Connected successfully!")
+		c.conn = conn
+		c.mu.Unlock()
+
+		if isNewKey {
+			if c.cfg.PairPwd == "" || c.cfg.PairPwd == "xxxx" {
+				log.Printf("[IAM] ⚠️ Warning: New client key generated, but no QR code ('qr_code') is configured. Initial pairing requires a valid QR code!")
+			} else {
+				log.Printf("[IAM] Performing initial pairing for new client key...")
+				if err := c.pairPassword(c.cfg.PairPwd); err != nil {
+					log.Printf("[IAM] ❌ Initial pairing failed: %v", err)
+					return fmt.Errorf("initial pairing failed: %w", err)
+				}
+				if err := os.WriteFile(c.cfg.KeyPath, []byte(c.privateKey), 0600); err != nil {
+					log.Printf("[!] Warning: Could not save key to %s: %v", c.cfg.KeyPath, err)
+				} else {
+					log.Printf("[IAM] ✅ Saved paired key to: %s", c.cfg.KeyPath)
+				}
+			}
+		}
+		return nil
+	}
+	c.mu.Unlock()
+
+	errMsg := C.GoString(C.nabto_client_error_get_message(errCode))
+	C.nabto_client_connection_free(conn)
+	return fmt.Errorf("connect error: %s (code %d)", errMsg, int(errCode))
 }
 
 func encodeUsernameCBOR(username string) []byte {
@@ -326,20 +366,28 @@ func (c *Client) pairPassword(password string) error {
 // GetSignalingPort queries /p2p/webrtc-info via CoAP to get the SignalingStreamPort
 func (c *Client) GetSignalingPort() (uint32, error) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	if c.closed || c.conn == nil || c.ctx == nil {
+		c.mu.Unlock()
+		return 0, fmt.Errorf("client is closed or not connected")
+	}
+	c.wg.Add(1)
+	conn := c.conn
+	ctx := c.ctx
+	c.mu.Unlock()
+	defer c.wg.Done()
 
 	cMethod := C.CString("GET")
 	cPath := C.CString("/p2p/webrtc-info")
 	defer C.free(unsafe.Pointer(cMethod))
 	defer C.free(unsafe.Pointer(cPath))
 
-	coap := C.nabto_client_coap_new(c.conn, cMethod, cPath)
+	coap := C.nabto_client_coap_new(conn, cMethod, cPath)
 	if coap == nil {
 		return 0, fmt.Errorf("failed to create CoAP request")
 	}
 	defer C.nabto_client_coap_free(coap)
 
-	fut := C.nabto_client_future_new(c.ctx)
+	fut := C.nabto_client_future_new(ctx)
 	C.nabto_client_coap_execute(coap, fut)
 	C.nabto_client_future_wait(fut)
 	errCode := C.nabto_client_future_error_code(fut)
@@ -381,14 +429,22 @@ func (c *Client) GetSignalingPort() (uint32, error) {
 // RequestTracks sends CoAP POST /webrtc/tracks to request video and audio streams
 func (c *Client) RequestTracks() (uint16, error) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	if c.closed || c.conn == nil || c.ctx == nil {
+		c.mu.Unlock()
+		return 0, fmt.Errorf("client is closed or not connected")
+	}
+	c.wg.Add(1)
+	conn := c.conn
+	ctx := c.ctx
+	c.mu.Unlock()
+	defer c.wg.Done()
 
 	cMethod := C.CString("POST")
 	cPath := C.CString("/webrtc/tracks")
 	defer C.free(unsafe.Pointer(cMethod))
 	defer C.free(unsafe.Pointer(cPath))
 
-	coap := C.nabto_client_coap_new(c.conn, cMethod, cPath)
+	coap := C.nabto_client_coap_new(conn, cMethod, cPath)
 	if coap == nil {
 		return 0, fmt.Errorf("failed to create CoAP request")
 	}
@@ -402,7 +458,7 @@ func (c *Client) RequestTracks() (uint16, error) {
 		C.size_t(len(payload)),
 	)
 
-	fut := C.nabto_client_future_new(c.ctx)
+	fut := C.nabto_client_future_new(ctx)
 	C.nabto_client_coap_execute(coap, fut)
 	C.nabto_client_future_wait(fut)
 	errCode := C.nabto_client_future_error_code(fut)
@@ -429,14 +485,22 @@ func (c *Client) RequestTracks() (uint16, error) {
 // OpenSignalingStream opens a Nabto virtual stream for WebRTC signaling
 func (c *Client) OpenSignalingStream(port uint32) (StreamDriver, error) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	if c.closed || c.conn == nil || c.ctx == nil {
+		c.mu.Unlock()
+		return nil, fmt.Errorf("client is closed or not connected")
+	}
+	c.wg.Add(1)
+	conn := c.conn
+	ctx := c.ctx
+	c.mu.Unlock()
+	defer c.wg.Done()
 
-	stream := C.nabto_client_stream_new(c.conn)
+	stream := C.nabto_client_stream_new(conn)
 	if stream == nil {
 		return nil, fmt.Errorf("failed to create stream object")
 	}
 
-	fut := C.nabto_client_future_new(c.ctx)
+	fut := C.nabto_client_future_new(ctx)
 	C.nabto_client_stream_open(stream, fut, C.uint32_t(port))
 	C.nabto_client_future_wait(fut)
 	errCode := C.nabto_client_future_error_code(fut)
@@ -448,7 +512,7 @@ func (c *Client) OpenSignalingStream(port uint32) (StreamDriver, error) {
 	}
 
 	return &Stream{
-		ctx:    c.ctx,
+		ctx:    ctx,
 		stream: stream,
 	}, nil
 }

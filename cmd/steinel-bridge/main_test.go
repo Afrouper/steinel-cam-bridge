@@ -31,6 +31,7 @@ func TestLayer1_CodeDefaults(t *testing.T) {
 	assert.Equal(t, "steinel", cfg.MQTTTopic)
 	assert.Equal(t, "homeassistant", cfg.MQTTDiscovery)
 	assert.Equal(t, "cgo", cfg.NabtoDriver)
+	assert.Equal(t, 60, cfg.SDCardSyncInterval)
 }
 
 // TestLayer2_ConfigFileOverridesDefaults verifies that options.json overrides Layer 1 defaults

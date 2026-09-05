@@ -26,7 +26,7 @@ func NewRecordingSyncer(
 	pollInterval time.Duration,
 ) *RecordingSyncer {
 	if pollInterval <= 0 {
-		pollInterval = 20 * time.Second
+		pollInterval = 60 * time.Second
 	}
 	return &RecordingSyncer{
 		providerFunc:   providerFunc,

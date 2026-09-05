@@ -25,10 +25,16 @@ services:
       - AUDIO_CODEC=aac                                                 # Audio-Codec: aac (Standard, nativ transkodiert) oder pcmu (Raw Passthrough)
       - KEY_PATH=/data/client.key                                       # Pfad zum persistenten Schlüssel
 
-      # --- Server-Ports ---
+      # --- Für Steinel L 620 CAM / XLED CAM 1 alternativ zu QR_CODE: ---
+      # - CAMERA_TYPE=l620
+      # - CAMERA_USER=admin
+      # - CAMERA_PASSWORD=secretpassword
+
+      # --- Server-Ports & SD-Karten-Sync ---
       - RTSP_PORT=8554
       - ONVIF_PORT=8000
       - RTSP_PATH=steinel
+      - SDCARD_SYNC_INTERVAL=60                                         # Hintergrund-Abfrage neuer SD-Karten-Aufnahmen in Sekunden (Standard: 60)
 
       # --- MQTT / Home Assistant Konfiguration (Optional) ---
       - MQTT_BROKER=tcp://192.168.1.50:1883    # IP oder Hostname Ihres MQTT Brokers (z.B. Home Assistant Mosquitto)
