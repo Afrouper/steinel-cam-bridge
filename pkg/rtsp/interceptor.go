@@ -26,8 +26,9 @@ type interceptingConn struct {
 	net.Conn
 	server *Server
 
-	rBuf []byte
-	mu   sync.Mutex
+	readBuf [4096]byte
+	rBuf    []byte
+	mu      sync.Mutex
 }
 
 func newInterceptingConn(conn net.Conn, s *Server) *interceptingConn {
@@ -43,14 +44,16 @@ func (c *interceptingConn) Read(p []byte) (int, error) {
 		if len(c.rBuf) > 0 {
 			n := copy(p, c.rBuf)
 			c.rBuf = c.rBuf[n:]
+			if len(c.rBuf) == 0 {
+				c.rBuf = c.rBuf[:0]
+			}
 			c.mu.Unlock()
 			return n, nil
 		}
 		c.mu.Unlock()
 
-		// Read from underlying TCP socket
-		tmp := make([]byte, 4096)
-		n, err := c.Conn.Read(tmp)
+		// Read from underlying TCP socket into reusable preallocated buffer
+		n, err := c.Conn.Read(c.readBuf[:])
 		if err != nil {
 			return 0, err
 		}
@@ -58,7 +61,7 @@ func (c *interceptingConn) Read(p []byte) (int, error) {
 			continue
 		}
 
-		data := tmp[:n]
+		data := c.readBuf[:n]
 
 		// Process incoming stream: extract interleaved backchannel RTP frames
 		for len(data) > 0 {

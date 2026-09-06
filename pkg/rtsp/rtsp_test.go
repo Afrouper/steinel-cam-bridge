@@ -1,6 +1,7 @@
 package rtsp
 
 import (
+	"net"
 	"testing"
 	"time"
 
@@ -193,5 +194,33 @@ func TestClientTCPInterleavedBackchannel(t *testing.T) {
 		assert.Equal(t, uint16(9999), receivedPkt.SequenceNumber)
 		assert.Equal(t, uint32(88888), receivedPkt.Timestamp)
 		assert.Equal(t, []byte{0xDE, 0xAD, 0xBE, 0xEF}, receivedPkt.Payload)
+	}
+}
+
+func BenchmarkInterceptingConnRead(b *testing.B) {
+	srv, _ := NewServer(8566, "bench", "aac")
+	defer srv.Close()
+
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
+
+	iconn := newInterceptingConn(serverConn, srv)
+
+	go func() {
+		data := []byte("OPTIONS rtsp://localhost:8566 RTSP/1.0\r\nCSeq: 1\r\n\r\n")
+		for {
+			_, err := clientConn.Write(data)
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	p := make([]byte, 1024)
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_, _ = iconn.Read(p)
 	}
 }
