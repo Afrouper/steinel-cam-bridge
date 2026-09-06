@@ -1,7 +1,9 @@
 package webrtc
 
 import (
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/pion/rtp"
 	pion "github.com/pion/webrtc/v4"
@@ -51,5 +53,73 @@ func TestAudioBackchannelChunking(t *testing.T) {
 	}
 	if len(b.backchannelBuf) != 84 {
 		t.Fatalf("expected buffer remaining 84, got %d", len(b.backchannelBuf))
+	}
+}
+
+func TestWatchdogConstants(t *testing.T) {
+	if watchdogGracePeriod != 15*time.Second {
+		t.Errorf("expected watchdogGracePeriod to be 15s, got %v", watchdogGracePeriod)
+	}
+	if watchdogSilenceThreshold != 15*time.Second {
+		t.Errorf("expected watchdogSilenceThreshold to be 15s, got %v", watchdogSilenceThreshold)
+	}
+}
+
+func TestICEStateManager_Recovery(t *testing.T) {
+	var cancelled atomic.Bool
+	cancelFunc := func() {
+		cancelled.Store(true)
+	}
+
+	mgr := newICEStateManager(50*time.Millisecond, cancelFunc)
+	defer mgr.Cancel()
+
+	// 1. Transition to Disconnected
+	mgr.OnStateChange(pion.ICEConnectionStateDisconnected)
+
+	// 2. Recover to Connected before grace period expires
+	time.Sleep(10 * time.Millisecond)
+	mgr.OnStateChange(pion.ICEConnectionStateConnected)
+
+	// Wait past initial grace period
+	time.Sleep(60 * time.Millisecond)
+
+	if cancelled.Load() {
+		t.Fatal("expected cancelFunc NOT to be called after recovery, but it was called")
+	}
+}
+
+func TestICEStateManager_Timeout(t *testing.T) {
+	var cancelled atomic.Bool
+	cancelFunc := func() {
+		cancelled.Store(true)
+	}
+
+	mgr := newICEStateManager(30*time.Millisecond, cancelFunc)
+	defer mgr.Cancel()
+
+	mgr.OnStateChange(pion.ICEConnectionStateDisconnected)
+
+	// Wait for grace period to expire
+	time.Sleep(60 * time.Millisecond)
+
+	if !cancelled.Load() {
+		t.Fatal("expected cancelFunc to be called after grace period expired, but was not")
+	}
+}
+
+func TestICEStateManager_ImmediateFail(t *testing.T) {
+	var cancelled atomic.Bool
+	cancelFunc := func() {
+		cancelled.Store(true)
+	}
+
+	mgr := newICEStateManager(1*time.Second, cancelFunc)
+	defer mgr.Cancel()
+
+	mgr.OnStateChange(pion.ICEConnectionStateFailed)
+
+	if !cancelled.Load() {
+		t.Fatal("expected cancelFunc to be called immediately on Failed state")
 	}
 }

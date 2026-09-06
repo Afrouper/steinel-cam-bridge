@@ -62,7 +62,7 @@ func NewDefaultConfig() *Config {
 		MQTTDiscovery:      "homeassistant",
 		LogLevel:           "info",
 		LogFormat:          "",
-		SDCardSyncInterval: 60,
+		SDCardSyncInterval: 120,
 		NabtoDriver:        "cgo",
 		IsBeta:             false,
 		AppVersion:         "dev",

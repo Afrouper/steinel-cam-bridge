@@ -153,18 +153,15 @@ func (b *Bridge) Run(ctx context.Context) error {
 	// WebRTC connection state listener
 	pc.OnConnectionStateChange(func(state pion.PeerConnectionState) {
 		logger.Debug("WebRTC", "Peer connection state changed to: %s", state)
-		if state == pion.PeerConnectionStateFailed || state == pion.PeerConnectionStateDisconnected || state == pion.PeerConnectionStateClosed {
+		if state == pion.PeerConnectionStateFailed || state == pion.PeerConnectionStateClosed {
 			logger.Warn("WebRTC", "⚠️ Connection dropped (%s). Terminating session...", state)
 			sessCancel()
 		}
 	})
 
-	pc.OnICEConnectionStateChange(func(state pion.ICEConnectionState) {
-		if state == pion.ICEConnectionStateFailed || state == pion.ICEConnectionStateDisconnected || state == pion.ICEConnectionStateClosed {
-			logger.Warn("WebRTC", "⚠️ ICE connection dropped (%s). Terminating session...", state)
-			sessCancel()
-		}
-	})
+	iceMgr := newICEStateManager(5*time.Second, sessCancel)
+	defer iceMgr.Cancel()
+	pc.OnICEConnectionStateChange(iceMgr.OnStateChange)
 
 	// Track handlers
 	pc.OnTrack(func(track *pion.TrackRemote, _ *pion.RTPReceiver) {
@@ -247,4 +244,65 @@ func (b *Bridge) Run(ctx context.Context) error {
 
 	// 5. Main Signaling Receive Loop
 	return b.runSignalingReceiveLoop(sessCtx, pc)
+}
+
+// iceStateManager manages debounced ICE disconnect transitions to prevent premature teardown on transient drops.
+type iceStateManager struct {
+	gracePeriod time.Duration
+	cancelFunc  context.CancelFunc
+	mu          sync.Mutex
+	timer       *time.Timer
+}
+
+func newICEStateManager(gracePeriod time.Duration, cancelFunc context.CancelFunc) *iceStateManager {
+	return &iceStateManager{
+		gracePeriod: gracePeriod,
+		cancelFunc:  cancelFunc,
+	}
+}
+
+func (m *iceStateManager) OnStateChange(state pion.ICEConnectionState) {
+	switch state {
+	case pion.ICEConnectionStateConnected, pion.ICEConnectionStateCompleted:
+		m.mu.Lock()
+		wasDisconnected := m.timer != nil
+		if wasDisconnected {
+			m.timer.Stop()
+			m.timer = nil
+		}
+		m.mu.Unlock()
+		if wasDisconnected {
+			logger.Info("WebRTC", "✅ ICE connection recovered to %s", state)
+		} else {
+			logger.Debug("WebRTC", "ICE connection state: %s", state)
+		}
+
+	case pion.ICEConnectionStateDisconnected:
+		m.mu.Lock()
+		if m.timer == nil {
+			logger.Warn("WebRTC", "⚠️ ICE connection disconnected (possible transient network drop). Waiting %v grace period...", m.gracePeriod)
+			m.timer = time.AfterFunc(m.gracePeriod, func() {
+				m.mu.Lock()
+				m.timer = nil
+				m.mu.Unlock()
+				logger.Warn("WebRTC", "⚠️ ICE connection did not recover within %v. Terminating session...", m.gracePeriod)
+				m.cancelFunc()
+			})
+		}
+		m.mu.Unlock()
+
+	case pion.ICEConnectionStateFailed, pion.ICEConnectionStateClosed:
+		m.Cancel()
+		logger.Warn("WebRTC", "⚠️ ICE connection dropped (%s). Terminating session...", state)
+		m.cancelFunc()
+	}
+}
+
+func (m *iceStateManager) Cancel() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.timer != nil {
+		m.timer.Stop()
+		m.timer = nil
+	}
 }

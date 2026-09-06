@@ -55,7 +55,7 @@ func (d *L625Driver) setBridge(b *webrtc.Bridge) {
 
 // Run manages the Nabto Edge handshakes, WebRTC signaling and automatic reconnection loop.
 func (d *L625Driver) Run(ctx context.Context) error {
-	const reconnectCooldown = 30 * time.Second
+	const reconnectCooldown = 60 * time.Second
 	cfg := d.cfg.NabtoConfig
 
 connectionLoop:
@@ -248,7 +248,7 @@ connectionLoop:
 		client.Close()
 
 		if ctx.Err() == nil {
-			logger.Info("Supervisor", "⏳ Stream session disconnected / Watchdog reset. Waiting 30s cooldown before reconnecting to allow camera reboot...")
+			logger.Info("Supervisor", "⏳ Stream session disconnected / Watchdog reset. Waiting %v cooldown before reconnecting to allow camera reboot...", reconnectCooldown)
 			select {
 			case <-ctx.Done():
 				break connectionLoop

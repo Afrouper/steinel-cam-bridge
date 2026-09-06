@@ -69,11 +69,11 @@ func (s *RecordingSyncer) Start(ctx context.Context) {
 			s.syncOnce(ctx, false)
 
 		case <-s.triggerChan:
-			// Wait 5 seconds so camera can finalize writing the MP4 file to SD card
+			// Wait 20 seconds so camera can finalize writing the MP4 file to SD card without concurrent I/O stress
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(5 * time.Second):
+			case <-time.After(20 * time.Second):
 			}
 			s.syncOnce(ctx, false)
 		}

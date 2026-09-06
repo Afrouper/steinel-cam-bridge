@@ -2,6 +2,21 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.3.7-beta.1
+
+### 🛡️ Verbindungsstabilität & Resilienz-Härtung
+- **Toleranter Video-Watchdog**:
+  - Schwellwert für Videostille von 6s auf 15s angehoben und Start-Grace-Period auf 15s erweitert.
+  - Verhindert Fehlalarme und vorschnelle Session-Resets bei kurzen WLAN-Schwankungen oder I/O-Spikes der Kamera.
+- **WebRTC ICE-Entprellung (`iceStateManager`)**:
+  - 5-Sekunden-Karenzzeit bei flüchtigem `Disconnected`-Zustand: Kurze WLAN-Wackler erholen sich transparent, ohne dass die Verbindung getrennt wird.
+  - Nur bei `Failed` oder `Closed` wird sofort beendet.
+- **SD-Karten- & Flash-Schonung**:
+  - Nach Bewegungserkennung wird das Abrufen der Eventliste 20 Sekunden verzögert, damit die Kamera das MP4-Video vollständig auf die SD-Karte schreiben kann (vermeidet I/O-Überlastungen).
+  - Standard-Pollintervall von 60s auf 120s (2 Minuten) entspannt.
+- **Reboot-Cooldown im Supervisor**:
+  - Cooldown nach Stream-Abbruch von 30s auf 60s angehoben, um der Kamera während des Bootloader-/Kernel-Starts keine sinnlosen Handshakes zu schicken.
+
 ## 1.3.6-beta.6
 
 ### ⚡ Pragmatische Hot-Path Optimierungen (RTSP & Audio)

@@ -86,13 +86,18 @@ func (b *Bridge) readAudioLoop(ctx context.Context, track *pion.TrackRemote) {
 	}
 }
 
+const (
+	watchdogGracePeriod      = 15 * time.Second
+	watchdogSilenceThreshold = 15 * time.Second
+)
+
 // runWatchdogLoop monitors incoming video packet timestamps and cancels the session if silence is detected.
 func (b *Bridge) runWatchdogLoop(ctx context.Context, cancel context.CancelFunc) {
 	// Initial grace period to allow ICE negotiation, track setup, and initial frame delivery
 	select {
 	case <-ctx.Done():
 		return
-	case <-time.After(8 * time.Second):
+	case <-time.After(watchdogGracePeriod):
 	}
 
 	ticker := time.NewTicker(1 * time.Second)
@@ -105,15 +110,15 @@ func (b *Bridge) runWatchdogLoop(ctx context.Context, cancel context.CancelFunc)
 		case <-ticker.C:
 			lastNano := b.lastVideoPacket.Load()
 			if lastNano == 0 {
-				logger.Warn("Watchdog", "⚠️ Silence detected: No video packets received within 8s of session start. Camera might be unresponsive. Triggering session reset...")
+				logger.Warn("Watchdog", "⚠️ Silence detected: No video packets received within %v of session start. Camera might be unresponsive. Triggering session reset...", watchdogGracePeriod)
 				cancel()
 				return
 			}
 
 			lastTime := time.Unix(0, lastNano)
 			silence := time.Since(lastTime)
-			if silence > 6*time.Second {
-				logger.Warn("Watchdog", "⚠️ Silence detected: No video packets received for %.1fs (threshold 6s). Camera might be rebooting. Triggering session reset...", silence.Seconds())
+			if silence > watchdogSilenceThreshold {
+				logger.Warn("Watchdog", "⚠️ Silence detected: No video packets received for %.1fs (threshold %v). Camera might be rebooting. Triggering session reset...", silence.Seconds(), watchdogSilenceThreshold)
 				cancel()
 				return
 			}
