@@ -190,7 +190,48 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
 
 ---
 
-## 3. Zentrale Architektur-, Sicherheits- & Dokumentationsregeln
+## 3. Lead Developer Patterns & Architektur-Prinzipien
+
+Dieses Repository folgt strengen Software-Engineering- und Clean-Code-Standards. Jeder Entwickler und jeder KI-Agent muss diese Prinzipien zwingend einhalten:
+
+### 1. Lesbarkeit & Modularität VOR maximalem Performancegewinn ("Clarity over Cleverness")
+- **Grundsatz:** Lesbarer, sauber strukturierter, verständlicher und wartbarer Code hat **ausnahmslos Vorrang** vor esoterischen Micro-Optimierungen, vorzeitiger Optimierung (*Premature Optimization*), Assembler-Tricks oder unübersichtlichen Monster-Schleifen.
+- **Tuning-Grenzen:** Performance- und Speicher-Optimierungen sind ausschließlich dann zulässig, wenn sie die architektonische Klarheit und Lesbarkeit nicht beeinträchtigen (z. B. Standard-Idiome wie `sync.Pool`, vorallokierte Socket-Puffer oder `Reader.Reset()`).
+- **Verbot von monolithischen Verschmelzungen:** Logisch getrennte Verarbeitungsstufen (wie Audio-Dekodierung, Resampling und Encoding) dürfen **niemals** in eine einzige unlesbare Schleife gezwungen werden. Jeder Schritt muss modular, isoliert verständlich und separat testbar bleiben.
+
+### 2. Strikte Abstraktion über Interfaces
+- **Polymorphismus statt Sonderfall-Abfragen:** Subsysteme kommunizieren ausschließlich über klar definierte Interfaces (`driver.CameraDriver`, `storage.RecordingProvider`, `nabto.Driver`, `events.EventBus`), niemals über konkrete Implementierungstypen.
+- **Keine Modellspezifika in höheren Schichten:** Modellspezifische Eigenheiten (z. B. Nabto vs. Sofia, L 625 vs. L 620) gehören strikt und ausschließlich in den jeweiligen Treiber (`pkg/driver/l625.go`, `pkg/driver/l620.go`). Der Supervisor, der RTSP-Server, ONVIF oder MQTT dürfen **niemals** modellspezifische Weichen wie `if isL620` oder `currentXMDriver` enthalten.
+- **Compile-Time Interface Assertions:** Jede konkrete Implementierung muss ihre Interface-Konformität zwingend zur Compile-Zeit absichern:
+  ```go
+  var _ CameraDriver = (*L625Driver)(nil)
+  var _ storage.RecordingProvider = (*L620Driver)(nil)
+  ```
+
+### 3. Saubere Modularisierung & Single Responsibility Principle (SRP)
+- Jedes Paket und jede Quelldatei hat genau eine klar umrissene Verantwortung:
+  - `signaling.go`: TURN, ICE & SDP-Aushandlung.
+  - `media.go`: Medien-Ingest, Silence-Watchdog & PLI-Bursts.
+  - `backchannel.go`: 2-Wege-Audio Chunking.
+  - `mcu_dispatch.go`: Befehle & Sensortelemetrie.
+- **Dateigrößen-Deckel:** Monolithische Quelldateien (> 400–500 Zeilen) sind zu vermeiden bzw. in fokussierte Module zu zerlegen.
+- **Etablierte Go-Muster:**
+  - **Factory-Pattern** (`driver.New(...)`, `events.NewBus()`) für saubere Instanziierung.
+  - **Registry-Pattern** (`nabto.Register`, `nabto.New`) nach Vorbild der Go-Standardbibliothek (`database/sql`).
+
+### 4. Vollständige Dependency Injection (DI) statt globaler Singletons
+- **Verbot globaler Zustände:** Globale Singletons (`var GlobalBus`, globale Bridge-Instanzen) sind im Produktivcode verboten.
+- **Explizite Übergabe:** Abhängigkeiten (wie der Event-Bus, Logger, Konfiguration) werden im Konstruktor (`New(...)`) explizit übergeben.
+- **Isolierte Testbarkeit:** Jede Komponente muss in Unit-Tests isoliert, ohne globale Nebenwirkungen und ohne gegenseitige Beeinflussung instanziierbar und testbar sein.
+
+### 5. Zukunftssicherheit & Leichte Erweiterbarkeit (Open-Closed-Prinzip)
+- Die Architektur muss so aufgebaut sein, dass zukünftige Erweiterungen **ohne Refactoring bestehenden Kerncodes** möglich sind:
+  - **Neue Kameramodelle** (z. B. Steinel L 605, Cam Light Solar) werden einfach als neuer `pkg/driver/l605.go` Treiber implementiert und registriert.
+  - **Neue Audio-/Video-Codecs** (z. B. Opus, AAC-ELD, H.265) werden als modulare Filter/Transcoder in `pkg/audio` ergänzt, ohne die RTSP- oder WebRTC-Engine umzubauen.
+
+---
+
+## 4. Zentrale Sicherheits-, Concurrency- & Release-Regeln
 
 1. **Aktualisierung von `AGENTS.md`**:
    - Sobald neue Go-Pakete, Dateien mit Kernverantwortlichkeiten, Konfigurationsoptionen (Flags/Env), Protokolle oder Architektur-Patterns hinzugefügt oder modifiziert werden, **muss diese `AGENTS.md` Datei zwingend aktualisiert und erweitert werden**.
@@ -235,7 +276,7 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
 
 ---
 
-## 4. Entwicklungs- & Build-Befehle
+## 5. Entwicklungs- & Build-Befehle
 
 ```bash
 # 1. Lokale SDK-Artefakte herunterladen
