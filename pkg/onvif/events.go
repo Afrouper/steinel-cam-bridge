@@ -21,18 +21,23 @@ type Subscription struct {
 
 type EventHandler struct {
 	onvifPort     int
+	eventBus      *events.Bus
 	subscriptions map[string]*Subscription
 	mu            sync.Mutex
 }
 
-func NewEventHandler(onvifPort int) *EventHandler {
+func NewEventHandler(onvifPort int, eventBus *events.Bus) *EventHandler {
+	if eventBus == nil {
+		eventBus = events.GlobalBus
+	}
 	h := &EventHandler{
 		onvifPort:     onvifPort,
+		eventBus:      eventBus,
 		subscriptions: make(map[string]*Subscription),
 	}
 
-	// Hook into Global Event Bus
-	events.GlobalBus.Subscribe(func(evt events.EventType, data interface{}) {
+	// Hook into Event Bus
+	h.eventBus.Subscribe(func(evt events.EventType, data interface{}) {
 		if evt == events.EventMotion {
 			if m, ok := data.(events.MotionEvent); ok {
 				h.broadcastMotionEvent(m.IsMotion)
@@ -111,7 +116,7 @@ func (h *EventHandler) createPullPointSubscription(host string) string {
 		CreatedAt:  now,
 		ExpiresAt:  expires,
 		EventChan:  make(chan bool, 10),
-		LastMotion: events.GlobalBus.GetStatus().IsMotion,
+		LastMotion: h.eventBus.GetStatus().IsMotion,
 	}
 
 	h.mu.Lock()
@@ -161,7 +166,7 @@ func (h *EventHandler) pullMessages(subID string, reqXML string) string {
 		hasNewEvent = true
 		sub.LastMotion = m
 	case <-time.After(3 * time.Second):
-		isMotion = events.GlobalBus.GetStatus().IsMotion
+		isMotion = h.eventBus.GetStatus().IsMotion
 		// If status is different from last recorded, send it
 		if isMotion != sub.LastMotion {
 			hasNewEvent = true

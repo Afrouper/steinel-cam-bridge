@@ -14,15 +14,20 @@ type DeviceHandler struct {
 	onvifPort  int
 	rtspPort   int
 	rebootFunc func() error
+	eventBus   *events.Bus
 }
 
-func NewDeviceHandler(deviceID, productID string, onvifPort, rtspPort int, rebootFunc func() error) *DeviceHandler {
+func NewDeviceHandler(deviceID, productID string, onvifPort, rtspPort int, rebootFunc func() error, eventBus *events.Bus) *DeviceHandler {
+	if eventBus == nil {
+		eventBus = events.GlobalBus
+	}
 	return &DeviceHandler{
 		deviceID:   deviceID,
 		productID:  productID,
 		onvifPort:  onvifPort,
 		rtspPort:   rtspPort,
 		rebootFunc: rebootFunc,
+		eventBus:   eventBus,
 	}
 }
 
@@ -53,7 +58,7 @@ func (h *DeviceHandler) Handle(action string, reqXML string, host string) (strin
 }
 
 func (h *DeviceHandler) getDeviceInformation() string {
-	st := events.GlobalBus.GetStatus()
+	st := h.eventBus.GetStatus()
 	fw := "2.0.0"
 	if st.FirmwareVer != "" {
 		fw = st.FirmwareVer

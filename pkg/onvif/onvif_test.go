@@ -25,6 +25,7 @@ func TestONVIFServices(t *testing.T) {
 		return nil
 	}
 
+	bus := events.NewBus()
 	server := NewServer(
 		8000,
 		8554,
@@ -37,6 +38,7 @@ func TestONVIFServices(t *testing.T) {
 		setLamp,
 		nil,
 		nil,
+		bus,
 	)
 
 	// 1. Test GetDeviceInformation
@@ -116,7 +118,7 @@ func TestONVIFServices(t *testing.T) {
 	}
 
 	// Trigger motion on EventBus
-	events.GlobalBus.SetMotion(true)
+	bus.SetMotion(true)
 
 	// Pull messages
 	reqBody = `<?xml version="1.0" encoding="utf-8"?>

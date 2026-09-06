@@ -5,13 +5,14 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/Afrouper/steinel-cam-bridge/pkg/logger"
 )
 
 // CoAP Message Types
@@ -366,6 +367,8 @@ func (c *CoAPClient) Execute(req *CoAPMessage, timeout time.Duration) (*CoAPMess
 		return nil, fmt.Errorf("failed to encode CoAP message: %w", err)
 	}
 
+	logger.Trace("CoAP", "-> CoAP MsgID: %d, Code: %s, Token: %x", req.MessageID, req.StatusString(), req.Token)
+
 	c.mu.Lock()
 	if c.conn == nil {
 		c.mu.Unlock()
@@ -384,6 +387,7 @@ func (c *CoAPClient) Execute(req *CoAPMessage, timeout time.Duration) (*CoAPMess
 		if !ok {
 			return nil, fmt.Errorf("coap request aborted: connection closed")
 		}
+		logger.Trace("CoAP", "<- CoAP Response status: %s (MsgID: %d, Token: %x)", resp.StatusString(), resp.MessageID, resp.Token)
 		return resp, nil
 	case <-time.After(timeout):
 		return nil, fmt.Errorf("CoAP request timed out after %v", timeout)
@@ -394,7 +398,7 @@ func (c *CoAPClient) Execute(req *CoAPMessage, timeout time.Duration) (*CoAPMess
 func (c *CoAPClient) HandleIncomingPacket(raw []byte) {
 	resp, err := DecodeCoAPMessage(raw)
 	if err != nil {
-		log.Printf("[CoAP] ⚠️ Failed to decode incoming CoAP message (%d bytes): %v", len(raw), err)
+		logger.Warn("CoAP", "⚠️ Failed to decode incoming CoAP message (%d bytes): %v", len(raw), err)
 		return
 	}
 
@@ -410,10 +414,10 @@ func (c *CoAPClient) HandleIncomingPacket(raw []byte) {
 	} else {
 		if resp.Code == CodeEmpty {
 			if resp.Type == TypeRST {
-				log.Printf("[CoAP] ⚠️ Received CoAP RST (MessageID: %d)", resp.MessageID)
+				logger.Warn("CoAP", "⚠️ Received CoAP RST (MessageID: %d)", resp.MessageID)
 			}
 		} else {
-			log.Printf("[CoAP] ℹ️ Unmatched CoAP packet received: Status=%s, Type=%d, Token=%x", resp.StatusString(), resp.Type, resp.Token)
+			logger.Debug("CoAP", "ℹ️ Unmatched CoAP packet received: Status=%s, Type=%d, Token=%x", resp.StatusString(), resp.Type, resp.Token)
 		}
 	}
 }

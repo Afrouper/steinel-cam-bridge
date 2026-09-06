@@ -185,7 +185,7 @@ func TestClientLoginAndAutoRTSP(t *testing.T) {
 		}
 	}()
 
-	client := NewClient("127.0.0.1", port, "admin", "secret", true)
+	client := NewClient("127.0.0.1", port, "admin", "secret")
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
@@ -278,7 +278,7 @@ func TestTalkAudioPacketForwarding(t *testing.T) {
 		}
 	}()
 
-	client := NewClient("127.0.0.1", port, "admin", "", false)
+	client := NewClient("127.0.0.1", port, "admin", "")
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
@@ -287,7 +287,7 @@ func TestTalkAudioPacketForwarding(t *testing.T) {
 	}
 	defer func() { _ = client.Close() }()
 
-	talk := NewTalkClient(client, true)
+	talk := NewTalkClient(client)
 
 	// Send an RTP G.711 Audio Packet from RTSP Backchannel
 	rtpPkt := &rtp.Packet{
@@ -421,7 +421,7 @@ func TestClientLoginFallback(t *testing.T) {
 		}
 	}()
 
-	client := NewClient("127.0.0.1", port, "admin", "someWrongPassword", false)
+	client := NewClient("127.0.0.1", port, "admin", "someWrongPassword")
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 

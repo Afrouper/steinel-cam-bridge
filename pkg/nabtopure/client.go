@@ -11,7 +11,6 @@ import (
 	"encoding/hex"
 	"encoding/pem"
 	"fmt"
-	"log"
 	"math/big"
 	"net"
 	"os"
@@ -19,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Afrouper/steinel-cam-bridge/pkg/logger"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/nabto"
 	"github.com/pion/dtls/v3"
 	dtlselliptic "github.com/pion/dtls/v3/pkg/crypto/elliptic"
@@ -43,6 +43,17 @@ type Client struct {
 
 // Ensure Client satisfies nabto.Driver interface.
 var _ nabto.Driver = (*Client)(nil)
+
+func init() {
+	nabto.Register("pure", func(cfg *nabto.Config) (nabto.Driver, error) {
+		return NewClient(cfg)
+	})
+}
+
+// DriverName returns the driver backend name ("pure").
+func (c *Client) DriverName() string {
+	return "pure"
+}
 
 // NewClient initializes a new pure-Go Nabto driver.
 func NewClient(cfg *Config) (*Client, error) {
@@ -144,7 +155,7 @@ func (c *Client) Connect() error {
 	}
 
 	fingerprint, _ := ComputeFingerprint(key)
-	log.Printf("[NabtoPure] 🔑 Client ECC Fingerprint: %s (new key: %v)", fingerprint, isNewKey)
+	logger.Info("NabtoPure", "🔑 Client ECC Fingerprint: %s (new key: %v)", fingerprint, isNewKey)
 
 	targetAddr := fmt.Sprintf("%s:%d", c.cfg.CameraIP, c.cfg.CameraPort)
 	rAddr, err := net.ResolveUDPAddr("udp", targetAddr)
@@ -155,7 +166,7 @@ func (c *Client) Connect() error {
 	// Wake up camera via mDNS ping
 	c.sendMDNSWAKEUP(targetAddr)
 
-	log.Printf("[NabtoPure] 🚀 Connecting to %s via Pure-Go DTLS 1.2...", targetAddr)
+	logger.Info("NabtoPure", "🚀 Connecting to %s via Pure-Go DTLS 1.2...", targetAddr)
 
 	//nolint:staticcheck // dtls.Config used for client configuration
 	dtlsConfig := &dtls.Config{
@@ -191,7 +202,7 @@ func (c *Client) Connect() error {
 		return fmt.Errorf("DTLS handshake failed with %s: %w", targetAddr, err)
 	}
 
-	log.Printf("[NabtoPure] ✅ DTLS 1.2 handshake established successfully with %s", targetAddr)
+	logger.Info("NabtoPure", "✅ DTLS 1.2 handshake established successfully with %s", targetAddr)
 	c.dtlsConn = conn
 	c.coapClient = NewCoAPClient(conn)
 	c.readerClose = make(chan struct{})
@@ -212,7 +223,7 @@ func (c *Client) Connect() error {
 		}
 	}
 
-	log.Printf("[NabtoPure] 📷 Camera Connected: DeviceID=%s | ProductID=%s", c.cfg.DeviceID, c.cfg.ProductID)
+	logger.Info("NabtoPure", "📷 Camera Connected: DeviceID=%s | ProductID=%s", c.cfg.DeviceID, c.cfg.ProductID)
 
 	return nil
 }
@@ -293,9 +304,7 @@ func (c *Client) packetReaderLoop() {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 				continue
 			}
-			if c.cfg.Debug {
-				log.Printf("[NabtoPure] ⚠️ DTLS connection ended: %v", err)
-			}
+			logger.Debug("NabtoPure", "⚠️ DTLS connection ended: %v", err)
 			c.Close()
 			return
 		}
@@ -417,17 +426,17 @@ func (c *Client) GetSignalingPort() (uint32, error) {
 	req := NewRequest(CodeGET, "/p2p/webrtc-info", 0, nil)
 	resp, err := coap.Execute(req, 5*time.Second)
 	if err != nil {
-		log.Printf("[NabtoPure] ❌ CoAP /p2p/webrtc-info request failed: %v", err)
+		logger.Warn("NabtoPure", "❌ CoAP /p2p/webrtc-info request failed: %v", err)
 		return 0, fmt.Errorf("CoAP /p2p/webrtc-info failed: %w", err)
 	}
 
 	if resp.StatusCode() != 205 && resp.StatusCode() != 200 {
-		log.Printf("[NabtoPure] ⚠️ CoAP /p2p/webrtc-info returned unexpected status: %s", resp.StatusString())
+		logger.Warn("NabtoPure", "⚠️ CoAP /p2p/webrtc-info returned unexpected status: %s", resp.StatusString())
 		return 0, fmt.Errorf("unexpected CoAP status %s", resp.StatusString())
 	}
 
 	respStr := string(resp.Payload)
-	log.Printf("[NabtoPure] 🛰️ CoAP /p2p/webrtc-info response: %s", respStr)
+	logger.Debug("NabtoPure", "🛰️ CoAP /p2p/webrtc-info response: %s", respStr)
 
 	var port uint32
 	if _, err := fmt.Sscanf(respStr, "{\"SignalingStreamPort\":%d}", &port); err == nil && port > 0 {
@@ -442,7 +451,7 @@ func (c *Client) GetSignalingPort() (uint32, error) {
 		}
 	}
 
-	log.Printf("[NabtoPure] ❌ Could not parse SignalingStreamPort from camera response: %s", respStr)
+	logger.Error("NabtoPure", "❌ Could not parse SignalingStreamPort from camera response: %s", respStr)
 	return 0, fmt.Errorf("could not parse SignalingStreamPort from: %s", respStr)
 }
 
@@ -461,11 +470,11 @@ func (c *Client) RequestTracks() (uint16, error) {
 
 	resp, err := coap.Execute(req, 5*time.Second)
 	if err != nil {
-		log.Printf("[NabtoPure] ❌ CoAP /webrtc/tracks failed: %v", err)
+		logger.Warn("NabtoPure", "❌ CoAP /webrtc/tracks failed: %v", err)
 		return 0, fmt.Errorf("CoAP /webrtc/tracks failed: %w", err)
 	}
 
-	log.Printf("[NabtoPure] 🎥 CoAP /webrtc/tracks response status: %s", resp.StatusString())
+	logger.Debug("NabtoPure", "🎥 CoAP /webrtc/tracks response status: %s", resp.StatusString())
 	return uint16(resp.StatusCode()), nil
 }
 
@@ -481,7 +490,7 @@ func (c *Client) OpenSignalingStream(port uint32) (nabto.StreamDriver, error) {
 	c.mu.Unlock()
 
 	if err := stream.Open(10 * time.Second); err != nil {
-		log.Printf("[NabtoPure] ❌ Failed to open virtual signaling stream on port %d: %v", port, err)
+		logger.Error("NabtoPure", "❌ Failed to open virtual signaling stream on port %d: %v", port, err)
 		return nil, err
 	}
 	return stream, nil

@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"time"
 
+	"github.com/Afrouper/steinel-cam-bridge/pkg/logger"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/storage"
 )
 
@@ -112,10 +112,12 @@ func (m *SDCardManager) ListRecordings(ctx context.Context, start, end time.Time
 			DurationSeconds: dur,
 			EventType:       "motion",
 			FileName:        f.FileName,
-			ThumbnailURL:    fmt.Sprintf("/api/sdcard/events/%s/thumbnail.jpg", id),
+			ThumbnailURL:    "",
 			VideoURL:        fmt.Sprintf("/api/sdcard/events/%s/video.mp4", id),
 		})
 	}
+
+	logger.Trace("Xiongmai SDCard", "OPFileQuery [%s - %s]: found %d recordings", beginStr, endStr, len(recordings))
 
 	return &storage.RecordingListResponse{
 		Count: len(recordings),
@@ -163,7 +165,7 @@ func (m *SDCardManager) StreamVideo(ctx context.Context, id string, w io.Writer,
 	playbackURL := fmt.Sprintf("rtsp://%s:%d/user=%s_password=%s_channel=1_stream=0.sdp?playback&start=%s",
 		m.cameraIP, RTSPPort, m.cameraUser, m.cameraPwd, rec.StartTime.Format("20060102150405"))
 
-	log.Printf("[Xiongmai SDCard] Replay requested for recording ID %s (%s)", id, SanitizeRTSPURL(playbackURL))
+	logger.Info("Xiongmai SDCard", "Replay requested for recording ID %s (%s)", id, SanitizeRTSPURL(playbackURL))
 	if flusher, ok := w.(http.Flusher); ok {
 		flusher.Flush()
 	}

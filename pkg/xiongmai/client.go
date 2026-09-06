@@ -7,13 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/Afrouper/steinel-cam-bridge/pkg/logger"
 )
 
 // Client manages the TCP control connection to a Xiongmai/Steinel L 620 CAM on port 34567.
@@ -27,13 +28,12 @@ type Client struct {
 	sequence          uint32
 	mu                sync.Mutex
 	isLoggedIn        bool
-	debug             bool
 	closeChan         chan struct{}
 	closed            atomic.Bool
 }
 
 // NewClient creates a new Xiongmai Sofia protocol client.
-func NewClient(cameraIP string, port int, user, password string, debug bool) *Client {
+func NewClient(cameraIP string, port int, user, password string) *Client {
 	if port <= 0 {
 		port = DefaultPort
 	}
@@ -45,7 +45,6 @@ func NewClient(cameraIP string, port int, user, password string, debug bool) *Cl
 		user:              user,
 		password:          password,
 		effectivePassword: password,
-		debug:             debug,
 		closeChan:         make(chan struct{}),
 	}
 }
@@ -77,12 +76,10 @@ func (c *Client) Connect(ctx context.Context) error {
 		return fmt.Errorf("xiongmai login failed: %w", err)
 	}
 
-	if c.debug {
-		if c.isLoggedIn {
-			log.Printf("[Xiongmai] ✅ Successfully connected and authenticated on %s (SessionID: 0x%08X)", c.addr, c.sessionID)
-		} else {
-			log.Printf("[Xiongmai] 📡 TCP connection active on %s in Resilient Streaming Mode (SessionID: 0x%08X)", c.addr, c.sessionID)
-		}
+	if c.isLoggedIn {
+		logger.Info("Xiongmai", "✅ Successfully connected and authenticated on %s (SessionID: 0x%08X)", c.addr, c.sessionID)
+	} else {
+		logger.Info("Xiongmai", "📡 TCP connection active on %s in Resilient Streaming Mode (SessionID: 0x%08X)", c.addr, c.sessionID)
 	}
 
 	return nil
@@ -200,10 +197,8 @@ func MaskPassword(pwd string) string {
 
 // loginLocked performs the OPUserLogin command with automated password format fallback.
 func (c *Client) loginLocked() error {
-	if c.debug {
-		log.Printf("[Xiongmai] 🔍 Login check: user=%q, password=%s (length: %d chars)",
-			c.user, MaskPassword(c.password), len(c.password))
-	}
+	logger.Debug("Xiongmai", "🔍 Login check: user=%q (password configured: %v, length: %d chars)",
+		c.user, c.password != "", len(c.password))
 
 	candidates := c.getPasswordCandidates()
 	var lastErr error
@@ -222,9 +217,14 @@ func (c *Client) loginLocked() error {
 			return err
 		}
 
-		respData, err := c.sendPacketLocked(MsgLoginReq, payload)
+		// Send login packet via sendRawPacketLocked to prevent logging credentials in Trace mode (CodeQL: CWE-312)
+		logger.Trace("Xiongmai", "-> Sofia MsgID: %d (0x%04X), Seq: %d, Data: [LOGIN REQUEST MASKED]", MsgLoginReq, MsgLoginReq, c.sequence+1)
+		respData, respHdr, err := c.sendRawPacketLocked(MsgLoginReq, payload)
 		if err != nil {
 			return err
+		}
+		if respHdr != nil {
+			logger.Trace("Xiongmai", "<- Sofia MsgID: %d (0x%04X), Seq: %d, Data: %s", respHdr.MsgID, respHdr.MsgID, respHdr.Sequence, string(respData))
 		}
 
 		var resp LoginResp
@@ -248,14 +248,12 @@ func (c *Client) loginLocked() error {
 			}
 
 			c.isLoggedIn = true
-			log.Printf("[Xiongmai] 🔑 Authenticated successfully using %s (User: %s, SessionID: 0x%08X)", cand.label, cand.user, c.sessionID)
+			logger.Info("Xiongmai", "🔑 Authenticated successfully using %s (User: %s, SessionID: 0x%08X)", cand.label, cand.user, c.sessionID)
 			return nil
 		}
 
-		log.Printf("[Xiongmai] ℹ️ Candidate #%d [%s] rejected by camera (Ret: %d)", i+1, cand.label, resp.Ret)
-		if c.debug {
-			log.Printf("[Xiongmai] 🔍 Raw response payload: %s", string(respData))
-		}
+		logger.Debug("Xiongmai", "ℹ️ Candidate #%d [%s] rejected by camera (Ret: %d)", i+1, cand.label, resp.Ret)
+		logger.Trace("Xiongmai", "🔍 Raw response payload: %s", string(respData))
 		lastErr = fmt.Errorf("camera login rejected: %s", formatLoginError(resp.Ret))
 		if resp.Ret != 124 {
 			return lastErr
@@ -267,12 +265,12 @@ func (c *Client) loginLocked() error {
 		c.sessionID = fallbackSessionID
 		c.effectivePassword = strings.TrimSpace(c.password)
 		c.isLoggedIn = false
-		log.Printf("[Xiongmai] ⚠️ Sofia login returned code 124 (EE_ACCOUNT_PWD_ENCRYPT_ERROR: auth subsystem inactive or password mismatch)")
-		log.Printf("[Xiongmai] 📡 Proceeding in Resilient Streaming Mode with assigned SessionID 0x%08X (RTSP Port 554 active)", c.sessionID)
+		logger.Warn("Xiongmai", "⚠️ Sofia login returned code 124 (EE_ACCOUNT_PWD_ENCRYPT_ERROR: auth subsystem inactive or password mismatch)")
+		logger.Info("Xiongmai", "📡 Proceeding in Resilient Streaming Mode with assigned SessionID 0x%08X (RTSP Port 554 active)", c.sessionID)
 		return nil
 	}
 
-	log.Printf("[Xiongmai] ❌ All %d authentication candidates rejected by camera (check username and device password)", len(candidates))
+	logger.Error("Xiongmai", "❌ All %d authentication candidates rejected by camera (check username and device password)", len(candidates))
 	return lastErr
 }
 
@@ -300,16 +298,14 @@ func (c *Client) EnableRTSP() error {
 		return err
 	}
 
-	if c.debug {
-		log.Printf("[Xiongmai] 📡 Enabling RTSP server on camera...")
-	}
+	logger.Debug("Xiongmai", "📡 Enabling RTSP server on camera...")
 
 	_, err = c.sendPacketLocked(MsgConfigSetReq, payload)
 	if err != nil {
 		return fmt.Errorf("failed to enable RTSP server: %w", err)
 	}
 
-	log.Printf("[Xiongmai] 🎥 RTSP server enabled on camera port %d", RTSPPort)
+	logger.Info("Xiongmai", "🎥 RTSP server enabled on camera port %d", RTSPPort)
 	return nil
 }
 
@@ -396,6 +392,7 @@ func (c *Client) QueryMCUConfig() (*MCUConfig, error) {
 
 // SendMCUCommand sends a raw MCU serial port command (e.g. "BXaU").
 func (c *Client) SendMCUCommand(cmd string) error {
+	logger.Trace("Xiongmai MCU", "-> MCU Command: %q", cmd)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -460,10 +457,11 @@ func (c *Client) SendKeepAlive() error {
 	return err
 }
 
-// sendPacketLocked encodes the Sofia header, sends the packet and reads the response.
-func (c *Client) sendPacketLocked(msgID uint16, payload []byte) ([]byte, error) {
+// sendRawPacketLocked encodes the Sofia header, sends the packet and reads the response
+// without logging request payloads (essential to prevent sensitive credentials like PassWord from leaking).
+func (c *Client) sendRawPacketLocked(msgID uint16, payload []byte) ([]byte, *Header, error) {
 	if c.conn == nil {
-		return nil, errors.New("connection is closed")
+		return nil, nil, errors.New("connection is closed")
 	}
 
 	c.sequence++
@@ -483,32 +481,42 @@ func (c *Client) sendPacketLocked(msgID uint16, payload []byte) ([]byte, error) 
 
 	_ = c.conn.SetDeadline(time.Now().Add(5 * time.Second))
 	if _, err := c.conn.Write(packet); err != nil {
-		return nil, fmt.Errorf("write error: %w", err)
+		return nil, nil, fmt.Errorf("write error: %w", err)
 	}
 
 	// Read response header (20 bytes)
 	respHdrBuf := make([]byte, HeaderLength)
 	if _, err := io.ReadFull(c.conn, respHdrBuf); err != nil {
-		return nil, fmt.Errorf("failed to read response header: %w", err)
+		return nil, nil, fmt.Errorf("failed to read response header: %w", err)
 	}
 
 	respHdr, err := DecodeHeader(respHdrBuf)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	if respHdr.DataLength > 65535 {
-		return nil, fmt.Errorf("response payload too large: %d bytes", respHdr.DataLength)
+		return nil, nil, fmt.Errorf("response payload too large: %d bytes", respHdr.DataLength)
 	}
 
 	respPayload := make([]byte, respHdr.DataLength)
 	if _, err := io.ReadFull(c.conn, respPayload); err != nil {
-		return nil, fmt.Errorf("failed to read response payload: %w", err)
+		return nil, nil, fmt.Errorf("failed to read response payload: %w", err)
 	}
 
 	// Trim trailing null/newlines
 	cleanPayload := strings.TrimRight(string(respPayload), "\x00\r\n ")
-	return []byte(cleanPayload), nil
+	return []byte(cleanPayload), respHdr, nil
+}
+
+// sendPacketLocked logs non-sensitive Sofia request/response payloads and delegates to sendRawPacketLocked.
+func (c *Client) sendPacketLocked(msgID uint16, payload []byte) ([]byte, error) {
+	logger.Trace("Xiongmai", "-> Sofia MsgID: %d (0x%04X), Seq: %d, Data: %s", msgID, msgID, c.sequence+1, string(payload))
+	cleanPayload, respHdr, err := c.sendRawPacketLocked(msgID, payload)
+	if err == nil && respHdr != nil {
+		logger.Trace("Xiongmai", "<- Sofia MsgID: %d (0x%04X), Seq: %d, Data: %s", respHdr.MsgID, respHdr.MsgID, respHdr.Sequence, string(cleanPayload))
+	}
+	return cleanPayload, err
 }
 
 // SendPacket sends a Sofia message and awaits the response.

@@ -62,3 +62,19 @@ func TestTranscoder(t *testing.T) {
 		assert.NotEmpty(t, frame)
 	}
 }
+
+func BenchmarkTranscoderProcessPCMU(b *testing.B) {
+	transcoder := NewTranscoder(func(au []byte, pts time.Duration) {})
+	defer transcoder.Close()
+
+	pcmuChunk := make([]byte, 160)
+	for i := range pcmuChunk {
+		pcmuChunk[i] = 0xFF
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = transcoder.ProcessPCMU(pcmuChunk)
+	}
+}

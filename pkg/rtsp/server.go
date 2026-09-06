@@ -2,13 +2,13 @@ package rtsp
 
 import (
 	"fmt"
-	"log"
 	"net"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/Afrouper/steinel-cam-bridge/pkg/logger"
 	"github.com/bluenviron/gortsplib/v4"
 	"github.com/bluenviron/gortsplib/v4/pkg/base"
 	"github.com/bluenviron/gortsplib/v4/pkg/description"
@@ -41,12 +41,11 @@ type Server struct {
 	backchannelPacketCount  atomic.Uint64
 	activeClients           atomic.Int64
 	lastIdleLogTime         time.Time
-	debug                   bool
 	started                 bool
 	mu                      sync.RWMutex
 }
 
-func NewServer(port int, pathName string, audioCodec string, debug ...bool) (*Server, error) {
+func NewServer(port int, pathName string, audioCodec string) (*Server, error) {
 	if port == 0 {
 		port = 8554
 	}
@@ -57,11 +56,6 @@ func NewServer(port int, pathName string, audioCodec string, debug ...bool) (*Se
 	audioCodec = strings.ToLower(strings.TrimSpace(audioCodec))
 	if audioCodec == "" {
 		audioCodec = "aac"
-	}
-
-	var isDebug bool
-	if len(debug) > 0 {
-		isDebug = debug[0]
 	}
 
 	// 1. Setup H.264 video format (Main Live Feed)
@@ -139,7 +133,6 @@ func NewServer(port int, pathName string, audioCodec string, debug ...bool) (*Se
 		backchannelMedia:  bcMedia,
 		pathName:          pathName,
 		port:              port,
-		debug:             isDebug,
 	}
 
 	srv := &gortsplib.Server{
@@ -177,7 +170,7 @@ func (s *Server) SetOnPlayHandler(handler OnPlayHandler) {
 }
 
 func (s *Server) Start() error {
-	log.Printf("[RTSP] Server listening at rtsp://0.0.0.0:%d/%s (Profile T Audio Backchannel enabled)", s.port, s.pathName)
+	logger.Info("RTSP", "Server listening at rtsp://0.0.0.0:%d/%s (Profile T Audio Backchannel enabled)", s.port, s.pathName)
 	if err := s.server.Start(); err != nil {
 		return err
 	}
@@ -196,9 +189,9 @@ func (s *Server) Start() error {
 			s.udpConn = conn
 			s.mu.Unlock()
 			go s.readUDPBackchannelLoop(conn)
-			log.Printf("[RTSP] 🎙️ UDP Audio Backchannel receiver listening on 0.0.0.0:%d/udp", s.port)
+			logger.Info("RTSP", "🎙️ UDP Audio Backchannel receiver listening on 0.0.0.0:%d/udp", s.port)
 		} else {
-			log.Printf("[RTSP] ⚠️ Failed to bind UDP backchannel receiver on port %d: %v", s.port, err)
+			logger.Warn("RTSP", "⚠️ Failed to bind UDP backchannel receiver on port %d: %v", s.port, err)
 		}
 	}
 
@@ -232,9 +225,12 @@ func (s *Server) handleBackchannelPacket(medi *description.Media, pkt *rtp.Packe
 	if medi == nil || medi == s.backchannelMedia || medi.IsBackChannel {
 		cnt := s.backchannelPacketCount.Add(1)
 		if cnt == 1 {
-			log.Printf("[RTSP] 🎙️ Audio backchannel stream started (%s, PT=%d, SSRC=%d)", source, pkt.PayloadType, pkt.SSRC)
-		} else if s.debug && cnt%50 == 0 {
-			log.Printf("[RTSP] 🎙️ Forwarding audio backchannel (%s) RTP packet #%d (PT=%d, SSRC=%d, Seq=%d, Payload=%d bytes)",
+			logger.Info("RTSP", "🎙️ Audio backchannel stream started (%s, PT=%d, SSRC=%d)", source, pkt.PayloadType, pkt.SSRC)
+		} else if cnt%50 == 0 {
+			logger.Debug("RTSP", "🎙️ Forwarding audio backchannel (%s) RTP packet #%d (PT=%d, SSRC=%d, Seq=%d, Payload=%d bytes)",
+				source, cnt, pkt.PayloadType, pkt.SSRC, pkt.SequenceNumber, len(pkt.Payload))
+		} else {
+			logger.Trace("RTSP", "🎙️ Audio backchannel (%s) RTP packet #%d (PT=%d, SSRC=%d, Seq=%d, Payload=%d bytes)",
 				source, cnt, pkt.PayloadType, pkt.SSRC, pkt.SequenceNumber, len(pkt.Payload))
 		}
 
@@ -338,6 +334,7 @@ func (s *Server) WriteAudioPacket(pkt *rtp.Packet) {
 // --- gortsplib Server Callbacks ---
 
 func (s *Server) OnDescribe(ctx *gortsplib.ServerHandlerOnDescribeCtx) (*base.Response, *gortsplib.ServerStream, error) {
+	logger.Trace("RTSP", "DESCRIBE request for path: %s", ctx.Path)
 	if !s.checkPath(ctx.Path) {
 		return &base.Response{
 			StatusCode: base.StatusNotFound,
@@ -354,6 +351,7 @@ func (s *Server) OnDescribe(ctx *gortsplib.ServerHandlerOnDescribeCtx) (*base.Re
 }
 
 func (s *Server) OnSetup(ctx *gortsplib.ServerHandlerOnSetupCtx) (*base.Response, *gortsplib.ServerStream, error) {
+	logger.Trace("RTSP", "SETUP request for path: %s", ctx.Path)
 	if !s.checkPath(ctx.Path) {
 		return &base.Response{
 			StatusCode: base.StatusNotFound,
@@ -371,10 +369,9 @@ func (s *Server) OnSetup(ctx *gortsplib.ServerHandlerOnSetupCtx) (*base.Response
 
 func (s *Server) OnPlay(ctx *gortsplib.ServerHandlerOnPlayCtx) (*base.Response, error) {
 	count := s.activeClients.Add(1)
-	if s.debug {
-		log.Printf("[RTSP] ▶️ Client connected and playing stream (%s, active clients: %d)", ctx.Path, count)
-	} else if count == 1 {
-		log.Printf("[RTSP] ▶️ Stream active (client connected: %s)", ctx.Path)
+	logger.Debug("RTSP", "▶️ Client connected and playing stream (%s, active clients: %d)", ctx.Path, count)
+	if count == 1 {
+		logger.Info("RTSP", "▶️ Stream active (client connected: %s)", ctx.Path)
 	}
 
 	s.mu.RLock()
@@ -389,9 +386,7 @@ func (s *Server) OnPlay(ctx *gortsplib.ServerHandlerOnPlayCtx) (*base.Response, 
 }
 
 func (s *Server) OnRecord(ctx *gortsplib.ServerHandlerOnRecordCtx) (*base.Response, error) {
-	if s.debug {
-		log.Printf("[RTSP] 🎙️ OnRecord called on %s", ctx.Path)
-	}
+	logger.Debug("RTSP", "🎙️ OnRecord called on %s", ctx.Path)
 	if ctx.Session != nil {
 		for _, medi := range ctx.Session.SetuppedMedias() {
 			cmedia := medi
@@ -414,14 +409,13 @@ func (s *Server) OnSessionClose(_ *gortsplib.ServerHandlerOnSessionCloseCtx) {
 		count = 0
 	}
 
-	if s.debug {
-		log.Printf("[RTSP] ⏹️ Client disconnected (active clients: %d)", count)
-	} else if count == 0 {
+	logger.Debug("RTSP", "⏹️ Client disconnected (active clients: %d)", count)
+	if count == 0 {
 		s.mu.Lock()
 		now := time.Now()
 		if now.Sub(s.lastIdleLogTime) > 30*time.Second {
 			s.lastIdleLogTime = now
-			log.Printf("[RTSP] ⏹️ Stream idle (all clients disconnected)")
+			logger.Info("RTSP", "⏹️ Stream idle (all clients disconnected)")
 		}
 		s.mu.Unlock()
 	}

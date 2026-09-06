@@ -11,12 +11,12 @@ type Config struct {
 	KeyPath    string
 	IsBeta     bool
 	ClientName string
-	Debug      bool
 }
 
 // Driver defines the common interface for communicating with a Nabto Edge camera.
 // Implemented by CGoClient (using libnabto_client) and PureClient (pure Go driver).
 type Driver interface {
+	DriverName() string
 	Connect() error
 	Close()
 	GetSignalingPort() (uint32, error)

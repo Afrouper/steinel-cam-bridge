@@ -6,18 +6,18 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"strconv"
 	"sync"
 	"time"
 
+	"github.com/Afrouper/steinel-cam-bridge/pkg/logger"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/storage"
 )
 
 var (
-	ErrSDCardBusy      = errors.New("sdcard is currently busy with another transfer")
-	ErrSDCardTimeout   = errors.New("sdcard transfer timed out waiting for camera response")
-	ErrTransferAborted = errors.New("transfer was aborted by client")
+	ErrSDCardBusy      = storage.ErrStorageBusy
+	ErrSDCardTimeout   = storage.ErrStorageTimeout
+	ErrTransferAborted = storage.ErrTransferAborted
 )
 
 // EventItem represents a single motion/manual recording on the camera's internal SD card
@@ -54,7 +54,6 @@ type SDCardManager struct {
 	transferMu  sync.Mutex
 	active      *activeTransfer
 	mu          sync.Mutex
-	debug       bool
 
 	// Event list response synchronization
 	eventListMu   sync.Mutex
@@ -68,12 +67,8 @@ func NewSDCardManager(sendJSONCmd func(cmd string, info map[string]interface{}) 
 	}
 }
 
-// SetDebug enables or disables verbose debug logging for SD card operations.
-func (m *SDCardManager) SetDebug(debug bool) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.debug = debug
-}
+// SetDebug is kept for backwards compatibility (no-op as log/slog manages levels globally).
+func (m *SDCardManager) SetDebug(_ bool) {}
 
 // GetEventList queries the list of recordings from the camera's SD card within a given time range
 func (m *SDCardManager) GetEventList(ctx context.Context, startTime, endTime int64, page, limit int) (*EventListResponse, error) {
@@ -88,13 +83,7 @@ func (m *SDCardManager) GetEventList(ctx context.Context, startTime, endTime int
 		endTime = 2147483647
 	}
 
-	m.mu.Lock()
-	isDebug := m.debug
-	m.mu.Unlock()
-
-	if isDebug {
-		log.Printf("[SDCard] 🔍 Requesting event list (start: %d, end: %d, page: %d, limit: %d)", startTime, endTime, page, limit)
-	}
+	logger.Debug("SDCard", "🔍 Requesting event list (start: %d, end: %d, page: %d, limit: %d)", startTime, endTime, page, limit)
 
 	m.eventListMu.Lock()
 	respChan := make(chan *EventListResponse, 1)
@@ -115,6 +104,7 @@ func (m *SDCardManager) GetEventList(ctx context.Context, startTime, endTime int
 		"end_time":   endTime,
 	}
 
+	logger.Trace("SDCard", "Sending get_event_list info: %+v", info)
 	if err := m.sendJSONCmd("get_event_list", info); err != nil {
 		return nil, fmt.Errorf("failed to send get_event_list command: %w", err)
 	}
@@ -123,15 +113,14 @@ func (m *SDCardManager) GetEventList(ctx context.Context, startTime, endTime int
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case <-time.After(15 * time.Second):
-		log.Printf("[SDCard] ⚠️ Timed out waiting for get_event_list response from camera")
+		logger.Warn("SDCard", "⚠️ Timed out waiting for get_event_list response from camera")
 		return nil, ErrSDCardTimeout
 	case resp := <-respChan:
 		if resp == nil {
 			return &EventListResponse{Count: 0, Total: 0, List: []EventItem{}}, nil
 		}
-		if isDebug {
-			log.Printf("[SDCard] 📋 Received event list with %d items (Total: %d)", resp.Count, resp.Total)
-		}
+		logger.Info("SDCard", "📋 Received event list with %d items (Total: %d)", resp.Count, resp.Total)
+		logger.Trace("SDCard", "Event list items: %+v", resp.List)
 		return resp, nil
 	}
 }
@@ -231,17 +220,7 @@ func (m *SDCardManager) StreamVideo(ctx context.Context, id string, w io.Writer,
 	if err != nil {
 		return fmt.Errorf("invalid recording ID: %w", err)
 	}
-	err = m.streamFile(ctx, "get_event_video", ts, w, onStart)
-	if errors.Is(err, ErrSDCardBusy) {
-		return storage.ErrStorageBusy
-	}
-	if errors.Is(err, ErrSDCardTimeout) {
-		return storage.ErrStorageTimeout
-	}
-	if errors.Is(err, ErrTransferAborted) {
-		return storage.ErrTransferAborted
-	}
-	return err
+	return m.streamFile(ctx, "get_event_video", ts, w, onStart)
 }
 
 // streamFile executes the binary download protocol with single-flight locking, streaming, and watchdog
@@ -312,7 +291,7 @@ func (m *SDCardManager) streamFile(ctx context.Context, cmd string, timestamp in
 			last := transfer.lastData
 			m.mu.Unlock()
 			if time.Since(last) > 10*time.Second {
-				log.Printf("[SDCard] ⚠️ Transfer stalled (>10s no data). Aborting transfer for timestamp %d...", timestamp)
+				logger.Warn("SDCard", "⚠️ Transfer stalled (>10s no data). Aborting transfer for timestamp %d...", timestamp)
 				m.sendStopCommand(cmd)
 				return ErrSDCardTimeout
 			}
@@ -406,17 +385,18 @@ func (m *SDCardManager) HandleJSONMessage(msg map[string]interface{}) bool {
 					t.fileSize = int64(size)
 				}
 			}
-			log.Printf("[SDCard] 📥 Transfer started: %s (Size: %d bytes)", t.fileName, t.fileSize)
+			logger.Info("SDCard", "📥 Transfer started: %s (Size: %d bytes)", t.fileName, t.fileSize)
 
 		case "end":
-			log.Printf("[SDCard] ✅ Transfer completed: %s", t.fileName)
+			logger.Info("SDCard", "✅ Transfer completed: %s", t.fileName)
 			close(t.doneChan)
 
 		case "state":
 			// Progress update from camera
+			logger.Trace("SDCard", "Transfer state update: %+v", info)
 
 		default:
-			log.Printf("[SDCard] ℹ️ Message for %s with action '%s': %v", resp, action, msg)
+			logger.Debug("SDCard", "ℹ️ Message for %s with action '%s': %v", resp, action, msg)
 			if action == "fail" || action == "error" {
 				select {
 				case t.errChan <- fmt.Errorf("camera reported transfer error: %s", action):
@@ -428,7 +408,7 @@ func (m *SDCardManager) HandleJSONMessage(msg map[string]interface{}) bool {
 		if info != nil {
 			if code, ok := info["code"].(float64); ok && code != 200 && code != 0 {
 				errMsg, _ := info["msg"].(string)
-				log.Printf("[SDCard] ⚠️ Camera reported error code %v: %s", code, errMsg)
+				logger.Warn("SDCard", "⚠️ Camera reported error code %v: %s", code, errMsg)
 				select {
 				case t.errChan <- fmt.Errorf("camera error %v: %s", code, errMsg):
 				default:
@@ -451,9 +431,12 @@ func (m *SDCardManager) HandleBinaryChunk(data []byte) {
 		return
 	}
 
+	// Trace: log chunk receipt with size only, NEVER dump raw MP4 video bytes
+	logger.Trace("SDCard", "Received binary chunk for %s (%d bytes)", t.fileName, len(data))
+
 	select {
 	case t.chunkChan <- data:
 	default:
-		log.Printf("[SDCard] ⚠️ Chunk buffer full, dropping chunk (%d bytes)", len(data))
+		logger.Warn("SDCard", "⚠️ Chunk buffer full, dropping chunk (%d bytes)", len(data))
 	}
 }

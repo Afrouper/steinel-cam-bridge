@@ -69,6 +69,7 @@ func TestProfileGServicesAndREST(t *testing.T) {
 		8000, 8554, "live", "aac", "de-test", "pr-test",
 		nil, nil, nil, nil,
 		func() storage.RecordingProvider { return mockProv },
+		nil,
 	)
 
 	// 1. Test Profile G in GetCapabilities

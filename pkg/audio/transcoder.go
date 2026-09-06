@@ -30,6 +30,7 @@ type Transcoder struct {
 	mu          sync.Mutex
 	encoder     *aac.Encoder
 	adtsBuf     *bytes.Buffer
+	pcmReader   bytes.Reader
 	pcmBuf      []byte
 	sampleCount uint64
 	sampleRate  int
@@ -92,9 +93,10 @@ func (t *Transcoder) ProcessPCMU(pcmuData []byte) error {
 	t.pcmBuf = append(t.pcmBuf, byteBuf...)
 
 	// 4. While we have at least one full AAC frame (1024 samples = 2048 bytes)
-	for len(t.pcmBuf) >= AACFrameBytes {
-		chunk := t.pcmBuf[:AACFrameBytes]
-		t.pcmBuf = t.pcmBuf[AACFrameBytes:]
+	consumed := 0
+	for len(t.pcmBuf)-consumed >= AACFrameBytes {
+		chunk := t.pcmBuf[consumed : consumed+AACFrameBytes]
+		consumed += AACFrameBytes
 
 		// Calculate Presentation Timestamp (PTS)
 		pts := time.Duration(t.sampleCount) * time.Second / time.Duration(t.sampleRate)
@@ -102,7 +104,8 @@ func (t *Transcoder) ProcessPCMU(pcmuData []byte) error {
 
 		// Encode 1024 PCM samples into continuous ADTS buffer
 		t.adtsBuf.Reset()
-		if err := t.encoder.Encode(bytes.NewReader(chunk)); err != nil && err != io.EOF {
+		t.pcmReader.Reset(chunk)
+		if err := t.encoder.Encode(&t.pcmReader); err != nil && err != io.EOF {
 			return fmt.Errorf("failed to encode aac: %w", err)
 		}
 
@@ -126,6 +129,12 @@ func (t *Transcoder) ProcessPCMU(pcmuData []byte) error {
 				t.onAACFrame(pkt.AU, pts)
 			}
 		}
+	}
+
+	// Compact remaining unencoded bytes to the beginning of the buffer to prevent memory growth
+	if consumed > 0 {
+		remaining := copy(t.pcmBuf, t.pcmBuf[consumed:])
+		t.pcmBuf = t.pcmBuf[:remaining]
 	}
 
 	return nil

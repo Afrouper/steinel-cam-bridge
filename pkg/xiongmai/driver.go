@@ -3,13 +3,13 @@ package xiongmai
 import (
 	"context"
 	"fmt"
-	"log"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/Afrouper/steinel-cam-bridge/pkg/events"
+	"github.com/Afrouper/steinel-cam-bridge/pkg/logger"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/mqtt"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/rtsp"
 	"github.com/pion/rtp"
@@ -27,13 +27,12 @@ type Driver struct {
 	ingest     *RTSPIngest
 	talk       *TalkClient
 	sdcard     *SDCardManager
-	debug      bool
 	mu         sync.Mutex
 	running    bool
 }
 
 // NewDriver creates a new driver instance for a Steinel L 620 CAM.
-func NewDriver(cameraIP string, user, password string, resolution string, rtspServer *rtsp.Server, eventBus *events.Bus, debug bool) *Driver {
+func NewDriver(cameraIP string, user, password string, resolution string, rtspServer *rtsp.Server, eventBus *events.Bus) *Driver {
 	if user == "" {
 		user = "admin"
 	}
@@ -47,13 +46,13 @@ func NewDriver(cameraIP string, user, password string, resolution string, rtspSe
 		streamSubtype = 1 // 360p SD (Sub stream)
 		resNormalized = "360p"
 	} else if strings.EqualFold(resolution, "1080p") {
-		log.Printf("[Config] ℹ️ Steinel L 620 CAM sensor supports max 720p HD (mapping '1080p' configuration to native 720p Main Stream channel=1_stream=0)")
+		logger.Info("Config", "ℹ️ Steinel L 620 CAM sensor supports max 720p HD (mapping '1080p' configuration to native 720p Main Stream channel=1_stream=0)")
 		resNormalized = "720p"
 	}
 
-	client := NewClient(cameraIP, DefaultPort, user, password, debug)
-	talk := NewTalkClient(client, debug)
-	ingest := NewRTSPIngest(cameraIP, RTSPPort, user, password, streamSubtype, rtspServer, debug)
+	client := NewClient(cameraIP, DefaultPort, user, password)
+	talk := NewTalkClient(client)
+	ingest := NewRTSPIngest(cameraIP, RTSPPort, user, password, streamSubtype, rtspServer)
 	sdcard := NewSDCardManager(client, cameraIP, user, password)
 
 	return &Driver{
@@ -67,7 +66,6 @@ func NewDriver(cameraIP string, user, password string, resolution string, rtspSe
 		talk:       talk,
 		ingest:     ingest,
 		sdcard:     sdcard,
-		debug:      debug,
 	}
 }
 
@@ -86,17 +84,17 @@ func (d *Driver) Start(ctx context.Context) error {
 		return nil
 	}
 
-	log.Printf("[Xiongmai Driver] 🚀 Connecting to Steinel L 620 CAM at %s (TCP Port %d)...", d.cameraIP, DefaultPort)
+	logger.Info("Xiongmai Driver", "🚀 Connecting to Steinel L 620 CAM at %s (TCP Port %d)...", d.cameraIP, DefaultPort)
 
 	// Step 1: Connect & Login on Sofia port 34567
 	if err := d.client.Connect(ctx); err != nil {
-		log.Printf("[Xiongmai Driver] ⚠️ Sofia port %d connection error (%v) — continuing in resilient RTSP mode", DefaultPort, err)
+		logger.Warn("Xiongmai Driver", "⚠️ Sofia port %d connection error (%v) — continuing in resilient RTSP mode", DefaultPort, err)
 	}
 
 	if d.client.IsLoggedIn() {
 		// Step 2: Zero-Touch RTSP Enablement
 		if err := d.client.EnableRTSP(); err != nil {
-			log.Printf("[Xiongmai Driver] ℹ️ Zero-touch RTSP enablement result: %v", err)
+			logger.Debug("Xiongmai Driver", "ℹ️ Zero-touch RTSP enablement result: %v", err)
 		}
 
 		// Step 3: Query initial light and MCU states
@@ -115,13 +113,13 @@ func (d *Driver) Start(ctx context.Context) error {
 	if d.resolution == "360p" {
 		streamSubtype = 1
 	}
-	d.ingest = NewRTSPIngest(d.cameraIP, RTSPPort, d.user, effectivePwd, streamSubtype, d.rtspServer, d.debug)
+	d.ingest = NewRTSPIngest(d.cameraIP, RTSPPort, d.user, effectivePwd, streamSubtype, d.rtspServer)
 	if err := d.ingest.Start(ctx); err != nil {
-		log.Printf("[Xiongmai Driver] ⚠️ Failed to start RTSP Ingest: %v", err)
+		logger.Warn("Xiongmai Driver", "⚠️ Failed to start RTSP Ingest: %v", err)
 	}
 
 	d.running = true
-	log.Printf("[Xiongmai Driver] ✅ Steinel L 620 CAM driver running")
+	logger.Info("Xiongmai Driver", "✅ Steinel L 620 CAM driver running")
 	return nil
 }
 
@@ -154,10 +152,8 @@ func (d *Driver) syncInitialState() {
 			st.LowlightTime = dur * 60
 		}
 
-		if d.debug {
-			log.Printf("[Xiongmai Driver] 💡 Synced MCU Config: Light=%d%%, Lux=%d, Dist=%dm, Delay=%ds, Lowlight=%d%% (%s)",
-				mcuCfg.Highlight, mcuCfg.TwilightLux, mcuCfg.Distance, mcuCfg.HighlightDelaySec, mcuCfg.Lowlight, mcuCfg.LowlightDuration)
-		}
+		logger.Debug("Xiongmai Driver", "💡 Synced MCU Config: Light=%d%%, Lux=%d, Dist=%dm, Delay=%ds, Lowlight=%d%% (%s)",
+			mcuCfg.Highlight, mcuCfg.TwilightLux, mcuCfg.Distance, mcuCfg.HighlightDelaySec, mcuCfg.Lowlight, mcuCfg.LowlightDuration)
 	}
 
 	d.eventBus.UpdateStatus(st)
@@ -173,9 +169,7 @@ func (d *Driver) keepAliveLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if err := d.client.SendKeepAlive(); err != nil {
-				if d.debug {
-					log.Printf("[Xiongmai Driver] ⚠️ Heartbeat failed: %v", err)
-				}
+				logger.Debug("Xiongmai Driver", "⚠️ Heartbeat failed: %v", err)
 			}
 		}
 	}
@@ -329,7 +323,7 @@ func (d *Driver) SetResolution(res string) error {
 		streamSubtype = 1
 		resNormalized = "360p"
 	} else if strings.EqualFold(res, "1080p") {
-		log.Printf("[Xiongmai] ℹ️ Steinel L 620 CAM sensor supports max 720p HD (clamping resolution to 720p)")
+		logger.Info("Xiongmai", "ℹ️ Steinel L 620 CAM sensor supports max 720p HD (clamping resolution to 720p)")
 		resNormalized = "720p"
 	}
 
@@ -346,7 +340,7 @@ func (d *Driver) SetResolution(res string) error {
 			effectivePwd = d.password
 		}
 		_ = d.ingest.Close()
-		d.ingest = NewRTSPIngest(d.cameraIP, RTSPPort, d.user, effectivePwd, streamSubtype, d.rtspServer, d.debug)
+		d.ingest = NewRTSPIngest(d.cameraIP, RTSPPort, d.user, effectivePwd, streamSubtype, d.rtspServer)
 		return d.ingest.Start(context.Background())
 	}
 	return nil

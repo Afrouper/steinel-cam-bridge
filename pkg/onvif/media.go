@@ -2,10 +2,10 @@ package onvif
 
 import (
 	"fmt"
-	"log"
 	"strings"
 
 	"github.com/Afrouper/steinel-cam-bridge/pkg/events"
+	"github.com/Afrouper/steinel-cam-bridge/pkg/logger"
 )
 
 type MediaHandler struct {
@@ -14,12 +14,16 @@ type MediaHandler struct {
 	audioCodec    string
 	onvifPort     int
 	changeResFunc func(res string) error
+	eventBus      *events.Bus
 }
 
-func NewMediaHandler(rtspPort int, rtspPath string, audioCodec string, onvifPort int, changeResFunc func(res string) error) *MediaHandler {
+func NewMediaHandler(rtspPort int, rtspPath string, audioCodec string, onvifPort int, changeResFunc func(res string) error, eventBus *events.Bus) *MediaHandler {
 	audioCodec = strings.ToLower(strings.TrimSpace(audioCodec))
 	if audioCodec == "" {
 		audioCodec = "aac"
+	}
+	if eventBus == nil {
+		eventBus = events.GlobalBus
 	}
 	return &MediaHandler{
 		rtspPort:      rtspPort,
@@ -27,6 +31,7 @@ func NewMediaHandler(rtspPort int, rtspPath string, audioCodec string, onvifPort
 		audioCodec:    audioCodec,
 		onvifPort:     onvifPort,
 		changeResFunc: changeResFunc,
+		eventBus:      eventBus,
 	}
 }
 
@@ -220,14 +225,14 @@ func (h *MediaHandler) setVideoEncoderConfiguration(reqXML string) string {
 		targetRes = "360p"
 	}
 
-	log.Printf("[ONVIF] 🔄 Received SetVideoEncoderConfiguration -> applying %s", targetRes)
+	logger.Info("ONVIF", "🔄 Received SetVideoEncoderConfiguration -> applying %s", targetRes)
 	if h.changeResFunc != nil {
 		_ = h.changeResFunc(targetRes)
 	}
 
-	st := events.GlobalBus.GetStatus()
+	st := h.eventBus.GetStatus()
 	st.Resolution = targetRes
-	events.GlobalBus.UpdateStatus(st)
+	h.eventBus.UpdateStatus(st)
 
 	return fmt.Sprintf(`<trt:SetVideoEncoderConfigurationResponse xmlns:trt="%s"/>`, NS_TRT)
 }

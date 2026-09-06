@@ -5,113 +5,41 @@ Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hi
 ## 1.3.6-beta.6
 
 ### ⚡ Pragmatische Hot-Path Optimierungen (RTSP & Audio)
-- **Zero-Allocation Socket-Lesepuffer (`pkg/rtsp/interceptor.go`)**:
-  - Einführung eines festen 4-KB-Lesepuffers (`readBuf [4096]byte`) auf dem `interceptingConn`-Struct.
-  - Vollständige Eliminierung dynamischer `make([]byte, 4096)` Allokationen bei jedem einzelnen TCP-Read im RTSP-Stream.
-  - Schneller Puffer-Reset (`c.rBuf = c.rBuf[:0]`) verhindert unbegrenztes Neuallokieren des Slices im Dauerbetrieb.
-  - **Benchmark**: `BenchmarkInterceptingConnRead` bestätigt **743 ns/op** und **0 Allokationen** pro Socket-Read.
-- **Wiederverwendbarer PCM-Reader & Puffer-Kompaktierung (`pkg/audio/transcoder.go`)**:
-  - Persistentes `pcmReader bytes.Reader` auf dem `Transcoder`-Struct analog zu `adtsBuf`.
-  - `t.pcmReader.Reset(chunk)` eliminiert `bytes.NewReader(chunk)` auf jedem einzelnen AAC-Frame (50x/Sekunde).
-  - Shifting/Kompaktierung unkodierter PCM-Bytes verhindert Fragmentierung und Speicherwachstum im Puffer.
-  - **Benchmark**: `BenchmarkTranscoderProcessPCMU` bestätigt **5.9 µs/op**.
-- **100 % Erhalt der Code-Klarheit & Erweiterbarkeit**:
-  - Alle modularen Schnittstellen (`DecodePCMU` -> `Resample8kTo16k` -> `EncodeAAC`) bleiben unverändert erhalten, um zukünftige Codecs (z. B. Opus) oder neue Kameramodelle isoliert anbinden zu können.
+- **RTSP-Socket-Puffer**: Fester Lesepuffer im RTSP-TCP-Interceptor verhindert Speicherallokationen im laufenden Video-/Audio-Stream.
+- **Effizientes Audio-Transcoding**: Wiederverwendbare Pufferstrukturen im Transcoder (G.711u $\to$ AAC) reduzieren CPU-Last und Speicherfragmentierung.
+- **Code-Klarheit**: Maximale Performance bei vollem Erhalt der modularen Erweiterbarkeit für zukünftige Codecs und Kameramodelle.
 
 ## 1.3.6-beta.5
 
-### ⚡ Pure-Go Nabto Buffer-Pooling (`sync.Pool`) & Zero-Allocation UDP-Framing
-- **Zero-Allocation UDP Datagram Framing (`pkg/nabtopure/packet_conn.go`)**:
-  - Einführung von `sync.Pool` (`udpBufPool`, 2048 Bytes) für eingehende und ausgehende UDP-Pakete.
-  - `WriteTo` erreicht nun **0 B/op** und **0 Allokationen** pro gesendetem Datagramm.
-  - Eliminiert GC-Druck und Speicherfragmentierung bei kontinuierlichem Nabto Keepalive- und DTLS-Verkehr vollständig.
-- **Optimierte Stream-Paketerzeugung (`pkg/nabtopure/stream.go`)**:
-  - Einsatz von `sync.Pool` (`streamBufPool`) für SYN- und ACK-Pakete (`buildSYNPacket`, `buildACKPacket`).
-  - Reduzierung des Speicherbedarfs bei Stream-Aushandlung und Segment-Bestätigung auf ein absolutes Minimum (1 Allokation/Op).
-- **Benchmark-Verifikation (`pkg/nabtopure/packet_conn_bench_test.go`)**:
-  - Automatisierte Benchmarks bestätigen Zero-Allocation Framing und maximale Durchsatzraten.
-
-### 💾 SD-Karten & Storage Harmonisierung
-- **Einheitliche Fehlersemantik (`pkg/storage`)**:
-  - Bereinigung redundanter Error-Definitionen: `ErrSDCardBusy`, `ErrSDCardNotFound` und `ErrFeatureDisabled` werden aus `pkg/webrtc` auf die zentralen Typen in `pkg/storage` harmonisiert.
-  - Klare, standardisierte Fehlerbehandlung beim Video- und Thumbnail-Streaming.
-- **Konsistente Thumbnail-Behandlung (Issue #23)**:
-  - Bei Sofia DVRIP-Aufnahmen (`pkg/xiongmai/sdcard.go`) wird `ThumbnailURL` nun wie beim L 625-Treiber leer (`""`) belassen, um fehlerhafte oder ins Leere laufende Snapshot-Aufrufe in Home Assistant zu verhindern.
+### ⚡ Pure-Go Nabto Buffer-Pooling & Storage-Harmonisierung
+- **Zero-Allocation UDP-Framing**: Gepoolte Puffer im nativen Pure-Go Nabto-Treiber für minimalen Speicherbedarf bei kontinuierlichem Streaming.
+- **Einheitliche SD-Karten-Fehler**: Standardisierte Fehlerbehandlung beim Abruf von Videoaufnahmen.
+- **Konsistente Thumbnail-URLs**: Bereinigung leerer Thumbnail-Links zur Vermeidung von Fehlern in Home Assistant.
 
 ## 1.3.6-beta.4
 
-### 🚀 Entflechtung des MQTT-Subsystems & EventBus Dependency Injection
-- **Modularisierung des MQTT-Subsystems (`pkg/mqtt`)**:
-  - `client.go` von 563 Zeilen auf 207 Zeilen reduziert und in vier fokussierte Module zerlegt:
-    - `client.go`: Verbindungs-Lifecycle, Auto-Reconnect, LWT (Last Will and Testament), Thread-Sicherheit.
-    - `discovery.go`: Home Assistant Auto-Discovery für alle 10 Entitäten (`light`, `select`, `sensor`, `binary_sensor`, `number`, `siren`, `event`) mit sauberen Metadaten.
-    - `state.go`: Status- und Telemetrie-Publizierung, Bewegungsevents (`publishMotion`) und SD-Karten-Aufnahmetelemetrie (`PublishRecordingEvent`).
-    - `command.go`: Sicheres Parsen und Dispatching eingehender MQTT-Kommandos (inkl. JSON-Payloads für Sirenen).
-- **Vollständige Dependency Injection für den `EventBus`**:
-  - Beseitigung aller Singleton-Aufrufe von `events.GlobalBus` im Produktivcode.
-  - Zentrale Instanziierung via `events.NewBus()` in `pkg/app/app.go` und saubere Injektion in `onvif`, `mqtt`, `driver` und `webrtc`.
-  - Transparenter `if eventBus == nil`-Fallback zur garantierten Abwärtskompatibilität externer Aufrufe.
-  - 100 % isolierte Unit-Tests ohne gegenseitige Beeinflussung globaler Zustände.
-- **100 % Erhalt aller Fachlogik & Concurrency-Garantien**:
-  - Alle Cooldowns, Reconnect-Intervalle (15s/30s) und Watchdogs bleiben unverändert erhalten.
-  - Go Race-Detector (`-race`): 0 Data Races erkannt.
+### 🚀 Entflechtung des MQTT-Subsystems & EventBus
+- **Modulares MQTT-Subsystem**: Aufteilung in fokussierte Module für Verbindungs-Lifecycle, Auto-Discovery, Status-Updates und Befehlsverarbeitung.
+- **Dependency Injection**: Saubere Übergabe des EventBus an alle Dienste ohne globale Singleton-Zustände.
 
 ## 1.3.6-beta.3
 
-### 🚀 Nabto Registry-Pattern & WebRTC Modularisierung
-- **Zentrales Nabto Registry & Factory-Pattern (`pkg/nabto`)**:
-  - Dynamische Selbstregistrierung von CGo- und Pure-Go Treibern (`cgo`, `pure`) nach dem Go `database/sql`-Standard.
-  - Sichere automatische Auflösung (`nabto.ResolveDriverType`) mit Priorisierung von `USE_CGO_NABTO`.
-  - Saubere Compile-Time Isolation via `//go:build cgo` und Graceful Fallback Stub für CGo-freie Builds.
-  - Explizite Compile-Time Interface Assertions (`var _ Driver = (*Client)(nil)`) und `DriverName() string`.
-  - Vollständige Entkopplung in `L625Driver`: kein direkter Code-Import von `pkg/nabtopure` mehr nötig.
-- **Entkernung und Modularisierung der WebRTC-Bridge (`pkg/webrtc`)**:
-  - `bridge.go` von 942 Zeilen auf 244 Zeilen reduziert.
-  - Saubere Aufteilung in vier fokussierte Subsysteme:
-    - `signaling.go`: TURN-Exchange, Vanilla-ICE Gathering, SDP Offer/Answer Negotiation & Sanitization.
-    - `media.go`: H.264 Video-Ingest, Audio-Ingest & AAC-Transcoder, 6s Silence-Watchdog & PLI-Burst/Intervallschleife.
-    - `backchannel.go`: Zwei-Wege-Audio (Kamera-Lautsprecher) mit 160-Byte G.711u Frame-Chunking und SSRC/Timestamp-Management.
-    - `mcu_dispatch.go`: DataChannel Message Handler, JSON-RPC Commands, Hex-MCU-Befehle, 30s Status-Polling und 10s PIR/Motion-Reset Timer.
-- **100% Erhalt aller Fachlogik & Concurrency-Garantien**:
-  - Alle Concurrency-Garantien, Timeouts, Cooldowns und Datenfluss-Routinen bleiben unverändert erhalten.
+### 🚀 Nabto Registry-Pattern & WebRTC-Modularisierung
+- **Treiber-Registry**: Dynamische Registrierung von CGo- und Pure-Go Nabto-Treibern nach Go-Standard.
+- **WebRTC-Modularisierung**: Aufteilung der WebRTC-Bridge in spezialisierte Module für Signalisierung, Medien-Ingest, Gegensprechen und Kamerabefehle.
 
 ## 1.3.6-beta.2
 
-### 🏗️ Architektur-Modernisierung & Treiber-Abstraktion (Meilensteine 2 & 3)
-- **Entkernung der Anwendungsarchitektur (Meilenstein 2)**:
-  - `cmd/steinel-bridge/main.go` von 1.152 Zeilen auf 64 Zeilen modularisiert.
-  - Saubere Trennung in dedizierte Pakete:
-    - `pkg/config`: Validierter Konfigurationsparser für CLI-Flags und Umgebungsvariablen.
-    - `pkg/supervisor`: Robuster, autonomer Überwachungs- und Reconnect-Lifecycle.
-    - `pkg/app`: Dependency Injection, Subsystem-Initialisierung (WebRTC/RTSP, ONVIF, MQTT, WebUI) und Graceful Shutdown.
-- **Einheitliches Treiber-Interface (Meilenstein 3)**:
-  - Einführung des `driver.CameraDriver` Interfaces (`Run`, `Close`, `GetStatus`, `SetLight`, `TriggerAlarm`, etc.).
-  - Vollständige Entkopplung der modellspezifischen Logik in isolierte Treiber:
-    - `L625Driver`: Autonome 4-Phasen Nabto Edge P2P Statemachine, CoAP-Steuerung, WebRTC-Ingest und Watchdog-Handling.
-    - `L620Driver`: Sofia DVRIP Ingest, RTSP-Relay, MCU-Statusabfrage und Keepalive-Worker.
-  - Dynamische Treiber-Instanziierung über `driver.New(...)` Factory ohne globale Zustände.
-  - Vollständige Bereinigung aller modellspezifischen Sonderabfragen (`isL620`, `currentBridge`, `currentXMDriver`) aus `BridgeManager` und `Supervisor`.
-- **100% Erhalt aller Concurrency- & Robustheitsgarantien**:
-  - C-SDK Concurrency (`C.nabto_client_stop`, WaitGroups, Non-Blocking Mutex-Calls).
-  - Watchdog-Überwachung (35s Connect, 15s Signaling Port/Stream, 1s Media Watchdog) mit guarded 3s Goroutine Draining.
-  - Cooldown-Phasen (15s Retry-Cooldown, 30s Kamera-Reboot-Cooldown).
+### 🏗️ Architektur-Modernisierung & Treiber-Abstraktion
+- **Modulare Anwendungsstruktur**: Aufteilung der Hauptanwendung in dedizierte Pakete (`config`, `supervisor`, `app`).
+- **Einheitliches Treiber-Interface**: Abstraktion für modellspezifische Logik (`L625Driver` und `L620Driver`) ohne globale Zustände.
 
 ## 1.3.6-beta.1
 
-### 🚀 Enterprise Logging & Observability (Meilenstein 1)
-- **Zentrales Logging mit `log/slog`**:
-  - Vollständige Umstellung auf modernstes, strukturiertes Logging mit der Go-Standardbibliothek `log/slog` (0 externe Abhängigkeiten).
-  - Dynamische Level-Steuerung zur Laufzeit.
-- **Hierarchische Log-Level**:
-  - Konfigurierbare Level: `trace`, `debug`, `info` (Standard), `warning`, `error`.
-  - Vollständige Ablösung des alten booleschen `debug`-Flags durch `log_level` in CLI, Environment, Home Assistant Add-on Schema und Subsystemen.
-- **Early-Exit & Performance-Optimierung**:
-  - Printf-basierte Logging-Methoden mit direktem Early-Exit verhindern unnötige String-Formatierungen und Heap-Allokationen bei inaktiven Log-Levels.
-- **Datenschutz & Protokoll-Transparenz**:
-  - `trace`-Modus protokolliert Kommunikations- und Steuerprotokolle (CoAP, JSON-Befehle, MCU-Telemetrie, Sofia DVRIP) menschenlesbar formatiert.
-  - Strenger Schutz vor Video-Payloads (kein Dump von Video-RTP oder MP4-Dateien).
-- **Sicherheits-Audit & CWE-312 Fix (CodeQL)**:
-  - Vollständige Entkopplung und Maskierung sensibler Anmeldedaten beim Sofia-Login im Xiongmai-Treiber.
+### 🚀 Strukturiertes Logging & Sicherheit
+- **Zentrales Logging mit `log/slog`**: Modernes, strukturiertes Logging mit hierarchischen Log-Leveln (`trace`, `debug`, `info`, `warning`, `error`).
+- **Neues Add-on Konfigurationsfeld**: `log_level` ersetzt das bisherige `debug`-Flag in den Add-on Einstellungen.
+- **Sicherheits-Audit (CodeQL)**: Zuverlässiger Schutz sensibler Anmeldedaten im Sofia-Protokoll (CWE-312).
 
 ## 1.3.5
 

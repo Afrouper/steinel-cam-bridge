@@ -2,6 +2,24 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge** Add-on werden hier dokumentiert.
 
+## 1.3.6
+
+### 🚀 Architektur, Stabilität & Performance
+- **Moderne, modulare Architektur**:
+  - Vollständig entkoppelte Treiber- und Diensteschichten (`driver`, `app`, `supervisor`, `mqtt`, `webrtc`) für höchste Stabilität und Ausfallsicherheit im 24/7-Dauerbetrieb.
+  - Einheitliche Treiber-Schnittstelle für Steinel L 625 CAM SC und Steinel L 620 CAM / XLED CAM 1.
+- **Spürbare Performance- & Speicher-Optimierung**:
+  - Deutlich reduzierter Speicher- und CPU-Bedarf durch Puffer-Wiederverwendung im RTSP-Stream, Audio-Transcoder (AAC) und Pure-Go Nabto-Netzwerkstack.
+  - Minimierte Garbage-Collection-Last – ideal für ressourcenschwächere Plattformen (z. B. Raspberry Pi, Home Assistant Green/Yellow).
+- **Strukturiertes Enterprise-Logging (`log_level`)**:
+  - Neues, modernes Logging-System mit konfigurierbaren Leveln (`trace`, `debug`, `info`, `warning`, `error`) direkt über die Add-on-Einstellungen.
+  - Detaillierte Diagnose ohne Leistungsverlust und ohne Müll im normalen Betriebsprotokoll.
+- **Optimierte Home Assistant & MQTT-Integration**:
+  - Entkoppeltes MQTT-Subsystem mit robusterer Auto-Discovery aller Entitäten (Licht, Nachtlicht, Dämmerungsschwelle, Bewegung, Sirene, SD-Aufnahmen).
+  - Isolierte Ereignisverarbeitung ohne Blockaden oder gegenseitige Beeinflussung von Diensten.
+- **Harmonisierter SD-Karten- & Storage-Abruf**:
+  - Einheitliche Fehlerbehandlung und saubere Bereitstellung von Videoaufnahmen ohne Schnittstellen-Timeouts.
+
 ## 1.3.5
 
 ### 🐛 Kritischer Fix: Supervisor Reconnect Deadlock & Fast-Fail
