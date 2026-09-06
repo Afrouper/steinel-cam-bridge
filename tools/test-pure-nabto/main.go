@@ -69,7 +69,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	bridge := webrtc.NewBridge(client, stream, nil, "1080p", 3*time.Second)
+	bridge := webrtc.NewBridge(client, stream, nil, nil, "1080p", 3*time.Second)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 

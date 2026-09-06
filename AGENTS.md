@@ -127,13 +127,13 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
   - `server.go`: HTTP Server auf Port `8000` (SOAP Dispatcher + `/snapshot.jpg` + REST `/api/status`, `/api/light`, `/api/sdcard/*`).
 
 - **`pkg/mqtt/`**:
-  - `client.go`: Home Assistant MQTT Auto-Discovery Client (`paho.mqtt.golang`). Veröffentlicht Entitäten für `light`, `select`, `sensor`, `binary_sensor`, `number`, `siren`, `event`. Zwei-Wege-Sync mit `events.GlobalBus`.
+  - `client.go`: Home Assistant MQTT Auto-Discovery Client (`paho.mqtt.golang`). Veröffentlicht Entitäten für `light`, `select`, `sensor`, `binary_sensor`, `number`, `siren`, `event`. Zwei-Wege-Sync über injizierten `events.Bus`.
 
 - **`pkg/mcu/`**:
   - `mcu.go`: Parser für 18-Byte (36 Hex-Zeichen) MCU-UART-Frames (`5A0F0F...`) und Command-Builder für Dimmstufen, Nachlaufzeit, Grundlicht, PIR-Sensitivität, Lux-Schwelle und Sirene.
 
 - **`pkg/events/`**:
-  - `events.go`: Thread-sicherer zentraler Publish/Subscribe-Event-Bus (`GlobalBus`).
+  - `events.go`: Thread-sicherer modularer Publish/Subscribe-Event-Bus (`Bus`), instanziiert in `app.App` und per Dependency Injection an Driver, WebRTC, ONVIF und MQTT übergeben (mit Fallback auf `GlobalBus`).
 
 - **`ha-addon/` & `ha-addon-beta/` (Home Assistant Add-ons)**:
   - `config.yaml`: Manifest (Schema, `host_network: true`, `services: ["mqtt:want"]`, `reset_pairing: bool`).

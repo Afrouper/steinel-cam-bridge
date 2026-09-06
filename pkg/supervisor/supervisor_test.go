@@ -18,7 +18,7 @@ func TestSupervisorWithDriver(t *testing.T) {
 	cfg.NabtoConfig.CameraIP = "127.0.0.1"
 
 	// Instantiate mock/concrete L620 driver
-	d, err := driver.New(cfg, true, nil, events.GlobalBus, nil)
+	d, err := driver.New(cfg, true, nil, events.NewBus(), nil)
 	require.NoError(t, err)
 
 	sup := New(d)

@@ -9,6 +9,7 @@ import (
 	"github.com/pion/rtp"
 
 	"github.com/Afrouper/steinel-cam-bridge/pkg/config"
+	"github.com/Afrouper/steinel-cam-bridge/pkg/events"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/logger"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/mcu"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/nabto"
@@ -24,16 +25,18 @@ var _ CameraDriver = (*L625Driver)(nil)
 type L625Driver struct {
 	cfg                *config.Config
 	rtspServer         *rtsp.Server
+	eventBus           *events.Bus
 	onDeviceDiscovered func(deviceID, productID string)
 	activeBridge       *webrtc.Bridge
 	mu                 sync.RWMutex
 }
 
 // NewL625Driver creates a new Driver instance for Steinel L 625 CAM SC.
-func NewL625Driver(cfg *config.Config, rtspServer *rtsp.Server, onDeviceDiscovered func(deviceID, productID string)) *L625Driver {
+func NewL625Driver(cfg *config.Config, rtspServer *rtsp.Server, eventBus *events.Bus, onDeviceDiscovered func(deviceID, productID string)) *L625Driver {
 	return &L625Driver{
 		cfg:                cfg,
 		rtspServer:         rtspServer,
+		eventBus:           eventBus,
 		onDeviceDiscovered: onDeviceDiscovered,
 	}
 }
@@ -234,7 +237,7 @@ connectionLoop:
 		logger.Info("Bridge", "🚀 [ONLINE] Stream ready at rtsp://0.0.0.0:%d/%s", d.cfg.RTSPPort, d.cfg.RTSPPath)
 		logger.Info("Bridge", "🛰️ [ONVIF] Endpoints active at http://0.0.0.0:%d/onvif/device_service", d.cfg.ONVIFPort)
 
-		bridge := webrtc.NewBridge(client, stream, d.rtspServer, d.cfg.Resolution, 1*time.Second)
+		bridge := webrtc.NewBridge(client, stream, d.rtspServer, d.eventBus, d.cfg.Resolution, 1*time.Second)
 		d.setBridge(bridge)
 
 		_ = bridge.Run(ctx)

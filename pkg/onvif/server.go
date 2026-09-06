@@ -22,6 +22,7 @@ import (
 type Server struct {
 	port              int
 	httpServer        *http.Server
+	eventBus          *events.Bus
 	deviceHandler     *DeviceHandler
 	mediaHandler      *MediaHandler
 	eventHandler      *EventHandler
@@ -45,14 +46,18 @@ func NewServer(
 	setLampFunc func(mode string) error,
 	setSirenFunc func(on bool) error,
 	recordingProvider func() storage.RecordingProvider,
+	eventBus *events.Bus,
 ) *Server {
 	if port == 0 {
 		port = 8000
 	}
+	if eventBus == nil {
+		eventBus = events.GlobalBus
+	}
 
-	devHandler := NewDeviceHandler(deviceID, productID, port, rtspPort, rebootFunc)
-	medHandler := NewMediaHandler(rtspPort, rtspPath, audioCodec, port, changeResFunc)
-	evtHandler := NewEventHandler(port)
+	devHandler := NewDeviceHandler(deviceID, productID, port, rtspPort, rebootFunc, eventBus)
+	medHandler := NewMediaHandler(rtspPort, rtspPath, audioCodec, port, changeResFunc, eventBus)
+	evtHandler := NewEventHandler(port, eventBus)
 	ioHandler := NewDeviceIOHandler(setLampFunc, setSirenFunc)
 	searchH := NewSearchHandler(recordingProvider, port)
 	replayH := NewReplayHandler(rtspPort, port)
@@ -61,6 +66,7 @@ func NewServer(
 
 	s := &Server{
 		port:              port,
+		eventBus:          eventBus,
 		deviceHandler:     devHandler,
 		mediaHandler:      medHandler,
 		eventHandler:      evtHandler,
@@ -186,7 +192,7 @@ func (s *Server) handleSOAP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAPIStatus(w http.ResponseWriter, r *http.Request) {
-	st := events.GlobalBus.GetStatus()
+	st := s.eventBus.GetStatus()
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(st)
 }

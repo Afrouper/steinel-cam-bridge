@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Afrouper/steinel-cam-bridge/pkg/events"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/logger"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/nabto"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/rtsp"
@@ -20,6 +21,7 @@ type Bridge struct {
 	nabtoClient      nabto.Driver
 	stream           nabto.StreamDriver
 	rtspServer       *rtsp.Server
+	eventBus         *events.Bus
 	resolution       string
 	pliInterval      time.Duration
 	pc               *pion.PeerConnection
@@ -40,17 +42,21 @@ type Bridge struct {
 }
 
 // NewBridge creates and initializes a new Bridge instance for the Steinel L 625 CAM SC.
-func NewBridge(client nabto.Driver, stream nabto.StreamDriver, rtspServer *rtsp.Server, resolution string, pliInterval time.Duration) *Bridge {
+func NewBridge(client nabto.Driver, stream nabto.StreamDriver, rtspServer *rtsp.Server, eventBus *events.Bus, resolution string, pliInterval time.Duration) *Bridge {
 	if resolution == "" {
 		resolution = "1080p"
 	}
 	if pliInterval == 0 {
 		pliInterval = 3 * time.Second
 	}
+	if eventBus == nil {
+		eventBus = events.GlobalBus
+	}
 	b := &Bridge{
 		nabtoClient: client,
 		stream:      stream,
 		rtspServer:  rtspServer,
+		eventBus:    eventBus,
 		resolution:  resolution,
 		pliInterval: pliInterval,
 	}

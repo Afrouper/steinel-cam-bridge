@@ -26,7 +26,7 @@ func TestNewClient(t *testing.T) {
 		DeviceID: "de-xxxxxxx",
 	}
 	cb := Callbacks{}
-	c := NewClient(cfg, cb)
+	c := NewClient(cfg, cb, nil)
 
 	if c.nodeID != "steinel_de_xxxxxxx" {
 		t.Errorf("Expected nodeID steinel_de_xxxxxxx, got %s", c.nodeID)
@@ -44,7 +44,7 @@ func TestHandleHighlightCommand(t *testing.T) {
 			return nil
 		},
 	}
-	c := NewClient(Config{DeviceID: "de-test"}, cb)
+	c := NewClient(Config{DeviceID: "de-test"}, cb, nil)
 
 	msg := &mockMessage{
 		topic:   "steinel/de-test/highlight/set",
@@ -79,7 +79,7 @@ func TestHandleSirenCommand(t *testing.T) {
 					return nil
 				},
 			}
-			c := NewClient(Config{DeviceID: "de-test"}, cb)
+			c := NewClient(Config{DeviceID: "de-test"}, cb, nil)
 			msg := &mockMessage{
 				topic:   "steinel/de-test/siren/set",
 				payload: []byte(tc.payload),
@@ -97,7 +97,7 @@ func TestPublishRecordingEvent(t *testing.T) {
 	c := NewClient(Config{
 		DeviceID:      "de-test",
 		BridgeHTTPURL: "http://192.168.1.100:8000",
-	}, Callbacks{})
+	}, Callbacks{}, nil)
 
 	// Calling PublishRecordingEvent when client is nil shouldn't panic
 	c.PublishRecordingEvent(storage.RecordingItem{

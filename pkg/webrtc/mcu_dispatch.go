@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Afrouper/steinel-cam-bridge/pkg/events"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/logger"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/mcu"
 
@@ -175,9 +174,9 @@ func (b *Bridge) handleDataChannelMessage(data []byte) {
 			if strVal, ok := root["resp"].(string); ok && strVal == "get_device_info" {
 				if infoMap, ok := root["info"].(map[string]interface{}); ok {
 					fw, _ := infoMap["FW_version"].(string)
-					status := events.GlobalBus.GetStatus()
+					status := b.eventBus.GetStatus()
 					status.FirmwareVer = fw
-					events.GlobalBus.UpdateStatus(status)
+					b.eventBus.UpdateStatus(status)
 				}
 				return
 			}
@@ -191,7 +190,7 @@ func (b *Bridge) handleDataChannelMessage(data []byte) {
 				strings.Contains(lowerStr, "event") ||
 				strings.Contains(lowerStr, "doorbell") {
 				logger.Info("DataChannel", "🚨 Motion / Event notification received from camera: %s", str)
-				events.GlobalBus.SetMotion(true)
+				b.eventBus.SetMotion(true)
 			} else {
 				logger.Debug("DataChannel", "📩 Received JSON message: %s", str)
 			}
@@ -210,7 +209,7 @@ func (b *Bridge) handleDataChannelMessage(data []byte) {
 }
 
 func (b *Bridge) onMCUStatus(cfg *mcu.ConfigInfo) {
-	status := events.GlobalBus.GetStatus()
+	status := b.eventBus.GetStatus()
 	status.LampMode = cfg.Mode
 	status.Lux = cfg.Lux
 	status.PIRActive = cfg.PIRActive
@@ -221,7 +220,7 @@ func (b *Bridge) onMCUStatus(cfg *mcu.ConfigInfo) {
 	status.LowlightTime = cfg.LowlightTime
 	status.ColorTemp = cfg.ColorTemp
 	status.Resolution = b.resolution
-	events.GlobalBus.UpdateStatus(status)
+	b.eventBus.UpdateStatus(status)
 
 	// Motion Detection Handling (Hardware PIR + Optical Camera Detection)
 	if cfg.MotionDetected || cfg.PhotosensitiveDetection {
@@ -232,7 +231,7 @@ func (b *Bridge) onMCUStatus(cfg *mcu.ConfigInfo) {
 			motionType = "Kamera-Bilderkennung"
 		}
 		logger.Info("MCU", "🚨 Bewegung erkannt (%s)! (Lux: %d, Mode: %d)", motionType, cfg.Lux, cfg.Mode)
-		events.GlobalBus.SetMotion(true)
+		b.eventBus.SetMotion(true)
 
 		b.mu.Lock()
 		if b.motionResetTimer != nil {
@@ -240,7 +239,7 @@ func (b *Bridge) onMCUStatus(cfg *mcu.ConfigInfo) {
 		}
 		b.motionResetTimer = time.AfterFunc(10*time.Second, func() {
 			logger.Info("MCU", "⚪ Motion cleared (10s timeout)")
-			events.GlobalBus.SetMotion(false)
+			b.eventBus.SetMotion(false)
 		})
 		b.mu.Unlock()
 	}

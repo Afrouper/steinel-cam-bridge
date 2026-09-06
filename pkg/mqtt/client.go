@@ -45,18 +45,22 @@ type Client struct {
 	cfg       Config
 	cb        Callbacks
 	client    paho.Client
+	eventBus  *events.Bus
 	nodeID    string
 	baseTopic string
 	mu        sync.RWMutex
 }
 
 // NewClient initializes a new MQTT client instance.
-func NewClient(cfg Config, cb Callbacks) *Client {
+func NewClient(cfg Config, cb Callbacks, eventBus *events.Bus) *Client {
 	if cfg.DiscoveryPrefix == "" {
 		cfg.DiscoveryPrefix = "homeassistant"
 	}
 	if cfg.Model == "" {
 		cfg.Model = "L 625 CAM SC"
+	}
+	if eventBus == nil {
+		eventBus = events.GlobalBus
 	}
 	cleanDID := strings.ReplaceAll(cfg.DeviceID, "-", "_")
 	if cleanDID == "" {
@@ -83,6 +87,7 @@ func NewClient(cfg Config, cb Callbacks) *Client {
 	return &Client{
 		cfg:       cfg,
 		cb:        cb,
+		eventBus:  eventBus,
 		nodeID:    nodeID,
 		baseTopic: fullBaseTopic,
 	}
@@ -114,7 +119,7 @@ func (c *Client) UpdateDeviceInfo(deviceID, productID string) {
 		availTopic := fmt.Sprintf("%s/availability", c.baseTopic)
 		cl.Publish(availTopic, 1, true, "online")
 		c.publishDiscovery(cl)
-		c.publishStatus(events.GlobalBus.GetStatus())
+		c.publishStatus(c.eventBus.GetStatus())
 	}
 }
 
@@ -154,7 +159,7 @@ func (c *Client) Start(_ context.Context) error {
 		client.Subscribe(brightnessCmd, 1, c.handleCommand)
 
 		// 4. Publish Initial Device State
-		c.publishStatus(events.GlobalBus.GetStatus())
+		c.publishStatus(c.eventBus.GetStatus())
 	}
 
 	opts.OnConnectionLost = func(_ paho.Client, err error) {
@@ -170,8 +175,8 @@ func (c *Client) Start(_ context.Context) error {
 		return fmt.Errorf("MQTT connection error: %w", token.Error())
 	}
 
-	// Hook into Global Event Bus
-	events.GlobalBus.Subscribe(func(evt events.EventType, data interface{}) {
+	// Hook into Event Bus
+	c.eventBus.Subscribe(func(evt events.EventType, data interface{}) {
 		c.mu.RLock()
 		cl := c.client
 		c.mu.RUnlock()

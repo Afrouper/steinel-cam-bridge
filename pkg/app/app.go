@@ -25,6 +25,7 @@ type App struct {
 	isL620          bool
 	modelName       string
 	appVersion      string
+	eventBus        *events.Bus
 	bridgeMgr       *BridgeManager
 	rtspServer      *rtsp.Server
 	onvifServer     *onvif.Server
@@ -81,6 +82,7 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 	}
 
 	bridgeMgr := NewBridgeManager()
+	eventBus := events.NewBus()
 
 	// 1. Embedded RTSP Server
 	rtspServer, err := rtsp.NewServer(cfg.RTSPPort, cfg.RTSPPath, cfg.AudioCodec)
@@ -106,6 +108,7 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 		bridgeMgr.SetLampState,
 		bridgeMgr.SetSiren,
 		bridgeMgr.GetRecordingProvider,
+		eventBus,
 	)
 
 	// 3. Optional MQTT Client & SD-Card Recording Syncer
@@ -133,7 +136,7 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 			SetLuxThreshold:   bridgeMgr.SetLuxThreshold,
 			SetSiren:          bridgeMgr.SetSiren,
 			SetResolution:     bridgeMgr.SetResolution,
-		})
+		}, eventBus)
 
 		recordingSyncer = storage.NewRecordingSyncer(
 			bridgeMgr.GetRecordingProvider,
@@ -141,7 +144,7 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 			time.Duration(cfg.SDCardSyncInterval)*time.Second,
 		)
 
-		events.GlobalBus.SubscribeMotion(func(isMotion bool) {
+		eventBus.SubscribeMotion(func(isMotion bool) {
 			if isMotion {
 				recordingSyncer.TriggerSync()
 			}
@@ -157,7 +160,7 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 		}
 	}
 
-	camDriver, err := driver.New(cfg, isL620, rtspServer, events.GlobalBus, onDeviceDiscovered)
+	camDriver, err := driver.New(cfg, isL620, rtspServer, eventBus, onDeviceDiscovered)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize camera driver: %w", err)
 	}
@@ -171,6 +174,7 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 		isL620:          isL620,
 		modelName:       modelName,
 		appVersion:      appVersion,
+		eventBus:        eventBus,
 		bridgeMgr:       bridgeMgr,
 		rtspServer:      rtspServer,
 		onvifServer:     onvifServer,

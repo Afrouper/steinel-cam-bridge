@@ -17,5 +17,5 @@ func New(
 	if isL620 {
 		return NewL620Driver(cfg, rtspServer, eventBus), nil
 	}
-	return NewL625Driver(cfg, rtspServer, onDeviceDiscovered), nil
+	return NewL625Driver(cfg, rtspServer, eventBus, onDeviceDiscovered), nil
 }
