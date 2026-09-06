@@ -202,8 +202,8 @@ func BenchmarkInterceptingConnRead(b *testing.B) {
 	defer srv.Close()
 
 	clientConn, serverConn := net.Pipe()
-	defer clientConn.Close()
-	defer serverConn.Close()
+	defer func() { _ = clientConn.Close() }()
+	defer func() { _ = serverConn.Close() }()
 
 	iconn := newInterceptingConn(serverConn, srv)
 
