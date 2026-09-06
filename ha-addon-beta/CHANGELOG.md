@@ -2,6 +2,24 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.3.6-beta.4
+
+### 🚀 Entflechtung des MQTT-Subsystems & EventBus Dependency Injection
+- **Modularisierung des MQTT-Subsystems (`pkg/mqtt`)**:
+  - `client.go` von 563 Zeilen auf 207 Zeilen reduziert und in vier fokussierte Module zerlegt:
+    - `client.go`: Verbindungs-Lifecycle, Auto-Reconnect, LWT (Last Will and Testament), Thread-Sicherheit.
+    - `discovery.go`: Home Assistant Auto-Discovery für alle 10 Entitäten (`light`, `select`, `sensor`, `binary_sensor`, `number`, `siren`, `event`) mit sauberen Metadaten.
+    - `state.go`: Status- und Telemetrie-Publizierung, Bewegungsevents (`publishMotion`) und SD-Karten-Aufnahmetelemetrie (`PublishRecordingEvent`).
+    - `command.go`: Sicheres Parsen und Dispatching eingehender MQTT-Kommandos (inkl. JSON-Payloads für Sirenen).
+- **Vollständige Dependency Injection für den `EventBus`**:
+  - Beseitigung aller Singleton-Aufrufe von `events.GlobalBus` im Produktivcode.
+  - Zentrale Instanziierung via `events.NewBus()` in `pkg/app/app.go` und saubere Injektion in `onvif`, `mqtt`, `driver` und `webrtc`.
+  - Transparenter `if eventBus == nil`-Fallback zur garantierten Abwärtskompatibilität externer Aufrufe.
+  - 100 % isolierte Unit-Tests ohne gegenseitige Beeinflussung globaler Zustände.
+- **100 % Erhalt aller Fachlogik & Concurrency-Garantien**:
+  - Alle Cooldowns, Reconnect-Intervalle (15s/30s) und Watchdogs bleiben unverändert erhalten.
+  - Go Race-Detector (`-race`): 0 Data Races erkannt.
+
 ## 1.3.6-beta.3
 
 ### 🚀 Nabto Registry-Pattern & WebRTC Modularisierung
