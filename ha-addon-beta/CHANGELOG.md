@@ -2,6 +2,22 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.3.6-beta.6
+
+### ⚡ Pragmatische Hot-Path Optimierungen (RTSP & Audio)
+- **Zero-Allocation Socket-Lesepuffer (`pkg/rtsp/interceptor.go`)**:
+  - Einführung eines festen 4-KB-Lesepuffers (`readBuf [4096]byte`) auf dem `interceptingConn`-Struct.
+  - Vollständige Eliminierung dynamischer `make([]byte, 4096)` Allokationen bei jedem einzelnen TCP-Read im RTSP-Stream.
+  - Schneller Puffer-Reset (`c.rBuf = c.rBuf[:0]`) verhindert unbegrenztes Neuallokieren des Slices im Dauerbetrieb.
+  - **Benchmark**: `BenchmarkInterceptingConnRead` bestätigt **743 ns/op** und **0 Allokationen** pro Socket-Read.
+- **Wiederverwendbarer PCM-Reader & Puffer-Kompaktierung (`pkg/audio/transcoder.go`)**:
+  - Persistentes `pcmReader bytes.Reader` auf dem `Transcoder`-Struct analog zu `adtsBuf`.
+  - `t.pcmReader.Reset(chunk)` eliminiert `bytes.NewReader(chunk)` auf jedem einzelnen AAC-Frame (50x/Sekunde).
+  - Shifting/Kompaktierung unkodierter PCM-Bytes verhindert Fragmentierung und Speicherwachstum im Puffer.
+  - **Benchmark**: `BenchmarkTranscoderProcessPCMU` bestätigt **5.9 µs/op**.
+- **100 % Erhalt der Code-Klarheit & Erweiterbarkeit**:
+  - Alle modularen Schnittstellen (`DecodePCMU` -> `Resample8kTo16k` -> `EncodeAAC`) bleiben unverändert erhalten, um zukünftige Codecs (z. B. Opus) oder neue Kameramodelle isoliert anbinden zu können.
+
 ## 1.3.6-beta.5
 
 ### ⚡ Pure-Go Nabto Buffer-Pooling (`sync.Pool`) & Zero-Allocation UDP-Framing
