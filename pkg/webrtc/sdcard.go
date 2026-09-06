@@ -15,9 +15,9 @@ import (
 )
 
 var (
-	ErrSDCardBusy      = errors.New("sdcard is currently busy with another operation")
-	ErrSDCardTimeout   = errors.New("timeout while waiting for camera sdcard response")
-	ErrTransferAborted = errors.New("transfer was aborted by client")
+	ErrSDCardBusy      = storage.ErrStorageBusy
+	ErrSDCardTimeout   = storage.ErrStorageTimeout
+	ErrTransferAborted = storage.ErrTransferAborted
 )
 
 // EventItem represents a single motion/manual recording on the camera's internal SD card
@@ -220,17 +220,7 @@ func (m *SDCardManager) StreamVideo(ctx context.Context, id string, w io.Writer,
 	if err != nil {
 		return fmt.Errorf("invalid recording ID: %w", err)
 	}
-	err = m.streamFile(ctx, "get_event_video", ts, w, onStart)
-	if errors.Is(err, ErrSDCardBusy) {
-		return storage.ErrStorageBusy
-	}
-	if errors.Is(err, ErrSDCardTimeout) {
-		return storage.ErrStorageTimeout
-	}
-	if errors.Is(err, ErrTransferAborted) {
-		return storage.ErrTransferAborted
-	}
-	return err
+	return m.streamFile(ctx, "get_event_video", ts, w, onStart)
 }
 
 // streamFile executes the binary download protocol with single-flight locking, streaming, and watchdog

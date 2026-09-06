@@ -4,13 +4,22 @@ import (
 	"crypto/rand"
 	"fmt"
 	"net"
+	"sync"
 	"time"
 )
 
 const (
 	nabtoPrefixConnection = 0xF0 // 240
 	nabtoHeaderSize       = 16
+	maxUDPPacketSize      = 2048
 )
+
+var udpBufPool = sync.Pool{
+	New: func() interface{} {
+		b := make([]byte, maxUDPPacketSize)
+		return &b
+	},
+}
 
 // nabtoPacketConn wraps a UDP PacketConn to add/strip the 16-byte Nabto Connection Header.
 type nabtoPacketConn struct {
@@ -35,7 +44,17 @@ func newNabtoServerPacketConn(conn net.PacketConn) *nabtoPacketConn {
 }
 
 func (c *nabtoPacketConn) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
-	buf := make([]byte, len(p)+nabtoHeaderSize+64)
+	reqLen := len(p) + nabtoHeaderSize + 64
+	var buf []byte
+	var bufPtr *[]byte
+	if reqLen <= maxUDPPacketSize {
+		bufPtr = udpBufPool.Get().(*[]byte)
+		defer udpBufPool.Put(bufPtr)
+		buf = *bufPtr
+	} else {
+		buf = make([]byte, reqLen)
+	}
+
 	for {
 		nRaw, rAddr, err := c.conn.ReadFrom(buf)
 		if err != nil {
@@ -62,7 +81,17 @@ func (c *nabtoPacketConn) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
 }
 
 func (c *nabtoPacketConn) WriteTo(p []byte, addr net.Addr) (n int, err error) {
-	pkt := make([]byte, nabtoHeaderSize+len(p))
+	totalLen := nabtoHeaderSize + len(p)
+	var pkt []byte
+	var bufPtr *[]byte
+	if totalLen <= maxUDPPacketSize {
+		bufPtr = udpBufPool.Get().(*[]byte)
+		defer udpBufPool.Put(bufPtr)
+		pkt = (*bufPtr)[:totalLen]
+	} else {
+		pkt = make([]byte, totalLen)
+	}
+
 	pkt[0] = nabtoPrefixConnection
 	copy(pkt[1:15], c.connID[:])
 	pkt[15] = 0x00 // Channel ID 0

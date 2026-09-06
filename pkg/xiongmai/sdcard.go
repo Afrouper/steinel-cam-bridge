@@ -112,7 +112,7 @@ func (m *SDCardManager) ListRecordings(ctx context.Context, start, end time.Time
 			DurationSeconds: dur,
 			EventType:       "motion",
 			FileName:        f.FileName,
-			ThumbnailURL:    fmt.Sprintf("/api/sdcard/events/%s/thumbnail.jpg", id),
+			ThumbnailURL:    "",
 			VideoURL:        fmt.Sprintf("/api/sdcard/events/%s/video.mp4", id),
 		})
 	}

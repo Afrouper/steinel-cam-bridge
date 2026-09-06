@@ -290,8 +290,17 @@ type streamExt struct {
 	data    []byte
 }
 
+var streamBufPool = sync.Pool{
+	New: func() interface{} {
+		return new(bytes.Buffer)
+	},
+}
+
 func (s *Stream) buildSYNPacket() []byte {
-	buf := new(bytes.Buffer)
+	buf := streamBufPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	defer streamBufPool.Put(buf)
+
 	buf.WriteByte(StreamAppDataType)
 	writeVarUint(buf, s.streamID)
 
@@ -310,11 +319,16 @@ func (s *Stream) buildSYNPacket() []byte {
 	// ContentType Extension (Type 0x1003, Len 4, Port)
 	writeExtUint32(buf, ExtContentType, s.port)
 
-	return buf.Bytes()
+	res := make([]byte, buf.Len())
+	copy(res, buf.Bytes())
+	return res
 }
 
 func (s *Stream) buildACKPacket(data []byte) []byte {
-	buf := new(bytes.Buffer)
+	buf := streamBufPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	defer streamBufPool.Put(buf)
+
 	buf.WriteByte(StreamAppDataType)
 	writeVarUint(buf, s.streamID)
 
@@ -350,7 +364,9 @@ func (s *Stream) buildACKPacket(data []byte) []byte {
 		buf.Write(data)
 	}
 
-	return buf.Bytes()
+	res := make([]byte, buf.Len())
+	copy(res, buf.Bytes())
+	return res
 }
 
 func (s *Stream) parseStreamPacket(raw []byte) (*streamHeader, []streamExt, error) {
