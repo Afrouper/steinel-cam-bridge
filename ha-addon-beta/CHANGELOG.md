@@ -2,6 +2,26 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.3.6-beta.5
+
+### ⚡ Pure-Go Nabto Buffer-Pooling (`sync.Pool`) & Zero-Allocation UDP-Framing
+- **Zero-Allocation UDP Datagram Framing (`pkg/nabtopure/packet_conn.go`)**:
+  - Einführung von `sync.Pool` (`udpBufPool`, 2048 Bytes) für eingehende und ausgehende UDP-Pakete.
+  - `WriteTo` erreicht nun **0 B/op** und **0 Allokationen** pro gesendetem Datagramm.
+  - Eliminiert GC-Druck und Speicherfragmentierung bei kontinuierlichem Nabto Keepalive- und DTLS-Verkehr vollständig.
+- **Optimierte Stream-Paketerzeugung (`pkg/nabtopure/stream.go`)**:
+  - Einsatz von `sync.Pool` (`streamBufPool`) für SYN- und ACK-Pakete (`buildSYNPacket`, `buildACKPacket`).
+  - Reduzierung des Speicherbedarfs bei Stream-Aushandlung und Segment-Bestätigung auf ein absolutes Minimum (1 Allokation/Op).
+- **Benchmark-Verifikation (`pkg/nabtopure/packet_conn_bench_test.go`)**:
+  - Automatisierte Benchmarks bestätigen Zero-Allocation Framing und maximale Durchsatzraten.
+
+### 💾 SD-Karten & Storage Harmonisierung
+- **Einheitliche Fehlersemantik (`pkg/storage`)**:
+  - Bereinigung redundanter Error-Definitionen: `ErrSDCardBusy`, `ErrSDCardNotFound` und `ErrFeatureDisabled` werden aus `pkg/webrtc` auf die zentralen Typen in `pkg/storage` harmonisiert.
+  - Klare, standardisierte Fehlerbehandlung beim Video- und Thumbnail-Streaming.
+- **Konsistente Thumbnail-Behandlung (Issue #23)**:
+  - Bei Sofia DVRIP-Aufnahmen (`pkg/xiongmai/sdcard.go`) wird `ThumbnailURL` nun wie beim L 625-Treiber leer (`""`) belassen, um fehlerhafte oder ins Leere laufende Snapshot-Aufrufe in Home Assistant zu verhindern.
+
 ## 1.3.6-beta.4
 
 ### 🚀 Entflechtung des MQTT-Subsystems & EventBus Dependency Injection
