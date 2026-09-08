@@ -252,6 +252,8 @@ Die Konfiguration erfolgt nach den Grundsätzen einer [12-Factor App](https://12
 | `CAMERA_TYPE` | `-type` | `auto` | Kameramodell: `auto` (automatische Erkennung), `l625` (L 625 CAM SC), `l620` (L 620 CAM / XLED CAM 1) |
 | `CAMERA_USER` | `-user` | `admin` | Benutzername für L 620 CAM (Standard: `admin`) |
 | `CAMERA_PASSWORD` / `CAMERA_PASS` | `-pass` *(oder `-password`)* | `""` | Geräte-Passwort für L 620 CAM (in der Steinel-App vergeben) |
+| `BRIDGE_USER` | `-bridge-user` | `""` | Optionaler Benutzername für den Zugangsschutz der Bridge (RTSP, ONVIF, REST). Leer = offener Zugriff |
+| `BRIDGE_PASS` / `BRIDGE_PASSWORD` | `-bridge-pass` *(oder `-bridge-password`)* | `""` | Optionales Passwort für den Zugangsschutz der Bridge (RTSP Digest/Basic, ONVIF WS-Security, REST API) |
 | `QR_CODE` | `-qr` | `""` | QR-Code Payload aus der Steinel App ("Kamera teilen") für automatisches Pairing der L 625 CAM SC |
 | `KEY_PATH` | `-key` | `data/client.key` | Speicherpfad für den persistenten ECC-Schlüssel (L 625 CAM SC) |
 | `RESET_PAIRING` | `-reset-pairing` | `false` | Löscht den gespeicherten Private Key und erzwingt ein erneutes Pairing mit dem angegebenen QR-Code |

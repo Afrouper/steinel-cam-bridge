@@ -70,8 +70,8 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
 
 - **`pkg/config/`** *(Neu in Milestone 2)*:
   - `config.go`: Zentrales, validiertes Konfigurationsobjekt (`Config`) mit strenger Präzedenz:
-    1. CLI-Flags (`-ip`, `-type`, `-user`, `-pass`, `-qr`, `-key`, `-port`, `-path`, `-res`, `-audio-codec`, `-onvif`, `-reset-pairing`, `-mqtt-broker`, `-sync-interval`, `-log-level`, etc.)
-    2. Umgebungsvariablen (`CAMERA_IP`, `CAMERA_TYPE`, `CAMERA_USER`, `CAMERA_PASSWORD`, `QR_CODE`, `KEY_PATH`, `RESOLUTION`, `AUDIO_CODEC`, `RTSP_PORT`, `ONVIF_PORT`, `MQTT_BROKER`, `SDCARD_SYNC_INTERVAL`, `USE_CGO_NABTO`, `LOG_LEVEL`, `LOG_FORMAT`, etc.)
+    1. CLI-Flags (`-ip`, `-type`, `-user`, `-pass`, `-bridge-user`, `-bridge-pass`, `-qr`, `-key`, `-port`, `-path`, `-res`, `-audio-codec`, `-onvif`, `-reset-pairing`, `-mqtt-broker`, `-sync-interval`, `-log-level`, etc.)
+    2. Umgebungsvariablen (`CAMERA_IP`, `CAMERA_TYPE`, `CAMERA_USER`, `CAMERA_PASSWORD`, `BRIDGE_USER`, `BRIDGE_PASS`, `QR_CODE`, `KEY_PATH`, `RESOLUTION`, `AUDIO_CODEC`, `RTSP_PORT`, `ONVIF_PORT`, `MQTT_BROKER`, `SDCARD_SYNC_INTERVAL`, `USE_CGO_NABTO`, `LOG_LEVEL`, `LOG_FORMAT`, etc.)
     3. Home Assistant Add-on Konfigurationsdatei (`/data/options.json` & Home Assistant Supervisor MQTT Auto-Discovery API via `X-Supervisor-Token`)
     4. Sichere Standardwerte.
   - `probe.go`: Führt bei `camera_type: "auto"` einen schnellen Non-Blocking TCP-Probe auf Port `34567` durch, um automatisch zwischen `L 620 CAM` (Xiongmai Sofia) und `L 625 CAM SC` (Nabto Edge) zu unterscheiden.
@@ -141,17 +141,18 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
   - `transcoder.go`: Echtzeit-Audiotranscoder mit persistentem VisualOn AAC-Encoder (`github.com/gen2brain/aac-go`), wiederverwendbarem `pcmReader bytes.Reader` via `Reset()` und Puffer-Kompaktierung gegen Speicherfragmentierung.
 
 - **`pkg/rtsp/`**:
-  - `server.go`: RTSP-Server auf Basis von `github.com/bluenviron/gortsplib/v4`. Liefert H.264 Video, AAC/PCMU Audio und ONVIF Profile T Audio Backchannel.
+  - `server.go`: RTSP-Server auf Basis von `github.com/bluenviron/gortsplib/v4`. Liefert H.264 Video, AAC/PCMU Audio, ONVIF Profile T Audio Backchannel sowie integrierte Digest (MD5/SHA256) & Basic Authentifizierung.
   - `interceptor.go`: Dedizierter UDP-RTP Socket auf Port `8554/udp` sowie TCP-Interleaved Listener (`interceptingConn`) mit vorallokiertem 4-KB Lesepuffer für Zero-Allocation Socket-Reads (**0 Allokationen/Read**).
 
 - **`pkg/onvif/`**:
+  - `auth.go`: WS-Security UsernameToken Authentifizierung (`PasswordDigest` via SHA-1 Nonce/Timestamp Hash sowie `PasswordText`) mit konstanter Vergleichszeit (`subtle.ConstantTimeCompare`) und abwärtskompatiblem Fallback für Dummy-Credentials (Synology Surveillance Station).
   - `discovery.go`: **WS-Discovery Server** auf UDP Multicast `239.255.255.250:3702`.
-  - `device.go`: Device Service (`GetDeviceInformation`, `GetCapabilities`, `GetServices`, `GetSystemDateAndTime`).
+  - `device.go`: Device Service (`GetDeviceInformation`, `GetCapabilities`, `GetServices`, `GetSystemDateAndTime`, `GetUsers`, `GetScopes`, `<tt:Security>` Capabilities).
   - `media.go`: Media Service (`Profile_Main` 1080p, `Profile_Sub` 360p, `GetStreamUri`, `GetSnapshotUri`, `SetVideoEncoderConfiguration`).
   - `events.go`: Event Service (WS-BaseNotification PullPoint für Motion-Events).
   - `deviceio.go`: DeviceIO / Relay / Auxiliary Service für Licht- und Sirenensteuerung.
   - `recording.go`, `replay.go`, `search.go`: **ONVIF Profile G Services** zur standardisierten Suche und Wiedergabe von SD-Karten-Aufnahmen in NVRs.
-  - `server.go`: HTTP Server auf Port `8000` (SOAP Dispatcher + `/snapshot.jpg` + REST `/api/status`, `/api/light`, `/api/sdcard/*`).
+  - `server.go`: HTTP Server auf Port `8000` (SOAP Dispatcher mit WS-Security Validierung + `/snapshot.jpg` + HTTP Basic Auth geschützte REST-Endpoints `/api/status`, `/api/light`, `/api/sdcard/*`).
 
 - **`pkg/mqtt/`**:
   - Modularisiert in vier fokussierte Komponenten:

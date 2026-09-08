@@ -3,6 +3,7 @@ package onvif
 import (
 	"bytes"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,6 +22,8 @@ import (
 
 type Server struct {
 	port              int
+	authUser          string
+	authPass          string
 	httpServer        *http.Server
 	eventBus          *events.Bus
 	deviceHandler     *DeviceHandler
@@ -41,6 +44,8 @@ func NewServer(
 	audioCodec string,
 	deviceID string,
 	productID string,
+	authUser string,
+	authPass string,
 	changeResFunc func(res string) error,
 	rebootFunc func() error,
 	setLampFunc func(mode string) error,
@@ -55,7 +60,7 @@ func NewServer(
 		eventBus = events.GlobalBus
 	}
 
-	devHandler := NewDeviceHandler(deviceID, productID, port, rtspPort, rebootFunc, eventBus)
+	devHandler := NewDeviceHandler(deviceID, productID, port, rtspPort, authUser, rebootFunc, eventBus)
 	medHandler := NewMediaHandler(rtspPort, rtspPath, audioCodec, port, changeResFunc, eventBus)
 	evtHandler := NewEventHandler(port, eventBus)
 	ioHandler := NewDeviceIOHandler(setLampFunc, setSirenFunc)
@@ -66,6 +71,8 @@ func NewServer(
 
 	s := &Server{
 		port:              port,
+		authUser:          authUser,
+		authPass:          authPass,
 		eventBus:          eventBus,
 		deviceHandler:     devHandler,
 		mediaHandler:      medHandler,
@@ -86,10 +93,10 @@ func NewServer(
 	mux.HandleFunc("/onvif/search_service", s.handleSOAP)
 	mux.HandleFunc("/onvif/replay_service", s.handleSOAP)
 	mux.HandleFunc("/onvif/recording_service", s.handleSOAP)
-	mux.HandleFunc("/api/status", s.handleAPIStatus)
-	mux.HandleFunc("/api/light", s.handleAPILight)
-	mux.HandleFunc("/api/sdcard/events", s.handleAPISDCardEvents)
-	mux.HandleFunc("/api/sdcard/events/", s.handleAPISDCardItem)
+	mux.HandleFunc("/api/status", s.withBasicAuth(s.handleAPIStatus))
+	mux.HandleFunc("/api/light", s.withBasicAuth(s.handleAPILight))
+	mux.HandleFunc("/api/sdcard/events", s.withBasicAuth(s.handleAPISDCardEvents))
+	mux.HandleFunc("/api/sdcard/events/", s.withBasicAuth(s.handleAPISDCardItem))
 
 	s.httpServer = &http.Server{
 		Addr:    fmt.Sprintf(":%d", port),
@@ -100,7 +107,11 @@ func NewServer(
 }
 
 func (s *Server) Start(ctx context.Context) error {
-	logger.Info("ONVIF", "🚀 ONVIF Profile S/T Server listening at http://0.0.0.0:%d/onvif/device_service", s.port)
+	if s.authUser != "" {
+		logger.Info("ONVIF", "🚀 ONVIF Profile S/T Server listening at http://0.0.0.0:%d/onvif/device_service (Auth: user '%s')", s.port, s.authUser)
+	} else {
+		logger.Info("ONVIF", "🚀 ONVIF Profile S/T Server listening at http://0.0.0.0:%d/onvif/device_service", s.port)
+	}
 
 	// Start WS-Discovery in background
 	go func() {
@@ -127,6 +138,21 @@ func (s *Server) Close() {
 	}
 }
 
+func (s *Server) withBasicAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s.authUser != "" {
+			user, pass, ok := r.BasicAuth()
+			if !ok || subtle.ConstantTimeCompare([]byte(user), []byte(s.authUser)) != 1 ||
+				subtle.ConstantTimeCompare([]byte(pass), []byte(s.authPass)) != 1 {
+				w.Header().Set("WWW-Authenticate", `Basic realm="Steinel CAM Bridge"`)
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
+		}
+		next(w, r)
+	}
+}
+
 func (s *Server) handleSOAP(w http.ResponseWriter, r *http.Request) {
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -138,11 +164,30 @@ func (s *Server) handleSOAP(w http.ResponseWriter, r *http.Request) {
 	subID := r.URL.Query().Get("sub")
 	host := r.Host
 
-	var innerResp string
-	var handleErr error
-
 	path := r.URL.Path
 	logger.Trace("ONVIF", "SOAP request path=%s action=%s", path, action)
+
+	// Check WS-Security authentication when auth is enabled
+	if s.authUser != "" {
+		isExempt := strings.Contains(action, "GetSystemDateAndTime") ||
+			strings.Contains(reqStr, "GetSystemDateAndTime") ||
+			strings.Contains(action, "GetCapabilities") ||
+			strings.Contains(reqStr, "GetCapabilities")
+
+		if !isExempt {
+			tok, _ := ExtractUsernameToken(reqStr)
+			if !ValidateWSSecurity(tok, s.authUser, s.authPass) {
+				logger.Debug("ONVIF", "🔒 WS-Security auth failure for action '%s' on %s", action, path)
+				w.Header().Set("Content-Type", "application/soap+xml; charset=utf-8")
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(FormatSOAPNotAuthorizedFault()))
+				return
+			}
+		}
+	}
+
+	var innerResp string
+	var handleErr error
 
 	switch {
 	case strings.HasSuffix(path, "device_service"):

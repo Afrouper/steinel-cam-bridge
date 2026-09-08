@@ -66,7 +66,7 @@ func TestProfileGServicesAndREST(t *testing.T) {
 	mockProv := &testRecordingProvider{items: fakeItems}
 
 	srv := NewServer(
-		8000, 8554, "live", "aac", "de-test", "pr-test",
+		8000, 8554, "live", "aac", "de-test", "pr-test", "", "",
 		nil, nil, nil, nil,
 		func() storage.RecordingProvider { return mockProv },
 		nil,
@@ -149,4 +149,78 @@ func TestProfileGServicesAndREST(t *testing.T) {
 	srv.handleSOAP(soapW, soapReq)
 	assert.Equal(t, http.StatusOK, soapW.Code)
 	assert.Contains(t, soapW.Body.String(), "FindRecordingsResponse")
+}
+
+func TestONVIFAuthAndDeviceServices(t *testing.T) {
+	// 1. Test DeviceHandler GetUsers & GetScopes & tt:Security
+	devHandler := NewDeviceHandler("de-test", "pr-test", 8000, 8554, "admin_user", nil, nil)
+	usersXML, err := devHandler.Handle("GetUsers", "", "127.0.0.1:8000")
+	assert.NoError(t, err)
+	assert.Contains(t, usersXML, "admin_user")
+	assert.Contains(t, usersXML, "Administrator")
+
+	scopesXML, err := devHandler.Handle("GetScopes", "", "127.0.0.1:8000")
+	assert.NoError(t, err)
+	assert.Contains(t, scopesXML, "onvif://www.onvif.org/type/video_encoder")
+	assert.Contains(t, scopesXML, "onvif://www.onvif.org/hardware/Steinel")
+
+	capXML, err := devHandler.Handle("GetCapabilities", "", "127.0.0.1:8000")
+	assert.NoError(t, err)
+	assert.Contains(t, capXML, "<tt:UsernameToken>true</tt:UsernameToken>")
+
+	// 2. Test Authenticated Server
+	authSrv := NewServer(
+		8000, 8554, "live", "aac", "de-test", "pr-test", "steineluser", "steinelpass",
+		nil, nil, nil, nil, nil, nil,
+	)
+
+	// 2a. Unauthenticated GetDeviceInformation should return 401 NotAuthorized
+	unauthReq := httptest.NewRequest(http.MethodPost, "/onvif/device_service", strings.NewReader(`<GetDeviceInformation xmlns="http://www.onvif.org/ver10/device/wsdl"/>`))
+	unauthW := httptest.NewRecorder()
+	authSrv.handleSOAP(unauthW, unauthReq)
+	assert.Equal(t, http.StatusUnauthorized, unauthW.Code)
+	assert.Contains(t, unauthW.Body.String(), "ter:NotAuthorized")
+
+	// 2b. Unauthenticated GetSystemDateAndTime should SUCCEED (200 OK) because it's exempt
+	dateReq := httptest.NewRequest(http.MethodPost, "/onvif/device_service", strings.NewReader(`<GetSystemDateAndTime xmlns="http://www.onvif.org/ver10/device/wsdl"/>`))
+	dateW := httptest.NewRecorder()
+	authSrv.handleSOAP(dateW, dateReq)
+	assert.Equal(t, http.StatusOK, dateW.Code)
+	assert.Contains(t, dateW.Body.String(), "GetSystemDateAndTimeResponse")
+
+	// 2c. Authenticated GetDeviceInformation with valid WS-Security PasswordText should SUCCEED
+	authSoapBody := `<?xml version="1.0" encoding="UTF-8"?>
+<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope" xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd">
+  <s:Header>
+    <wsse:Security>
+      <wsse:UsernameToken>
+        <wsse:Username>steineluser</wsse:Username>
+        <wsse:Password Type="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0#PasswordText">steinelpass</wsse:Password>
+      </wsse:UsernameToken>
+    </wsse:Security>
+  </s:Header>
+  <s:Body>
+    <GetDeviceInformation xmlns="http://www.onvif.org/ver10/device/wsdl"/>
+  </s:Body>
+</s:Envelope>`
+	authReq := httptest.NewRequest(http.MethodPost, "/onvif/device_service", strings.NewReader(authSoapBody))
+	authW := httptest.NewRecorder()
+	authSrv.handleSOAP(authW, authReq)
+	assert.Equal(t, http.StatusOK, authW.Code)
+	assert.Contains(t, authW.Body.String(), "GetDeviceInformationResponse")
+
+	// 2d. REST API basic auth tests
+	// Without credentials -> 401
+	restUnauthReq := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	restUnauthW := httptest.NewRecorder()
+	authSrv.withBasicAuth(authSrv.handleAPIStatus)(restUnauthW, restUnauthReq)
+	assert.Equal(t, http.StatusUnauthorized, restUnauthW.Code)
+	assert.Contains(t, restUnauthW.Header().Get("WWW-Authenticate"), "Basic realm=")
+
+	// With valid credentials -> 200 OK
+	restAuthReq := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	restAuthReq.SetBasicAuth("steineluser", "steinelpass")
+	restAuthW := httptest.NewRecorder()
+	authSrv.withBasicAuth(authSrv.handleAPIStatus)(restAuthW, restAuthReq)
+	assert.Equal(t, http.StatusOK, restAuthW.Code)
 }

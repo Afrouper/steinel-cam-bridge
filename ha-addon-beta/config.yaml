@@ -22,6 +22,8 @@ options:
   reset_pairing: false
   camera_password: ""
   camera_user: "admin"
+  bridge_user: ""
+  bridge_pass: ""
   resolution: "1080p"
   audio_codec: "aac"
   rtsp_port: 8554
@@ -36,6 +38,8 @@ schema:
   reset_pairing: "bool?"
   camera_password: "password?"
   camera_user: "str?"
+  bridge_user: "str?"
+  bridge_pass: "password?"
   resolution: "list(1080p|720p|360p)"
   audio_codec: "list(aac|pcmu)"
   rtsp_port: "port"

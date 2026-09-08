@@ -95,7 +95,7 @@ func (c *interceptingConn) Read(p []byte) (int, error) {
 					var pkt rtp.Packet
 					if err := pkt.Unmarshal(payload); err == nil {
 						// Intercepted Backchannel RTP packet from Apple Home / Scrypted
-						c.server.handleBackchannelPacket(c.server.backchannelMedia, &pkt, "TCP/Interleaved")
+						c.server.handleBackchannelPacket(c.server.backchannelMedia, pkt.Clone(), "TCP/Interleaved")
 						continue // Consume frame, do not pass to gortsplib
 					}
 				}

@@ -77,6 +77,11 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 		logger.Info("Config", "Key:    %s", cfg.NabtoConfig.KeyPath)
 	}
 	logger.Info("Config", "Ports:  RTSP=%d, ONVIF=%d, WS-Discovery=3702/udp", cfg.RTSPPort, cfg.ONVIFPort)
+	if cfg.BridgeUser != "" {
+		logger.Info("Config", "Auth:   Enabled (User: %s, RTSP/ONVIF/REST protected)", cfg.BridgeUser)
+	} else {
+		logger.Info("Config", "Auth:   Disabled (Public mode with ONVIF dummy credential compatibility)")
+	}
 	if cfg.MQTTBroker != "" {
 		logger.Info("Config", "MQTT:   Broker=%s, BaseTopic=%s, Discovery=%s", cfg.MQTTBroker, cfg.MQTTTopic, cfg.MQTTDiscovery)
 	}
@@ -85,7 +90,7 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 	eventBus := events.NewBus()
 
 	// 1. Embedded RTSP Server
-	rtspServer, err := rtsp.NewServer(cfg.RTSPPort, cfg.RTSPPath, cfg.AudioCodec)
+	rtspServer, err := rtsp.NewServer(cfg.RTSPPort, cfg.RTSPPath, cfg.AudioCodec, cfg.BridgeUser, cfg.BridgePass)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize RTSP server: %w", err)
 	}
@@ -100,6 +105,8 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 		cfg.AudioCodec,
 		cfg.NabtoConfig.DeviceID,
 		cfg.NabtoConfig.ProductID,
+		cfg.BridgeUser,
+		cfg.BridgePass,
 		bridgeMgr.SetResolution,
 		func() error {
 			logger.Info("ONVIF", "Reboot requested")

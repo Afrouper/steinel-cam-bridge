@@ -13,11 +13,12 @@ type DeviceHandler struct {
 	productID  string
 	onvifPort  int
 	rtspPort   int
+	authUser   string
 	rebootFunc func() error
 	eventBus   *events.Bus
 }
 
-func NewDeviceHandler(deviceID, productID string, onvifPort, rtspPort int, rebootFunc func() error, eventBus *events.Bus) *DeviceHandler {
+func NewDeviceHandler(deviceID, productID string, onvifPort, rtspPort int, authUser string, rebootFunc func() error, eventBus *events.Bus) *DeviceHandler {
 	if eventBus == nil {
 		eventBus = events.GlobalBus
 	}
@@ -26,6 +27,7 @@ func NewDeviceHandler(deviceID, productID string, onvifPort, rtspPort int, reboo
 		productID:  productID,
 		onvifPort:  onvifPort,
 		rtspPort:   rtspPort,
+		authUser:   authUser,
 		rebootFunc: rebootFunc,
 		eventBus:   eventBus,
 	}
@@ -46,6 +48,12 @@ func (h *DeviceHandler) Handle(action string, reqXML string, host string) (strin
 	}
 	if strings.Contains(action, "GetNetworkInterfaces") || strings.Contains(reqXML, "GetNetworkInterfaces") {
 		return h.getNetworkInterfaces(), nil
+	}
+	if strings.Contains(action, "GetUsers") || strings.Contains(reqXML, "GetUsers") {
+		return h.getUsers(), nil
+	}
+	if strings.Contains(action, "GetScopes") || strings.Contains(reqXML, "GetScopes") {
+		return h.getScopes(), nil
 	}
 	if strings.Contains(action, "SystemReboot") || strings.Contains(reqXML, "SystemReboot") {
 		if h.rebootFunc != nil {
@@ -105,6 +113,22 @@ func (h *DeviceHandler) getCapabilities(host string) string {
           <tt:Minor>0</tt:Minor>
         </tt:SupportedVersions>
       </tt:System>
+      <tt:Security>
+        <tt:TLS1.1>false</tt:TLS1.1>
+        <tt:TLS1.2>false</tt:TLS1.2>
+        <tt:OnboardKeyGeneration>false</tt:OnboardKeyGeneration>
+        <tt:AccessPolicyFiles>false</tt:AccessPolicyFiles>
+        <tt:EnableNormalizedDirectory>false</tt:EnableNormalizedDirectory>
+        <tt:ApplicationDefaultContext>false</tt:ApplicationDefaultContext>
+        <tt:KerberosToken>false</tt:KerberosToken>
+        <tt:RELToken>false</tt:RELToken>
+        <tt:HttpDigest>false</tt:HttpDigest>
+        <tt:UsernameToken>true</tt:UsernameToken>
+        <tt:ZeroConfiguration>false</tt:ZeroConfiguration>
+        <tt:MaxUsers>1</tt:MaxUsers>
+        <tt:MaxUserNameLength>64</tt:MaxUserNameLength>
+        <tt:MaxPasswordLength>64</tt:MaxPasswordLength>
+      </tt:Security>
     </tt:Device>
     <tt:Events>
       <tt:XAddr>%s</tt:XAddr>
@@ -247,6 +271,48 @@ func (h *DeviceHandler) getNetworkInterfaces() string {
     </tt:IPv4>
   </tds:NetworkInterfaces>
 </tds:GetNetworkInterfacesResponse>`, NS_TDS, NS_TT)
+}
+
+func (h *DeviceHandler) getUsers() string {
+	username := h.authUser
+	if username == "" {
+		username = "admin"
+	}
+	return fmt.Sprintf(`<tds:GetUsersResponse xmlns:tds="%s" xmlns:tt="%s">
+  <tds:User>
+    <tt:Username>%s</tt:Username>
+    <tt:UserLevel>Administrator</tt:UserLevel>
+  </tds:User>
+</tds:GetUsersResponse>`, NS_TDS, NS_TT, username)
+}
+
+func (h *DeviceHandler) getScopes() string {
+	return fmt.Sprintf(`<tds:GetScopesResponse xmlns:tds="%s" xmlns:tt="%s">
+  <tds:Scopes>
+    <tt:ScopeDef>Fixed</tt:ScopeDef>
+    <tt:ScopeItem>onvif://www.onvif.org/type/video_encoder</tt:ScopeItem>
+  </tds:Scopes>
+  <tds:Scopes>
+    <tt:ScopeDef>Fixed</tt:ScopeDef>
+    <tt:ScopeItem>onvif://www.onvif.org/type/audio_encoder</tt:ScopeItem>
+  </tds:Scopes>
+  <tds:Scopes>
+    <tt:ScopeDef>Fixed</tt:ScopeDef>
+    <tt:ScopeItem>onvif://www.onvif.org/hardware/Steinel</tt:ScopeItem>
+  </tds:Scopes>
+  <tds:Scopes>
+    <tt:ScopeDef>Fixed</tt:ScopeDef>
+    <tt:ScopeItem>onvif://www.onvif.org/name/Steinel-CAM</tt:ScopeItem>
+  </tds:Scopes>
+  <tds:Scopes>
+    <tt:ScopeDef>Fixed</tt:ScopeDef>
+    <tt:ScopeItem>onvif://www.onvif.org/location/outdoor</tt:ScopeItem>
+  </tds:Scopes>
+  <tds:Scopes>
+    <tt:ScopeDef>Fixed</tt:ScopeDef>
+    <tt:ScopeItem>onvif://www.onvif.org/Profile/Streaming</tt:ScopeItem>
+  </tds:Scopes>
+</tds:GetScopesResponse>`, NS_TDS, NS_TT)
 }
 
 func extractHostIP(host string) string {
