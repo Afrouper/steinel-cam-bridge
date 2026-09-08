@@ -2,6 +2,23 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.3.7-beta.2
+
+### 🔐 Authentifizierung & Zugriffsschutz (Issue #19 & #33)
+- **Flexibler Bridge-Zugangsschutz (`bridge_user` & `bridge_pass`)**:
+  - Neuer optionaler Benutzername- und Passwortschutz für RTSP-Stream, ONVIF und Web-REST-API.
+  - Klare Trennung: `camera_user`/`camera_password` (Upstream zur Kamera) vs. `bridge_user`/`bridge_pass` (Downstream für Clients).
+- **RTSP Server Authentifizierung**:
+  - Standardkonforme Digest- (MD5/SHA256) und Basic-Authentifizierung via `gortsplib/v4`.
+  - Korrekte RTSP `401 Unauthorized` Challenges mit `WWW-Authenticate` Header.
+- **ONVIF WS-Security & NVR-Kompatibilität**:
+  - Unterstützung für `PasswordDigest` (SHA-1 Nonce/Created Hash) und `PasswordText` mit zeitkonstanter Validierung (`subtle.ConstantTimeCompare`).
+  - Neue ONVIF Device-Endpunkte `GetUsers` und `GetScopes` sowie `<tt:Security>` Capabilities beheben Verbindungsabbrüche mit der **Synology Surveillance Station** (Issue #33).
+- **REST API Schutz**:
+  - HTTP Basic Auth Middleware für `/api/status`, `/api/light` und `/api/sdcard/*`.
+- **100 % abwärtskompatibler Fallback**:
+  - Ohne konfigurierte Zugangsdaten bleibt der Zugriff ungeschützt, während ONVIF Dummy-Credentials für NVRs tolerant akzeptiert.
+
 ## 1.3.7-beta.1
 
 ### 🛡️ Verbindungsstabilität & Resilienz-Härtung
