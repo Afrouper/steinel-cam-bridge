@@ -2,6 +2,22 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.3.7-beta.3
+
+### 🎥 Synology Surveillance Station ONVIF Kompatibilität (Issue #19 & #33)
+- **Vollständige HTTP 401 Challenge (`WWW-Authenticate`)**:
+  - Sendet bei fehlender Authentifizierung den Header `WWW-Authenticate: Basic realm="Steinel ONVIF Bridge"`. Behebt die Meldung *„Vom Server wurde der Authentifizierungsheader '' empfangen“* in ODM und ermöglicht es Synology, die Zugangsdaten zu übermitteln.
+- **Duale Authentifizierung (HTTP Basic + WS-Security)**:
+  - SOAP-Endpunkte akzeptieren nun sowohl HTTP-Header-Credentials (`Authorization: Basic ...`) als auch WS-Security `UsernameToken` (`PasswordDigest` & `PasswordText`).
+- **Snapshot-Endpoint (`/api/snapshot.jpg`) & `GetSnapshotUri`**:
+  - Liefert ein valides JPEG-Testbild bei `GetSnapshotUri`, damit der Verbindungstest in der Synology Surveillance Station nicht am Thumbnail-Abruf scheitert.
+- **gSOAP Schema-Konformität**:
+  - `<tt:Security>` in `GetCapabilities` schema-konform in `<tt:Extension>` geschachtelt, um Parsing-Fehler im strikten C++/gSOAP-Client von Synology zu verhindern.
+- **Erweiterte Setup-Aktionen**:
+  - Liefert Standard-Antworten für `GetVideoSourceConfigurations`, `GetNetworkProtocols`, `GetHostname`, `GetDNS`, `GetNTP` und `GetDiscoveryMode`.
+- **Transparenteres Logging**:
+  - Abgelehnte Authentifizierungen und unbekannte SOAP-Aktionen werden jetzt auf `WARN`-Level mit Remote-IP geloggt.
+
 ## 1.3.7-beta.2
 
 ### 🔐 Authentifizierung & Zugriffsschutz (Issue #19 & #33)
