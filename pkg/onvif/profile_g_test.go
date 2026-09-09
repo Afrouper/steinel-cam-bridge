@@ -174,11 +174,12 @@ func TestONVIFAuthAndDeviceServices(t *testing.T) {
 		nil, nil, nil, nil, nil, nil,
 	)
 
-	// 2a. Unauthenticated GetDeviceInformation should return 401 NotAuthorized
+	// 2a. Unauthenticated GetDeviceInformation should return 401 NotAuthorized WITH WWW-Authenticate header
 	unauthReq := httptest.NewRequest(http.MethodPost, "/onvif/device_service", strings.NewReader(`<GetDeviceInformation xmlns="http://www.onvif.org/ver10/device/wsdl"/>`))
 	unauthW := httptest.NewRecorder()
 	authSrv.handleSOAP(unauthW, unauthReq)
 	assert.Equal(t, http.StatusUnauthorized, unauthW.Code)
+	assert.Contains(t, unauthW.Header().Get("WWW-Authenticate"), "Basic realm=")
 	assert.Contains(t, unauthW.Body.String(), "ter:NotAuthorized")
 
 	// 2b. Unauthenticated GetSystemDateAndTime should SUCCEED (200 OK) because it's exempt
@@ -209,7 +210,15 @@ func TestONVIFAuthAndDeviceServices(t *testing.T) {
 	assert.Equal(t, http.StatusOK, authW.Code)
 	assert.Contains(t, authW.Body.String(), "GetDeviceInformationResponse")
 
-	// 2d. REST API basic auth tests
+	// 2d. Authenticated GetDeviceInformation with HTTP Basic Auth header (Synology mode) should SUCCEED
+	httpBasicReq := httptest.NewRequest(http.MethodPost, "/onvif/device_service", strings.NewReader(`<GetDeviceInformation xmlns="http://www.onvif.org/ver10/device/wsdl"/>`))
+	httpBasicReq.SetBasicAuth("steineluser", "steinelpass")
+	httpBasicW := httptest.NewRecorder()
+	authSrv.handleSOAP(httpBasicW, httpBasicReq)
+	assert.Equal(t, http.StatusOK, httpBasicW.Code)
+	assert.Contains(t, httpBasicW.Body.String(), "GetDeviceInformationResponse")
+
+	// 2e. REST API basic auth tests
 	// Without credentials -> 401
 	restUnauthReq := httptest.NewRequest(http.MethodGet, "/api/status", nil)
 	restUnauthW := httptest.NewRecorder()
@@ -223,4 +232,59 @@ func TestONVIFAuthAndDeviceServices(t *testing.T) {
 	restAuthW := httptest.NewRecorder()
 	authSrv.withBasicAuth(authSrv.handleAPIStatus)(restAuthW, restAuthReq)
 	assert.Equal(t, http.StatusOK, restAuthW.Code)
+
+	// 3. Test Snapshot Endpoint (/api/snapshot.jpg)
+	snapReq := httptest.NewRequest(http.MethodGet, "/api/snapshot.jpg", nil)
+	snapReq.SetBasicAuth("steineluser", "steinelpass")
+	snapW := httptest.NewRecorder()
+	authSrv.withBasicAuth(authSrv.handleAPISnapshot)(snapW, snapReq)
+	assert.Equal(t, http.StatusOK, snapW.Code)
+	assert.Equal(t, "image/jpeg", snapW.Header().Get("Content-Type"))
+	assert.True(t, snapW.Body.Len() > 0)
+	// Check JPEG magic bytes: 0xFF 0xD8
+	assert.Equal(t, byte(0xFF), snapW.Body.Bytes()[0])
+	assert.Equal(t, byte(0xD8), snapW.Body.Bytes()[1])
+
+	// 4. Test MediaHandler GetSnapshotUri & Configurations
+	mediaH := NewMediaHandler(8554, "live", "aac", 8000, nil, nil)
+	snapUriXML, err := mediaH.Handle("GetSnapshotUri", "", "192.168.1.50:8000")
+	assert.NoError(t, err)
+	assert.Contains(t, snapUriXML, "GetSnapshotUriResponse")
+	assert.Contains(t, snapUriXML, "http://192.168.1.50:8000/api/snapshot.jpg")
+
+	vscXML, err := mediaH.Handle("GetVideoSourceConfigurations", "", "192.168.1.50:8000")
+	assert.NoError(t, err)
+	assert.Contains(t, vscXML, "GetVideoSourceConfigurationsResponse")
+	assert.Contains(t, vscXML, "VideoSourceConfig_1")
+
+	ascXML, err := mediaH.Handle("GetAudioSourceConfigurations", "", "192.168.1.50:8000")
+	assert.NoError(t, err)
+	assert.Contains(t, ascXML, "GetAudioSourceConfigurationsResponse")
+
+	aocXML, err := mediaH.Handle("GetAudioOutputConfigurations", "", "192.168.1.50:8000")
+	assert.NoError(t, err)
+	assert.Contains(t, aocXML, "GetAudioOutputConfigurationsResponse")
+
+	// 5. Test DeviceHandler Synology Discovery actions
+	netProtoXML, err := devHandler.Handle("GetNetworkProtocols", "", "127.0.0.1:8000")
+	assert.NoError(t, err)
+	assert.Contains(t, netProtoXML, "GetNetworkProtocolsResponse")
+	assert.Contains(t, netProtoXML, "<tt:Name>HTTP</tt:Name>")
+	assert.Contains(t, netProtoXML, "<tt:Name>RTSP</tt:Name>")
+
+	hostXML, err := devHandler.Handle("GetHostname", "", "127.0.0.1:8000")
+	assert.NoError(t, err)
+	assert.Contains(t, hostXML, "Steinel-CAM")
+
+	dnsXML, err := devHandler.Handle("GetDNS", "", "127.0.0.1:8000")
+	assert.NoError(t, err)
+	assert.Contains(t, dnsXML, "GetDNSResponse")
+
+	ntpXML, err := devHandler.Handle("GetNTP", "", "127.0.0.1:8000")
+	assert.NoError(t, err)
+	assert.Contains(t, ntpXML, "GetNTPResponse")
+
+	discModeXML, err := devHandler.Handle("GetDiscoveryMode", "", "127.0.0.1:8000")
+	assert.NoError(t, err)
+	assert.Contains(t, discModeXML, "Discoverable")
 }

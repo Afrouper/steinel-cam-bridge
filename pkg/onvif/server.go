@@ -97,6 +97,8 @@ func NewServer(
 	mux.HandleFunc("/api/light", s.withBasicAuth(s.handleAPILight))
 	mux.HandleFunc("/api/sdcard/events", s.withBasicAuth(s.handleAPISDCardEvents))
 	mux.HandleFunc("/api/sdcard/events/", s.withBasicAuth(s.handleAPISDCardItem))
+	mux.HandleFunc("/api/snapshot.jpg", s.withBasicAuth(s.handleAPISnapshot))
+	mux.HandleFunc("/onvif/snapshot.jpg", s.withBasicAuth(s.handleAPISnapshot))
 
 	s.httpServer = &http.Server{
 		Addr:    fmt.Sprintf(":%d", port),
@@ -167,7 +169,7 @@ func (s *Server) handleSOAP(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 	logger.Trace("ONVIF", "SOAP request path=%s action=%s", path, action)
 
-	// Check WS-Security authentication when auth is enabled
+	// Check authentication when auth is enabled
 	if s.authUser != "" {
 		isExempt := strings.Contains(action, "GetSystemDateAndTime") ||
 			strings.Contains(reqStr, "GetSystemDateAndTime") ||
@@ -175,9 +177,27 @@ func (s *Server) handleSOAP(w http.ResponseWriter, r *http.Request) {
 			strings.Contains(reqStr, "GetCapabilities")
 
 		if !isExempt {
-			tok, _ := ExtractUsernameToken(reqStr)
-			if !ValidateWSSecurity(tok, s.authUser, s.authPass) {
-				logger.Debug("ONVIF", "🔒 WS-Security auth failure for action '%s' on %s", action, path)
+			authenticated := false
+
+			// 1. Try HTTP Basic Auth Header (used by Synology & standard HTTP clients)
+			if user, pass, ok := r.BasicAuth(); ok {
+				if subtle.ConstantTimeCompare([]byte(user), []byte(s.authUser)) == 1 &&
+					subtle.ConstantTimeCompare([]byte(pass), []byte(s.authPass)) == 1 {
+					authenticated = true
+				}
+			}
+
+			// 2. Try WS-Security UsernameToken (used by ODM & ONVIF SOAP clients)
+			if !authenticated {
+				tok, _ := ExtractUsernameToken(reqStr)
+				if ValidateWSSecurity(tok, s.authUser, s.authPass) {
+					authenticated = true
+				}
+			}
+
+			if !authenticated {
+				logger.Warn("ONVIF", "🔒 Authentication failure from %s for action '%s' on %s", r.RemoteAddr, action, path)
+				w.Header().Set("WWW-Authenticate", `Basic realm="Steinel ONVIF Bridge"`)
 				w.Header().Set("Content-Type", "application/soap+xml; charset=utf-8")
 				w.WriteHeader(http.StatusUnauthorized)
 				_, _ = w.Write([]byte(FormatSOAPNotAuthorizedFault()))
@@ -208,7 +228,7 @@ func (s *Server) handleSOAP(w http.ResponseWriter, r *http.Request) {
 		// Fallback detection by content
 		if strings.Contains(reqStr, "GetDeviceInformation") || strings.Contains(reqStr, "GetCapabilities") || strings.Contains(reqStr, "GetServices") {
 			innerResp, handleErr = s.deviceHandler.Handle(action, reqStr, host)
-		} else if strings.Contains(reqStr, "GetProfiles") || strings.Contains(reqStr, "GetStreamUri") {
+		} else if strings.Contains(reqStr, "GetProfiles") || strings.Contains(reqStr, "GetStreamUri") || strings.Contains(reqStr, "GetSnapshotUri") {
 			innerResp, handleErr = s.mediaHandler.Handle(action, reqStr, host)
 		} else if strings.Contains(reqStr, "PullMessages") || strings.Contains(reqStr, "CreatePullPointSubscription") {
 			innerResp, handleErr = s.eventHandler.Handle(action, reqStr, host, subID)
@@ -224,7 +244,7 @@ func (s *Server) handleSOAP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if handleErr != nil || innerResp == "" {
-		logger.Debug("ONVIF", "SOAP response fault for action %s: %v", action, handleErr)
+		logger.Warn("ONVIF", "⚠️ Unhandled SOAP action '%s' on %s (error: %v)", action, path, handleErr)
 		w.Header().Set("Content-Type", "application/soap+xml; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(wrapSOAPFault(action, handleErr)))
@@ -426,4 +446,26 @@ func wrapSOAPFault(action string, err error) string {
     </s:Fault>
   </s:Body>
 </s:Envelope>`, action, errMsg)
+}
+
+// fallbackJPEG is a minimal 1x1 black pixel valid JPEG (141 bytes)
+var fallbackJPEG = []byte{
+	0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 'J', 'F', 'I', 'F', 0x00, 0x01, 0x01, 0x01, 0x00, 0x48,
+	0x00, 0x48, 0x00, 0x00, 0xFF, 0xDB, 0x00, 0x43, 0x00, 0x08, 0x06, 0x06, 0x07, 0x06, 0x05, 0x08,
+	0x07, 0x07, 0x07, 0x09, 0x09, 0x08, 0x0A, 0x0C, 0x14, 0x0D, 0x0C, 0x0B, 0x0B, 0x0C, 0x19, 0x12,
+	0x13, 0x0F, 0x14, 0x1D, 0x1A, 0x1F, 0x1E, 0x1D, 0x1A, 0x1C, 0x1C, 0x20, 0x24, 0x2E, 0x27, 0x20,
+	0x22, 0x2C, 0x23, 0x1C, 0x1C, 0x28, 0x37, 0x29, 0x2C, 0x30, 0x31, 0x34, 0x34, 0x34, 0x1F, 0x27,
+	0x39, 0x3D, 0x38, 0x32, 0x3C, 0x2E, 0x33, 0x34, 0x32, 0xFF, 0xC0, 0x00, 0x0B, 0x08, 0x00, 0x01,
+	0x00, 0x01, 0x01, 0x01, 0x11, 0x00, 0xFF, 0xC4, 0x00, 0x1F, 0x00, 0x00, 0x01, 0x05, 0x01, 0x01,
+	0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03, 0x04,
+	0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0xFF, 0xDA, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3F,
+	0x00, 0xBF, 0x80, 0xFF, 0xD9,
+}
+
+func (s *Server) handleAPISnapshot(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	w.Header().Set("Content-Length", strconv.Itoa(len(fallbackJPEG)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(fallbackJPEG)
 }
