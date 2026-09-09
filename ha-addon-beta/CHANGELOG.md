@@ -2,6 +2,14 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.3.7-beta.4
+
+### 🍏 Wiederherstellung Live-Snapshot in Apple Home / Scrypted
+- **Entfernung von `GetSnapshotUri` & Dummy-Endpunkt**:
+  - Da die Steinel-Kamera hardwareseitig keinen nativen Live-JPEG-Server besitzt, führte das Bereitstellen eines Dummy-Snapshot-Endpunkts dazu, dass Scrypted und Apple Home das Live-Framegrabbing aus dem RTSP-Stream deaktivierten und ein schwarzes Bild anzeigten.
+  - Durch das Entfernen greift wieder das automatische, ressourcenschonende Keyframe-Grabbing von Scrypted/HomeKit direkt aus dem RTSP-Stream.
+  - Alle Synology-Fixes (Duale Auth, `WWW-Authenticate`-Header, Schema-Korrektur von `<tt:Security>`, `GetNetworkProtocols`) bleiben vollständig erhalten.
+
 ## 1.3.7-beta.3
 
 ### 🎥 Synology Surveillance Station ONVIF Kompatibilität (Issue #19 & #33)
