@@ -233,25 +233,8 @@ func TestONVIFAuthAndDeviceServices(t *testing.T) {
 	authSrv.withBasicAuth(authSrv.handleAPIStatus)(restAuthW, restAuthReq)
 	assert.Equal(t, http.StatusOK, restAuthW.Code)
 
-	// 3. Test Snapshot Endpoint (/api/snapshot.jpg)
-	snapReq := httptest.NewRequest(http.MethodGet, "/api/snapshot.jpg", nil)
-	snapReq.SetBasicAuth("steineluser", "steinelpass")
-	snapW := httptest.NewRecorder()
-	authSrv.withBasicAuth(authSrv.handleAPISnapshot)(snapW, snapReq)
-	assert.Equal(t, http.StatusOK, snapW.Code)
-	assert.Equal(t, "image/jpeg", snapW.Header().Get("Content-Type"))
-	assert.True(t, snapW.Body.Len() > 0)
-	// Check JPEG magic bytes: 0xFF 0xD8
-	assert.Equal(t, byte(0xFF), snapW.Body.Bytes()[0])
-	assert.Equal(t, byte(0xD8), snapW.Body.Bytes()[1])
-
-	// 4. Test MediaHandler GetSnapshotUri & Configurations
+	// 3. Test MediaHandler Configurations
 	mediaH := NewMediaHandler(8554, "live", "aac", 8000, nil, nil)
-	snapUriXML, err := mediaH.Handle("GetSnapshotUri", "", "192.168.1.50:8000")
-	assert.NoError(t, err)
-	assert.Contains(t, snapUriXML, "GetSnapshotUriResponse")
-	assert.Contains(t, snapUriXML, "http://192.168.1.50:8000/api/snapshot.jpg")
-
 	vscXML, err := mediaH.Handle("GetVideoSourceConfigurations", "", "192.168.1.50:8000")
 	assert.NoError(t, err)
 	assert.Contains(t, vscXML, "GetVideoSourceConfigurationsResponse")

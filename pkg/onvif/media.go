@@ -45,9 +45,6 @@ func (h *MediaHandler) Handle(action string, reqXML string, host string) (string
 	if strings.Contains(action, "GetStreamUri") || strings.Contains(reqXML, "GetStreamUri") {
 		return h.getStreamUri(host), nil
 	}
-	if strings.Contains(action, "GetSnapshotUri") || strings.Contains(reqXML, "GetSnapshotUri") {
-		return h.getSnapshotUri(host), nil
-	}
 	if strings.Contains(action, "GetVideoSourceConfigurations") || strings.Contains(reqXML, "GetVideoSourceConfigurations") ||
 		strings.Contains(action, "GetVideoSourceConfiguration") || strings.Contains(reqXML, "GetVideoSourceConfiguration") {
 		return h.getVideoSourceConfigurations(), nil
@@ -290,20 +287,6 @@ func (h *MediaHandler) getVideoSources() string {
     <tt:Resolution><tt:Width>1920</tt:Width><tt:Height>1080</tt:Height></tt:Resolution>
   </trt:VideoSources>
 </trt:GetVideoSourcesResponse>`, NS_TRT, NS_TT)
-}
-
-func (h *MediaHandler) getSnapshotUri(host string) string {
-	ip := extractHostIP(host)
-	snapshotURL := fmt.Sprintf("http://%s:%d/api/snapshot.jpg", ip, h.onvifPort)
-
-	return fmt.Sprintf(`<trt:GetSnapshotUriResponse xmlns:trt="%s" xmlns:tt="%s">
-  <trt:MediaUri>
-    <tt:Uri>%s</tt:Uri>
-    <tt:InvalidAfterConnect>false</tt:InvalidAfterConnect>
-    <tt:InvalidAfterReboot>false</tt:InvalidAfterReboot>
-    <tt:Timeout>PT30S</tt:Timeout>
-  </trt:MediaUri>
-</trt:GetSnapshotUriResponse>`, NS_TRT, NS_TT, snapshotURL)
 }
 
 func (h *MediaHandler) getVideoSourceConfigurations() string {
