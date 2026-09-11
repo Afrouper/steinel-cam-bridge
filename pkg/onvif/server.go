@@ -24,6 +24,7 @@ type Server struct {
 	port              int
 	authUser          string
 	authPass          string
+	nonceManager      *NonceManager
 	httpServer        *http.Server
 	eventBus          *events.Bus
 	deviceHandler     *DeviceHandler
@@ -73,6 +74,7 @@ func NewServer(
 		port:              port,
 		authUser:          authUser,
 		authPass:          authPass,
+		nonceManager:      NewNonceManager(5 * time.Minute),
 		eventBus:          eventBus,
 		deviceHandler:     devHandler,
 		mediaHandler:      medHandler,
@@ -176,16 +178,29 @@ func (s *Server) handleSOAP(w http.ResponseWriter, r *http.Request) {
 
 		if !isExempt {
 			authenticated := false
+			var isStale bool
+			authHeader := r.Header.Get("Authorization")
 
-			// 1. Try HTTP Basic Auth Header (used by Synology & standard HTTP clients)
-			if user, pass, ok := r.BasicAuth(); ok {
-				if subtle.ConstantTimeCompare([]byte(user), []byte(s.authUser)) == 1 &&
-					subtle.ConstantTimeCompare([]byte(pass), []byte(s.authPass)) == 1 {
+			// 1. Try HTTP Digest Auth Header (RFC 2617, mandated by ONVIF Core Spec 5.1.2, used by Synology)
+			if strings.HasPrefix(strings.ToLower(strings.TrimSpace(authHeader)), "digest ") {
+				var valid bool
+				valid, isStale = ValidateDigestAuth(r.Method, r.URL.Path, authHeader, s.authUser, s.authPass, ONVIFAuthRealm, s.nonceManager)
+				if valid {
 					authenticated = true
 				}
 			}
 
-			// 2. Try WS-Security UsernameToken (used by ODM & ONVIF SOAP clients)
+			// 2. Try HTTP Basic Auth Header (used by simple HTTP clients)
+			if !authenticated {
+				if user, pass, ok := r.BasicAuth(); ok {
+					if subtle.ConstantTimeCompare([]byte(user), []byte(s.authUser)) == 1 &&
+						subtle.ConstantTimeCompare([]byte(pass), []byte(s.authPass)) == 1 {
+						authenticated = true
+					}
+				}
+			}
+
+			// 3. Try WS-Security UsernameToken (used by ODM & ONVIF SOAP clients)
 			if !authenticated {
 				tok, _ := ExtractUsernameToken(reqStr)
 				if ValidateWSSecurity(tok, s.authUser, s.authPass) {
@@ -194,8 +209,14 @@ func (s *Server) handleSOAP(w http.ResponseWriter, r *http.Request) {
 			}
 
 			if !authenticated {
-				logger.Warn("ONVIF", "🔒 Authentication failure from %s for action '%s' on %s", r.RemoteAddr, action, path)
-				w.Header().Set("WWW-Authenticate", `Basic realm="Steinel ONVIF Bridge"`)
+				logger.Warn("ONVIF", "🔒 Authentication failure from %s for action '%s' on %s (Auth: %s)", r.RemoteAddr, action, path, RedactAuthHeader(authHeader))
+				nonce := s.nonceManager.Generate()
+				staleAttr := ""
+				if isStale {
+					staleAttr = `, stale=true`
+				}
+				w.Header().Add("WWW-Authenticate", fmt.Sprintf(`Digest realm="%s", nonce="%s", qop="auth", algorithm=MD5%s`, ONVIFAuthRealm, nonce, staleAttr))
+				w.Header().Add("WWW-Authenticate", fmt.Sprintf(`Basic realm="%s"`, ONVIFAuthRealm))
 				w.Header().Set("Content-Type", "application/soap+xml; charset=utf-8")
 				w.WriteHeader(http.StatusUnauthorized)
 				_, _ = w.Write([]byte(FormatSOAPNotAuthorizedFault()))

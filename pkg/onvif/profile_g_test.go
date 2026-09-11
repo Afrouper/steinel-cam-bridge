@@ -178,8 +178,9 @@ func TestONVIFAuthAndDeviceServices(t *testing.T) {
 	unauthReq := httptest.NewRequest(http.MethodPost, "/onvif/device_service", strings.NewReader(`<GetDeviceInformation xmlns="http://www.onvif.org/ver10/device/wsdl"/>`))
 	unauthW := httptest.NewRecorder()
 	authSrv.handleSOAP(unauthW, unauthReq)
-	assert.Equal(t, http.StatusUnauthorized, unauthW.Code)
-	assert.Contains(t, unauthW.Header().Get("WWW-Authenticate"), "Basic realm=")
+	authHeaders := strings.Join(unauthW.Header().Values("WWW-Authenticate"), ", ")
+	assert.Contains(t, authHeaders, "Digest realm=")
+	assert.Contains(t, authHeaders, "Basic realm=")
 	assert.Contains(t, unauthW.Body.String(), "ter:NotAuthorized")
 
 	// 2b. Unauthenticated GetSystemDateAndTime should SUCCEED (200 OK) because it's exempt

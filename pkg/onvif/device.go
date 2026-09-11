@@ -144,7 +144,7 @@ func (h *DeviceHandler) getCapabilities(host string) string {
             <tt:SupportedEAPMethod>0</tt:SupportedEAPMethod>
             <tt:RemoteUserHandling>false</tt:RemoteUserHandling>
             <tt:UsernameToken>true</tt:UsernameToken>
-            <tt:HttpDigest>false</tt:HttpDigest>
+            <tt:HttpDigest>true</tt:HttpDigest>
           </tt:Extension>
         </tt:Extension>
       </tt:Security>

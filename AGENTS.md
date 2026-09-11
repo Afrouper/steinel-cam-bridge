@@ -145,14 +145,14 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
   - `interceptor.go`: Dedizierter UDP-RTP Socket auf Port `8554/udp` sowie TCP-Interleaved Listener (`interceptingConn`) mit vorallokiertem 4-KB Lesepuffer für Zero-Allocation Socket-Reads (**0 Allokationen/Read**).
 
 - **`pkg/onvif/`**:
-  - `auth.go`: WS-Security UsernameToken Authentifizierung (`PasswordDigest` via SHA-1 Nonce/Timestamp Hash sowie `PasswordText`) mit konstanter Vergleichszeit (`subtle.ConstantTimeCompare`) und abwärtskompatiblem Fallback für Dummy-Credentials (Synology Surveillance Station).
+  - `auth.go`: RFC 2617 HTTP Digest Authentifizierung (zustandsloses HMAC-SHA256 Nonce-Management, MD5 Digest Berechnung mit `qop="auth"` & Legacy-Unterstützung), WS-Security UsernameToken (`PasswordDigest` via SHA-1 Nonce/Timestamp Hash sowie `PasswordText`), HTTP Basic Auth und Timing-Attack-sichere Validierung via `subtle.ConstantTimeCompare`.
   - `discovery.go`: **WS-Discovery Server** auf UDP Multicast `239.255.255.250:3702`.
-  - `device.go`: Device Service (`GetDeviceInformation`, `GetCapabilities`, `GetServices`, `GetSystemDateAndTime`, `GetUsers`, `GetScopes`, `<tt:Security>` Capabilities).
-  - `media.go`: Media Service (`Profile_Main` 1080p, `Profile_Sub` 360p, `GetStreamUri`, `GetSnapshotUri`, `SetVideoEncoderConfiguration`).
+  - `device.go`: Device Service (`GetDeviceInformation`, `GetCapabilities`, `GetServices`, `GetSystemDateAndTime`, `GetUsers`, `GetScopes`, `<tt:Security>` Capabilities mit `UsernameToken` und `HttpDigest`).
+  - `media.go`: Media Service (`Profile_Main` 1080p, `Profile_Sub` 360p, `GetStreamUri`, `SetVideoEncoderConfiguration`).
   - `events.go`: Event Service (WS-BaseNotification PullPoint für Motion-Events).
   - `deviceio.go`: DeviceIO / Relay / Auxiliary Service für Licht- und Sirenensteuerung.
   - `recording.go`, `replay.go`, `search.go`: **ONVIF Profile G Services** zur standardisierten Suche und Wiedergabe von SD-Karten-Aufnahmen in NVRs.
-  - `server.go`: HTTP Server auf Port `8000` (SOAP Dispatcher mit WS-Security Validierung + `/snapshot.jpg` + HTTP Basic Auth geschützte REST-Endpoints `/api/status`, `/api/light`, `/api/sdcard/*`).
+  - `server.go`: HTTP Server auf Port `8000` (SOAP Dispatcher mit Triple-Auth: HTTP Digest, HTTP Basic und WS-Security + HTTP Basic Auth geschützte REST-Endpoints `/api/status`, `/api/light`, `/api/sdcard/*`).
 
 - **`pkg/mqtt/`**:
   - Modularisiert in vier fokussierte Komponenten:

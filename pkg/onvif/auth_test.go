@@ -3,7 +3,12 @@ package onvif
 import (
 	"crypto/sha1"
 	"encoding/base64"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -126,4 +131,212 @@ func TestFormatSOAPNotAuthorizedFault(t *testing.T) {
 	assert.Contains(t, faultXML, "s:Fault")
 	assert.Contains(t, faultXML, "ter:NotAuthorized")
 	assert.Contains(t, faultXML, "The security token could not be authenticated or authorized")
+}
+
+func TestNonceManager(t *testing.T) {
+	mgr := NewNonceManager(2 * time.Second)
+	nonce := mgr.Generate()
+	require.NotEmpty(t, nonce)
+
+	// Valid and fresh
+	valid, stale := mgr.Validate(nonce)
+	assert.True(t, valid)
+	assert.False(t, stale)
+
+	// Forged signature
+	parts := strings.Split(nonce, "-")
+	require.Len(t, parts, 2)
+	forgedNonce := parts[0] + "-ffffffffffffffff"
+	valid, stale = mgr.Validate(forgedNonce)
+	assert.False(t, valid)
+	assert.False(t, stale)
+
+	// Malformed nonce
+	valid, stale = mgr.Validate("malformed_nonce")
+	assert.False(t, valid)
+	assert.False(t, stale)
+
+	// Expired nonce
+	expiredMgr := NewNonceManager(-1 * time.Second)
+	expiredNonce := expiredMgr.Generate()
+	valid, stale = expiredMgr.Validate(expiredNonce)
+	assert.False(t, valid)
+	assert.True(t, stale)
+}
+
+func TestParseDigestAuthorization(t *testing.T) {
+	header := `Digest username="syno", realm="Steinel ONVIF Bridge", nonce="6aa3b864-97603f418ce972c3", uri="/onvif/device_service", response="6629fae49393a05397450978507c4ef1", qop=auth, nc=00000001, cnonce="0a4f113b", algorithm=MD5`
+	params := ParseDigestAuthorization(header)
+	require.NotNil(t, params)
+
+	assert.Equal(t, "syno", params["username"])
+	assert.Equal(t, "Steinel ONVIF Bridge", params["realm"])
+	assert.Equal(t, "6aa3b864-97603f418ce972c3", params["nonce"])
+	assert.Equal(t, "/onvif/device_service", params["uri"])
+	assert.Equal(t, "6629fae49393a05397450978507c4ef1", params["response"])
+	assert.Equal(t, "auth", params["qop"])
+	assert.Equal(t, "00000001", params["nc"])
+	assert.Equal(t, "0a4f113b", params["cnonce"])
+	assert.Equal(t, "MD5", params["algorithm"])
+
+	// Non-digest header
+	assert.Nil(t, ParseDigestAuthorization("Basic dXNlcjpwYXNz"))
+	assert.Nil(t, ParseDigestAuthorization(""))
+}
+
+func TestValidateDigestAuth_QopAuth(t *testing.T) {
+	mgr := NewNonceManager(5 * time.Minute)
+	nonce := mgr.Generate()
+
+	user := "syno"
+	pass := "secret123"
+	realm := ONVIFAuthRealm
+	method := "POST"
+	uri := "/onvif/device_service"
+	nc := "00000001"
+	cnonce := "clientnonce123"
+	qop := "auth"
+
+	// HA1 = MD5(user:realm:pass)
+	ha1 := md5Hex(fmt.Sprintf("%s:%s:%s", user, realm, pass))
+	// HA2 = MD5(method:uri)
+	ha2 := md5Hex(fmt.Sprintf("%s:%s", method, uri))
+	// Response = MD5(HA1:nonce:nc:cnonce:qop:HA2)
+	validResp := md5Hex(fmt.Sprintf("%s:%s:%s:%s:%s:%s", ha1, nonce, nc, cnonce, qop, ha2))
+
+	validHeader := fmt.Sprintf(`Digest username="%s", realm="%s", nonce="%s", uri="%s", response="%s", qop=%s, nc=%s, cnonce="%s"`,
+		user, realm, nonce, uri, validResp, qop, nc, cnonce)
+
+	// 1. Successful validation
+	valid, stale := ValidateDigestAuth(method, uri, validHeader, user, pass, realm, mgr)
+	assert.True(t, valid)
+	assert.False(t, stale)
+
+	// 2. Full URL in URI parameter (Synology / client sends absolute URI)
+	fullURIHeader := fmt.Sprintf(`Digest username="%s", realm="%s", nonce="%s", uri="http://192.168.1.50:8000%s", response="%s", qop=%s, nc=%s, cnonce="%s"`,
+		user, realm, nonce, uri, md5Hex(fmt.Sprintf("%s:%s:%s:%s:%s:%s", ha1, nonce, nc, cnonce, qop, md5Hex(fmt.Sprintf("%s:http://192.168.1.50:8000%s", method, uri)))), qop, nc, cnonce)
+	valid, _ = ValidateDigestAuth(method, uri, fullURIHeader, user, pass, realm, mgr)
+	assert.True(t, valid)
+
+	// 3. Wrong password
+	wrongPassResp := md5Hex(fmt.Sprintf("%s:%s:%s:%s:%s:%s", md5Hex("syno:Steinel ONVIF Bridge:wrongpass"), nonce, nc, cnonce, qop, ha2))
+	wrongPassHeader := fmt.Sprintf(`Digest username="%s", realm="%s", nonce="%s", uri="%s", response="%s", qop=%s, nc=%s, cnonce="%s"`,
+		user, realm, nonce, uri, wrongPassResp, qop, nc, cnonce)
+	valid, stale = ValidateDigestAuth(method, uri, wrongPassHeader, user, pass, realm, mgr)
+	assert.False(t, valid)
+	assert.False(t, stale)
+
+	// 4. Wrong username
+	wrongUserHeader := fmt.Sprintf(`Digest username="otheruser", realm="%s", nonce="%s", uri="%s", response="%s", qop=%s, nc=%s, cnonce="%s"`,
+		realm, nonce, uri, validResp, qop, nc, cnonce)
+	valid, stale = ValidateDigestAuth(method, uri, wrongUserHeader, user, pass, realm, mgr)
+	assert.False(t, valid)
+	assert.False(t, stale)
+
+	// 5. Stale nonce
+	expiredMgr := NewNonceManager(-1 * time.Second)
+	expiredNonce := expiredMgr.Generate()
+	staleResp := md5Hex(fmt.Sprintf("%s:%s:%s:%s:%s:%s", ha1, expiredNonce, nc, cnonce, qop, ha2))
+	staleHeader := fmt.Sprintf(`Digest username="%s", realm="%s", nonce="%s", uri="%s", response="%s", qop=%s, nc=%s, cnonce="%s"`,
+		user, realm, expiredNonce, uri, staleResp, qop, nc, cnonce)
+	valid, stale = ValidateDigestAuth(method, uri, staleHeader, user, pass, realm, expiredMgr)
+	assert.False(t, valid)
+	assert.True(t, stale)
+}
+
+func TestValidateDigestAuth_LegacyNoQop(t *testing.T) {
+	mgr := NewNonceManager(5 * time.Minute)
+	nonce := mgr.Generate()
+
+	user := "syno"
+	pass := "secret123"
+	realm := ONVIFAuthRealm
+	method := "POST"
+	uri := "/onvif/device_service"
+
+	ha1 := md5Hex(fmt.Sprintf("%s:%s:%s", user, realm, pass))
+	ha2 := md5Hex(fmt.Sprintf("%s:%s", method, uri))
+	validResp := md5Hex(fmt.Sprintf("%s:%s:%s", ha1, nonce, ha2))
+
+	legacyHeader := fmt.Sprintf(`Digest username="%s", realm="%s", nonce="%s", uri="%s", response="%s"`,
+		user, realm, nonce, uri, validResp)
+
+	valid, stale := ValidateDigestAuth(method, uri, legacyHeader, user, pass, realm, mgr)
+	assert.True(t, valid)
+	assert.False(t, stale)
+}
+
+func TestValidateDigestAuth_FallbackMode(t *testing.T) {
+	// If expectedUser is empty, auth is disabled and any request passes
+	valid, stale := ValidateDigestAuth("POST", "/onvif/device_service", "", "", "", "", nil)
+	assert.True(t, valid)
+	assert.False(t, stale)
+}
+
+func TestRedactAuthHeader(t *testing.T) {
+	assert.Equal(t, "none", RedactAuthHeader(""))
+	assert.Equal(t, "Basic", RedactAuthHeader("Basic dXNlcjpwYXNz"))
+	assert.Equal(t, `Digest (user: "syno")`, RedactAuthHeader(`Digest username="syno", realm="test"`))
+	assert.Equal(t, "Digest (no username)", RedactAuthHeader("Digest realm=\"test\""))
+	assert.Equal(t, "Other", RedactAuthHeader("Bearer sometoken"))
+}
+
+func TestServer_SOAPDigestAuthRoundtrip(t *testing.T) {
+	srv := NewServer(
+		8000, 8554, "live", "aac", "de-test", "pr-test", "syno", "naspass123",
+		nil, nil, nil, nil, nil, nil,
+	)
+
+	soapBody := `<GetDeviceInformation xmlns="http://www.onvif.org/ver10/device/wsdl"/>`
+
+	// 1. Initial unauthenticated request -> returns 401 with Digest challenge and nonce
+	req1 := httptest.NewRequest(http.MethodPost, "/onvif/device_service", strings.NewReader(soapBody))
+	w1 := httptest.NewRecorder()
+	srv.handleSOAP(w1, req1)
+
+	assert.Equal(t, http.StatusUnauthorized, w1.Code)
+	authHeaders := strings.Join(w1.Header().Values("WWW-Authenticate"), ", ")
+	assert.Contains(t, authHeaders, `Digest realm="Steinel ONVIF Bridge"`)
+	assert.Contains(t, authHeaders, `Basic realm="Steinel ONVIF Bridge"`)
+
+	// Extract nonce from Digest challenge
+	var nonce string
+	for _, h := range w1.Header().Values("WWW-Authenticate") {
+		if strings.HasPrefix(h, "Digest ") {
+			params := ParseDigestAuthorization(h)
+			nonce = params["nonce"]
+			break
+		}
+	}
+	require.NotEmpty(t, nonce, "Nonce must be returned in WWW-Authenticate header")
+
+	// 2. Client sends valid Digest authorization
+	method := "POST"
+	uri := "/onvif/device_service"
+	nc := "00000001"
+	cnonce := "synoclient123"
+	qop := "auth"
+	ha1 := md5Hex(fmt.Sprintf("%s:%s:%s", "syno", ONVIFAuthRealm, "naspass123"))
+	ha2 := md5Hex(fmt.Sprintf("%s:%s", method, uri))
+	resp := md5Hex(fmt.Sprintf("%s:%s:%s:%s:%s:%s", ha1, nonce, nc, cnonce, qop, ha2))
+
+	req2 := httptest.NewRequest(http.MethodPost, "/onvif/device_service", strings.NewReader(soapBody))
+	req2.Header.Set("Authorization", fmt.Sprintf(`Digest username="syno", realm="%s", nonce="%s", uri="%s", response="%s", qop=%s, nc=%s, cnonce="%s"`,
+		ONVIFAuthRealm, nonce, uri, resp, qop, nc, cnonce))
+	w2 := httptest.NewRecorder()
+	srv.handleSOAP(w2, req2)
+
+	assert.Equal(t, http.StatusOK, w2.Code)
+	assert.Contains(t, w2.Body.String(), "GetDeviceInformationResponse")
+
+	// 3. Client sends invalid password -> returns 401
+	wrongResp := md5Hex(fmt.Sprintf("%s:%s:%s:%s:%s:%s", md5Hex("syno:Steinel ONVIF Bridge:wrongpass"), nonce, nc, cnonce, qop, ha2))
+	req3 := httptest.NewRequest(http.MethodPost, "/onvif/device_service", strings.NewReader(soapBody))
+	req3.Header.Set("Authorization", fmt.Sprintf(`Digest username="syno", realm="%s", nonce="%s", uri="%s", response="%s", qop=%s, nc=%s, cnonce="%s"`,
+		ONVIFAuthRealm, nonce, uri, wrongResp, qop, nc, cnonce))
+	w3 := httptest.NewRecorder()
+	srv.handleSOAP(w3, req3)
+
+	assert.Equal(t, http.StatusUnauthorized, w3.Code)
+	assert.Contains(t, w3.Body.String(), "ter:NotAuthorized")
 }
