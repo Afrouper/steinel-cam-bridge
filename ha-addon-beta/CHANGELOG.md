@@ -2,6 +2,24 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.3.7-beta.5
+
+### 🔐 RFC 2617 HTTP Digest Authentication für ONVIF (Synology Surveillance Station)
+- **HTTP Digest Authentication (ONVIF Core Spec 5.1.2)**:
+  - Vollständige Implementierung von RFC 2617 HTTP Digest Authentication für alle ONVIF SOAP-Endpunkte (`/onvif/*`).
+  - Synology Surveillance Station verweigert bei unverschlüsseltem HTTP die Übertragung von Passwörtern im Klartext (Basic Auth) und erzwingt HTTP Digest Auth. Die Bridge antwortet nun bei 401 Unauthorized mit einer RFC 2617 konformen Digest-Challenge (`qop="auth"`, `algorithm=MD5`).
+- **Triple-Authentication auf SOAP-Ebene**:
+  - Nahtlose Koexistenz aller drei Authentifizierungsstandards: HTTP Digest (Synology / ONVIF NVRs), HTTP Basic (einfache Skripte/Clients) und WS-Security UsernameToken (ODM / SOAP-Clients).
+- **Zustandsloses Nonce-Management (`NonceManager`)**:
+  - Nonces werden kryptographisch via HMAC-SHA256 signiert mit 5 Minuten TTL. Verhindert Replay-Angriffe und Memory-Leaks bei gleichzeitigen parallelen Requests.
+  - Abgelaufene Nonces werden mit `stale=true` signalisiert, sodass Clients ohne Benutzerinteraktion transparent einen neuen Nonce anfordern.
+- **Aktualisierte ONVIF Capabilities**:
+  - In `GetCapabilities` wird `<tt:HttpDigest>true</tt:HttpDigest>` deklariert, um NVR-Systemen die Digest-Fähigkeit zu signalisieren.
+- **Sicheres Logging**:
+  - Bei Authentifizierungsfehlschlägen wird der Autorisierungstyp (z. B. `Digest (user: "syno")`) geloggt, Passwörter oder Hashes werden niemals im Log ausgegeben.
+- **Apple Home / Scrypted Snapshot**:
+  - Bleibt unverändert direkt aus dem Live-Videostream erhalten (keine fehlerhaften schwarzen Dummy-Bilder).
+
 ## 1.3.7-beta.4
 
 ### 🍏 Wiederherstellung Live-Snapshot in Apple Home / Scrypted
