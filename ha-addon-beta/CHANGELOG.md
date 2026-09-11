@@ -2,6 +2,48 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.3.7-beta.5
+
+### 🔐 RFC 2617 HTTP Digest Authentication für ONVIF (Synology Surveillance Station)
+- **HTTP Digest Authentication (ONVIF Core Spec 5.1.2)**:
+  - Vollständige Implementierung von RFC 2617 HTTP Digest Authentication für alle ONVIF SOAP-Endpunkte (`/onvif/*`).
+  - Synology Surveillance Station verweigert bei unverschlüsseltem HTTP die Übertragung von Passwörtern im Klartext (Basic Auth) und erzwingt HTTP Digest Auth. Die Bridge antwortet nun bei 401 Unauthorized mit einer RFC 2617 konformen Digest-Challenge (`qop="auth"`, `algorithm=MD5`).
+- **Triple-Authentication auf SOAP-Ebene**:
+  - Nahtlose Koexistenz aller drei Authentifizierungsstandards: HTTP Digest (Synology / ONVIF NVRs), HTTP Basic (einfache Skripte/Clients) und WS-Security UsernameToken (ODM / SOAP-Clients).
+- **Zustandsloses Nonce-Management (`NonceManager`)**:
+  - Nonces werden kryptographisch via HMAC-SHA256 signiert mit 5 Minuten TTL. Verhindert Replay-Angriffe und Memory-Leaks bei gleichzeitigen parallelen Requests.
+  - Abgelaufene Nonces werden mit `stale=true` signalisiert, sodass Clients ohne Benutzerinteraktion transparent einen neuen Nonce anfordern.
+- **Aktualisierte ONVIF Capabilities**:
+  - In `GetCapabilities` wird `<tt:HttpDigest>true</tt:HttpDigest>` deklariert, um NVR-Systemen die Digest-Fähigkeit zu signalisieren.
+- **Sicheres Logging**:
+  - Bei Authentifizierungsfehlschlägen wird der Autorisierungstyp (z. B. `Digest (user: "syno")`) geloggt, Passwörter oder Hashes werden niemals im Log ausgegeben.
+- **Apple Home / Scrypted Snapshot**:
+  - Bleibt unverändert direkt aus dem Live-Videostream erhalten (keine fehlerhaften schwarzen Dummy-Bilder).
+
+## 1.3.7-beta.4
+
+### 🍏 Wiederherstellung Live-Snapshot in Apple Home / Scrypted
+- **Entfernung von `GetSnapshotUri` & Dummy-Endpunkt**:
+  - Da die Steinel-Kamera hardwareseitig keinen nativen Live-JPEG-Server besitzt, führte das Bereitstellen eines Dummy-Snapshot-Endpunkts dazu, dass Scrypted und Apple Home das Live-Framegrabbing aus dem RTSP-Stream deaktivierten und ein schwarzes Bild anzeigten.
+  - Durch das Entfernen greift wieder das automatische, ressourcenschonende Keyframe-Grabbing von Scrypted/HomeKit direkt aus dem RTSP-Stream.
+  - Alle Synology-Fixes (Duale Auth, `WWW-Authenticate`-Header, Schema-Korrektur von `<tt:Security>`, `GetNetworkProtocols`) bleiben vollständig erhalten.
+
+## 1.3.7-beta.3
+
+### 🎥 Synology Surveillance Station ONVIF Kompatibilität (Issue #19 & #33)
+- **Vollständige HTTP 401 Challenge (`WWW-Authenticate`)**:
+  - Sendet bei fehlender Authentifizierung den Header `WWW-Authenticate: Basic realm="Steinel ONVIF Bridge"`. Behebt die Meldung *„Vom Server wurde der Authentifizierungsheader '' empfangen“* in ODM und ermöglicht es Synology, die Zugangsdaten zu übermitteln.
+- **Duale Authentifizierung (HTTP Basic + WS-Security)**:
+  - SOAP-Endpunkte akzeptieren nun sowohl HTTP-Header-Credentials (`Authorization: Basic ...`) als auch WS-Security `UsernameToken` (`PasswordDigest` & `PasswordText`).
+- **Snapshot-Endpoint (`/api/snapshot.jpg`) & `GetSnapshotUri`**:
+  - Liefert ein valides JPEG-Testbild bei `GetSnapshotUri`, damit der Verbindungstest in der Synology Surveillance Station nicht am Thumbnail-Abruf scheitert.
+- **gSOAP Schema-Konformität**:
+  - `<tt:Security>` in `GetCapabilities` schema-konform in `<tt:Extension>` geschachtelt, um Parsing-Fehler im strikten C++/gSOAP-Client von Synology zu verhindern.
+- **Erweiterte Setup-Aktionen**:
+  - Liefert Standard-Antworten für `GetVideoSourceConfigurations`, `GetNetworkProtocols`, `GetHostname`, `GetDNS`, `GetNTP` und `GetDiscoveryMode`.
+- **Transparenteres Logging**:
+  - Abgelehnte Authentifizierungen und unbekannte SOAP-Aktionen werden jetzt auf `WARN`-Level mit Remote-IP geloggt.
+
 ## 1.3.7-beta.2
 
 ### 🔐 Authentifizierung & Zugriffsschutz (Issue #19 & #33)
