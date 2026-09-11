@@ -139,39 +139,31 @@ func TestNonceManager(t *testing.T) {
 	require.NotEmpty(t, nonce)
 
 	// Valid and fresh
-	valid, stale := mgr.Validate(nonce)
-	assert.True(t, valid)
-	assert.False(t, stale)
+	assert.Equal(t, AuthStatusSuccess, mgr.Validate(nonce))
 
 	// Forged signature
 	parts := strings.Split(nonce, "-")
-	require.Len(t, parts, 2)
-	forgedNonce := parts[0] + "-ffffffffffffffff"
-	valid, stale = mgr.Validate(forgedNonce)
-	assert.False(t, valid)
-	assert.False(t, stale)
+	require.Len(t, parts, 3)
+	forgedNonce := parts[0] + "-" + parts[1] + "-ffffffffffffffff"
+	assert.Equal(t, AuthStatusFailed, mgr.Validate(forgedNonce))
 
 	// Malformed nonce
-	valid, stale = mgr.Validate("malformed_nonce")
-	assert.False(t, valid)
-	assert.False(t, stale)
+	assert.Equal(t, AuthStatusFailed, mgr.Validate("malformed_nonce"))
 
 	// Expired nonce
 	expiredMgr := NewNonceManager(-1 * time.Second)
 	expiredNonce := expiredMgr.Generate()
-	valid, stale = expiredMgr.Validate(expiredNonce)
-	assert.False(t, valid)
-	assert.True(t, stale)
+	assert.Equal(t, AuthStatusStale, expiredMgr.Validate(expiredNonce))
 }
 
 func TestParseDigestAuthorization(t *testing.T) {
-	header := `Digest username="syno", realm="Steinel ONVIF Bridge", nonce="6aa3b864-97603f418ce972c3", uri="/onvif/device_service", response="6629fae49393a05397450978507c4ef1", qop=auth, nc=00000001, cnonce="0a4f113b", algorithm=MD5`
+	header := `Digest username="syno", realm="Steinel ONVIF Bridge", nonce="6aa3b864-12345678-97603f418ce972c3", uri="/onvif/device_service", response="6629fae49393a05397450978507c4ef1", qop=auth, nc=00000001, cnonce="0a4f113b", algorithm=MD5`
 	params := ParseDigestAuthorization(header)
 	require.NotNil(t, params)
 
 	assert.Equal(t, "syno", params["username"])
 	assert.Equal(t, "Steinel ONVIF Bridge", params["realm"])
-	assert.Equal(t, "6aa3b864-97603f418ce972c3", params["nonce"])
+	assert.Equal(t, "6aa3b864-12345678-97603f418ce972c3", params["nonce"])
 	assert.Equal(t, "/onvif/device_service", params["uri"])
 	assert.Equal(t, "6629fae49393a05397450978507c4ef1", params["response"])
 	assert.Equal(t, "auth", params["qop"])
@@ -208,30 +200,23 @@ func TestValidateDigestAuth_QopAuth(t *testing.T) {
 		user, realm, nonce, uri, validResp, qop, nc, cnonce)
 
 	// 1. Successful validation
-	valid, stale := ValidateDigestAuth(method, uri, validHeader, user, pass, realm, mgr)
-	assert.True(t, valid)
-	assert.False(t, stale)
+	assert.Equal(t, AuthStatusSuccess, ValidateDigestAuth(method, uri, validHeader, user, pass, realm, mgr))
 
 	// 2. Full URL in URI parameter (Synology / client sends absolute URI)
 	fullURIHeader := fmt.Sprintf(`Digest username="%s", realm="%s", nonce="%s", uri="http://192.168.1.50:8000%s", response="%s", qop=%s, nc=%s, cnonce="%s"`,
 		user, realm, nonce, uri, md5Hex(fmt.Sprintf("%s:%s:%s:%s:%s:%s", ha1, nonce, nc, cnonce, qop, md5Hex(fmt.Sprintf("%s:http://192.168.1.50:8000%s", method, uri)))), qop, nc, cnonce)
-	valid, _ = ValidateDigestAuth(method, uri, fullURIHeader, user, pass, realm, mgr)
-	assert.True(t, valid)
+	assert.Equal(t, AuthStatusSuccess, ValidateDigestAuth(method, uri, fullURIHeader, user, pass, realm, mgr))
 
 	// 3. Wrong password
 	wrongPassResp := md5Hex(fmt.Sprintf("%s:%s:%s:%s:%s:%s", md5Hex("syno:Steinel ONVIF Bridge:wrongpass"), nonce, nc, cnonce, qop, ha2))
 	wrongPassHeader := fmt.Sprintf(`Digest username="%s", realm="%s", nonce="%s", uri="%s", response="%s", qop=%s, nc=%s, cnonce="%s"`,
 		user, realm, nonce, uri, wrongPassResp, qop, nc, cnonce)
-	valid, stale = ValidateDigestAuth(method, uri, wrongPassHeader, user, pass, realm, mgr)
-	assert.False(t, valid)
-	assert.False(t, stale)
+	assert.Equal(t, AuthStatusFailed, ValidateDigestAuth(method, uri, wrongPassHeader, user, pass, realm, mgr))
 
 	// 4. Wrong username
 	wrongUserHeader := fmt.Sprintf(`Digest username="otheruser", realm="%s", nonce="%s", uri="%s", response="%s", qop=%s, nc=%s, cnonce="%s"`,
 		realm, nonce, uri, validResp, qop, nc, cnonce)
-	valid, stale = ValidateDigestAuth(method, uri, wrongUserHeader, user, pass, realm, mgr)
-	assert.False(t, valid)
-	assert.False(t, stale)
+	assert.Equal(t, AuthStatusFailed, ValidateDigestAuth(method, uri, wrongUserHeader, user, pass, realm, mgr))
 
 	// 5. Stale nonce
 	expiredMgr := NewNonceManager(-1 * time.Second)
@@ -239,9 +224,14 @@ func TestValidateDigestAuth_QopAuth(t *testing.T) {
 	staleResp := md5Hex(fmt.Sprintf("%s:%s:%s:%s:%s:%s", ha1, expiredNonce, nc, cnonce, qop, ha2))
 	staleHeader := fmt.Sprintf(`Digest username="%s", realm="%s", nonce="%s", uri="%s", response="%s", qop=%s, nc=%s, cnonce="%s"`,
 		user, realm, expiredNonce, uri, staleResp, qop, nc, cnonce)
-	valid, stale = ValidateDigestAuth(method, uri, staleHeader, user, pass, realm, expiredMgr)
-	assert.False(t, valid)
-	assert.True(t, stale)
+	assert.Equal(t, AuthStatusStale, ValidateDigestAuth(method, uri, staleHeader, user, pass, realm, expiredMgr))
+
+	// 6. Substring evasion attack prevention
+	evilURI := "/onvif/evil_device_service"
+	evilResp := md5Hex(fmt.Sprintf("%s:%s:%s:%s:%s:%s", ha1, nonce, nc, cnonce, qop, md5Hex(fmt.Sprintf("%s:%s", method, evilURI))))
+	evilHeader := fmt.Sprintf(`Digest username="%s", realm="%s", nonce="%s", uri="%s", response="%s", qop=%s, nc=%s, cnonce="%s"`,
+		user, realm, nonce, evilURI, evilResp, qop, nc, cnonce)
+	assert.Equal(t, AuthStatusFailed, ValidateDigestAuth(method, uri, evilHeader, user, pass, realm, mgr))
 }
 
 func TestValidateDigestAuth_LegacyNoQop(t *testing.T) {
@@ -261,16 +251,12 @@ func TestValidateDigestAuth_LegacyNoQop(t *testing.T) {
 	legacyHeader := fmt.Sprintf(`Digest username="%s", realm="%s", nonce="%s", uri="%s", response="%s"`,
 		user, realm, nonce, uri, validResp)
 
-	valid, stale := ValidateDigestAuth(method, uri, legacyHeader, user, pass, realm, mgr)
-	assert.True(t, valid)
-	assert.False(t, stale)
+	assert.Equal(t, AuthStatusSuccess, ValidateDigestAuth(method, uri, legacyHeader, user, pass, realm, mgr))
 }
 
 func TestValidateDigestAuth_FallbackMode(t *testing.T) {
 	// If expectedUser is empty, auth is disabled and any request passes
-	valid, stale := ValidateDigestAuth("POST", "/onvif/device_service", "", "", "", "", nil)
-	assert.True(t, valid)
-	assert.False(t, stale)
+	assert.Equal(t, AuthStatusSuccess, ValidateDigestAuth("POST", "/onvif/device_service", "", "", "", "", nil))
 }
 
 func TestRedactAuthHeader(t *testing.T) {

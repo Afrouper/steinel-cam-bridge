@@ -152,7 +152,8 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
   - `events.go`: Event Service (WS-BaseNotification PullPoint für Motion-Events).
   - `deviceio.go`: DeviceIO / Relay / Auxiliary Service für Licht- und Sirenensteuerung.
   - `recording.go`, `replay.go`, `search.go`: **ONVIF Profile G Services** zur standardisierten Suche und Wiedergabe von SD-Karten-Aufnahmen in NVRs.
-  - `server.go`: HTTP Server auf Port `8000` (SOAP Dispatcher mit Triple-Auth: HTTP Digest, HTTP Basic und WS-Security + HTTP Basic Auth geschützte REST-Endpoints `/api/status`, `/api/light`, `/api/sdcard/*`).
+  - `server.go`: HTTP Server auf Port `8000` (SOAP Dispatcher mit Triple-Auth via `authenticateSOAP`: HTTP Digest, HTTP Basic und WS-Security).
+  - `api.go`: HTTP REST-API Endpunkte (`/api/status`, `/api/light`, `/api/sdcard/*` Chunks & Thumbnails) mit HTTP Basic Auth Schutz für Home Assistant.
 
 - **`pkg/mqtt/`**:
   - Modularisiert in vier fokussierte Komponenten:

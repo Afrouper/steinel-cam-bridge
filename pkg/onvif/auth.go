@@ -13,10 +13,23 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
+)
+
+// AuthStatus represents the result of an authentication check.
+type AuthStatus int
+
+const (
+	// AuthStatusSuccess indicates credentials were valid and verified.
+	AuthStatusSuccess AuthStatus = iota
+	// AuthStatusFailed indicates invalid credentials, malformed request, or unknown token.
+	AuthStatusFailed
+	// AuthStatusStale indicates the nonce was authentic but has expired (RFC 2617 stale=true).
+	AuthStatusStale
 )
 
 // ONVIFAuthRealm is the HTTP Digest and Basic authentication realm for ONVIF services.
@@ -43,49 +56,58 @@ func NewNonceManager(ttl time.Duration) *NonceManager {
 	}
 }
 
-// Generate creates a cryptographically authenticated timestamp nonce (hex-encoded).
+// Generate creates a cryptographically authenticated, globally unique timestamp nonce (hex-encoded).
 func (m *NonceManager) Generate() string {
 	now := time.Now().Unix()
+	salt := make([]byte, 4)
+	if _, err := rand.Read(salt); err != nil {
+		binary.BigEndian.PutUint32(salt, uint32(time.Now().UnixNano()))
+	}
 	h := hmac.New(sha256.New, m.secret)
-	buf := make([]byte, 8)
-	binary.BigEndian.PutUint64(buf, uint64(now))
+	buf := make([]byte, 12)
+	binary.BigEndian.PutUint64(buf[:8], uint64(now))
+	copy(buf[8:], salt)
 	h.Write(buf)
 	sig := h.Sum(nil)[:8]
-	return fmt.Sprintf("%x-%x", now, sig)
+	return fmt.Sprintf("%x-%x-%x", now, salt, sig)
 }
 
 // Validate checks if the nonce was issued by this server and whether it is expired.
-// Returns valid=true if authentic and within TTL, stale=true if authentic but expired.
-func (m *NonceManager) Validate(nonce string) (valid bool, stale bool) {
+func (m *NonceManager) Validate(nonce string) AuthStatus {
 	parts := strings.Split(nonce, "-")
-	if len(parts) != 2 {
-		return false, false
+	if len(parts) != 3 {
+		return AuthStatusFailed
 	}
 	nowInt, err := strconv.ParseInt(parts[0], 16, 64)
 	if err != nil {
-		return false, false
+		return AuthStatusFailed
 	}
-	sigBytes, err := hex.DecodeString(parts[1])
+	salt, err := hex.DecodeString(parts[1])
+	if err != nil || len(salt) != 4 {
+		return AuthStatusFailed
+	}
+	sigBytes, err := hex.DecodeString(parts[2])
 	if err != nil || len(sigBytes) != 8 {
-		return false, false
+		return AuthStatusFailed
 	}
 
 	h := hmac.New(sha256.New, m.secret)
-	buf := make([]byte, 8)
-	binary.BigEndian.PutUint64(buf, uint64(nowInt))
+	buf := make([]byte, 12)
+	binary.BigEndian.PutUint64(buf[:8], uint64(nowInt))
+	copy(buf[8:], salt)
 	h.Write(buf)
 	expectedSig := h.Sum(nil)[:8]
 
 	if subtle.ConstantTimeCompare(sigBytes, expectedSig) != 1 {
-		return false, false
+		return AuthStatusFailed
 	}
 
 	age := time.Since(time.Unix(nowInt, 0))
 	if age < 0 || age > m.ttl {
-		return false, true
+		return AuthStatusStale
 	}
 
-	return true, false
+	return AuthStatusSuccess
 }
 
 // ParseDigestAuthorization parses the key-value pairs from an HTTP Authorization: Digest header.
@@ -112,8 +134,24 @@ func ParseDigestAuthorization(header string) map[string]string {
 	return params
 }
 
+// isURIMatch verifies that clientURI targets the requested path reqPath without substring ambiguities.
+func isURIMatch(clientURI, reqPath string) bool {
+	if clientURI == reqPath {
+		return true
+	}
+	if u, err := url.Parse(clientURI); err == nil && u.Path == reqPath {
+		return true
+	}
+	if strings.HasSuffix(clientURI, reqPath) {
+		idx := len(clientURI) - len(reqPath)
+		if idx == 0 || clientURI[idx-1] == '/' || clientURI[idx-1] == ':' {
+			return true
+		}
+	}
+	return false
+}
+
 // ValidateDigestAuth validates an HTTP Digest Authorization header against expected credentials.
-// Returns valid=true if authentication succeeded, stale=true if nonce was authentic but expired.
 func ValidateDigestAuth(
 	method string,
 	reqURI string,
@@ -122,52 +160,49 @@ func ValidateDigestAuth(
 	expectedPass string,
 	expectedRealm string,
 	nonceMgr *NonceManager,
-) (valid bool, stale bool) {
+) AuthStatus {
 	if expectedUser == "" {
-		return true, false
+		return AuthStatusSuccess
 	}
 
 	params := ParseDigestAuthorization(authHeader)
 	if params == nil {
-		return false, false
+		return AuthStatusFailed
 	}
 
 	// 1. Verify username
 	username := params["username"]
 	if subtle.ConstantTimeCompare([]byte(username), []byte(expectedUser)) != 1 {
-		return false, false
+		return AuthStatusFailed
 	}
 
 	// 2. Verify realm (if present in params, must match expectedRealm)
 	if realm, ok := params["realm"]; ok && realm != "" {
 		if subtle.ConstantTimeCompare([]byte(realm), []byte(expectedRealm)) != 1 {
-			return false, false
+			return AuthStatusFailed
 		}
 	}
 
 	// 3. Verify algorithm (empty, MD5 or md5 supported)
 	if alg, ok := params["algorithm"]; ok && alg != "" {
 		if !strings.EqualFold(alg, "MD5") {
-			return false, false
+			return AuthStatusFailed
 		}
 	}
 
 	// 4. Verify nonce
 	nonce := params["nonce"]
 	if nonceMgr != nil {
-		nValid, nStale := nonceMgr.Validate(nonce)
-		if !nValid {
-			return false, nStale
+		status := nonceMgr.Validate(nonce)
+		if status != AuthStatusSuccess {
+			return status
 		}
 	}
 
 	// 5. Verify URI
 	clientURI := params["uri"]
-	if clientURI == "" {
-		return false, false
-	}
-	if clientURI != reqURI && !strings.HasSuffix(clientURI, reqURI) && !strings.Contains(clientURI, reqURI) {
-		return false, false
+	if clientURI == "" || !isURIMatch(clientURI, reqURI) {
+		return AuthStatusFailed
 	}
 
 	// 6. Compute HA1 = MD5(username:realm:password)
@@ -191,15 +226,15 @@ func ValidateDigestAuth(
 	case "":
 		expectedResp = md5Hex(fmt.Sprintf("%s:%s:%s", ha1, nonce, ha2))
 	default:
-		return false, false
+		return AuthStatusFailed
 	}
 
 	clientResp := strings.ToLower(params["response"])
 	if subtle.ConstantTimeCompare([]byte(clientResp), []byte(expectedResp)) != 1 {
-		return false, false
+		return AuthStatusFailed
 	}
 
-	return true, false
+	return AuthStatusSuccess
 }
 
 func md5Hex(s string) string {

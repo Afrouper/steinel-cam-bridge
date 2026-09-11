@@ -1,15 +1,11 @@
 package onvif
 
 import (
-	"bytes"
 	"context"
 	"crypto/subtle"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -140,19 +136,63 @@ func (s *Server) Close() {
 	}
 }
 
-func (s *Server) withBasicAuth(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if s.authUser != "" {
-			user, pass, ok := r.BasicAuth()
-			if !ok || subtle.ConstantTimeCompare([]byte(user), []byte(s.authUser)) != 1 ||
-				subtle.ConstantTimeCompare([]byte(pass), []byte(s.authPass)) != 1 {
-				w.Header().Set("WWW-Authenticate", `Basic realm="Steinel CAM Bridge"`)
-				http.Error(w, "Unauthorized", http.StatusUnauthorized)
-				return
-			}
-		}
-		next(w, r)
+// authenticateSOAP validates incoming SOAP requests against configured credentials.
+// Returns true if authenticated or exempt, false if authentication failed (401 response sent).
+func (s *Server) authenticateSOAP(w http.ResponseWriter, r *http.Request, action, reqStr string) bool {
+	if s.authUser == "" {
+		return true
 	}
+
+	// Exempt discovery and time sync from authentication (mandated by ONVIF Core Spec)
+	if strings.Contains(action, "GetSystemDateAndTime") ||
+		strings.Contains(reqStr, "GetSystemDateAndTime") ||
+		strings.Contains(action, "GetCapabilities") ||
+		strings.Contains(reqStr, "GetCapabilities") {
+		return true
+	}
+
+	authHeader := r.Header.Get("Authorization")
+	var isStale bool
+
+	// 1. Try HTTP Digest Auth Header (RFC 2617, mandated by ONVIF Core Spec 5.1.2)
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(authHeader)), "digest ") {
+		status := ValidateDigestAuth(r.Method, r.URL.Path, authHeader, s.authUser, s.authPass, ONVIFAuthRealm, s.nonceManager)
+		if status == AuthStatusSuccess {
+			return true
+		}
+		if status == AuthStatusStale {
+			isStale = true
+		}
+	}
+
+	// 2. Try HTTP Basic Auth Header (used by simple HTTP clients)
+	if user, pass, ok := r.BasicAuth(); ok {
+		if subtle.ConstantTimeCompare([]byte(user), []byte(s.authUser)) == 1 &&
+			subtle.ConstantTimeCompare([]byte(pass), []byte(s.authPass)) == 1 {
+			return true
+		}
+	}
+
+	// 3. Try WS-Security UsernameToken (used by ODM & ONVIF SOAP clients)
+	tok, _ := ExtractUsernameToken(reqStr)
+	if ValidateWSSecurity(tok, s.authUser, s.authPass) {
+		return true
+	}
+
+	logger.Warn("ONVIF", "🔒 Authentication failure from %s for action '%s' on %s (Auth: %s)",
+		r.RemoteAddr, action, r.URL.Path, RedactAuthHeader(authHeader))
+
+	nonce := s.nonceManager.Generate()
+	staleAttr := ""
+	if isStale {
+		staleAttr = `, stale=true`
+	}
+	w.Header().Add("WWW-Authenticate", fmt.Sprintf(`Digest realm="%s", nonce="%s", qop="auth", algorithm=MD5%s`, ONVIFAuthRealm, nonce, staleAttr))
+	w.Header().Add("WWW-Authenticate", fmt.Sprintf(`Basic realm="%s"`, ONVIFAuthRealm))
+	w.Header().Set("Content-Type", "application/soap+xml; charset=utf-8")
+	w.WriteHeader(http.StatusUnauthorized)
+	_, _ = w.Write([]byte(FormatSOAPNotAuthorizedFault()))
+	return false
 }
 
 func (s *Server) handleSOAP(w http.ResponseWriter, r *http.Request) {
@@ -165,64 +205,12 @@ func (s *Server) handleSOAP(w http.ResponseWriter, r *http.Request) {
 	action := r.Header.Get("SOAPAction")
 	subID := r.URL.Query().Get("sub")
 	host := r.Host
-
 	path := r.URL.Path
+
 	logger.Trace("ONVIF", "SOAP request path=%s action=%s", path, action)
 
-	// Check authentication when auth is enabled
-	if s.authUser != "" {
-		isExempt := strings.Contains(action, "GetSystemDateAndTime") ||
-			strings.Contains(reqStr, "GetSystemDateAndTime") ||
-			strings.Contains(action, "GetCapabilities") ||
-			strings.Contains(reqStr, "GetCapabilities")
-
-		if !isExempt {
-			authenticated := false
-			var isStale bool
-			authHeader := r.Header.Get("Authorization")
-
-			// 1. Try HTTP Digest Auth Header (RFC 2617, mandated by ONVIF Core Spec 5.1.2, used by Synology)
-			if strings.HasPrefix(strings.ToLower(strings.TrimSpace(authHeader)), "digest ") {
-				var valid bool
-				valid, isStale = ValidateDigestAuth(r.Method, r.URL.Path, authHeader, s.authUser, s.authPass, ONVIFAuthRealm, s.nonceManager)
-				if valid {
-					authenticated = true
-				}
-			}
-
-			// 2. Try HTTP Basic Auth Header (used by simple HTTP clients)
-			if !authenticated {
-				if user, pass, ok := r.BasicAuth(); ok {
-					if subtle.ConstantTimeCompare([]byte(user), []byte(s.authUser)) == 1 &&
-						subtle.ConstantTimeCompare([]byte(pass), []byte(s.authPass)) == 1 {
-						authenticated = true
-					}
-				}
-			}
-
-			// 3. Try WS-Security UsernameToken (used by ODM & ONVIF SOAP clients)
-			if !authenticated {
-				tok, _ := ExtractUsernameToken(reqStr)
-				if ValidateWSSecurity(tok, s.authUser, s.authPass) {
-					authenticated = true
-				}
-			}
-
-			if !authenticated {
-				logger.Warn("ONVIF", "🔒 Authentication failure from %s for action '%s' on %s (Auth: %s)", r.RemoteAddr, action, path, RedactAuthHeader(authHeader))
-				nonce := s.nonceManager.Generate()
-				staleAttr := ""
-				if isStale {
-					staleAttr = `, stale=true`
-				}
-				w.Header().Add("WWW-Authenticate", fmt.Sprintf(`Digest realm="%s", nonce="%s", qop="auth", algorithm=MD5%s`, ONVIFAuthRealm, nonce, staleAttr))
-				w.Header().Add("WWW-Authenticate", fmt.Sprintf(`Basic realm="%s"`, ONVIFAuthRealm))
-				w.Header().Set("Content-Type", "application/soap+xml; charset=utf-8")
-				w.WriteHeader(http.StatusUnauthorized)
-				_, _ = w.Write([]byte(FormatSOAPNotAuthorizedFault()))
-				return
-			}
-		}
+	if !s.authenticateSOAP(w, r, action, reqStr) {
+		return
 	}
 
 	var innerResp string
@@ -273,168 +261,6 @@ func (s *Server) handleSOAP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/soap+xml; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(wrapSOAPResponse(innerResp)))
-}
-
-func (s *Server) handleAPIStatus(w http.ResponseWriter, r *http.Request) {
-	st := s.eventBus.GetStatus()
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(st)
-}
-
-func (s *Server) handleAPILight(w http.ResponseWriter, r *http.Request) {
-	mode := r.URL.Query().Get("mode")
-	if mode == "" {
-		mode = "auto"
-	}
-	if s.deviceIO != nil && s.deviceIO.setLampFunc != nil {
-		if err := s.deviceIO.setLampFunc(mode); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-	}
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(`{"status":"ok"}`))
-}
-
-func (s *Server) handleAPISDCardEvents(w http.ResponseWriter, r *http.Request) {
-	if s.recordingProvider == nil {
-		http.Error(w, `{"error":"sdcard recording feature not configured"}`, http.StatusNotImplemented)
-		return
-	}
-	provider := s.recordingProvider()
-	if provider == nil {
-		http.Error(w, `{"error":"camera offline"}`, http.StatusServiceUnavailable)
-		return
-	}
-
-	q := r.URL.Query()
-	var startTime, endTime time.Time
-	if startStr := q.Get("start"); startStr != "" {
-		if ts, err := strconv.ParseInt(startStr, 10, 64); err == nil {
-			startTime = time.Unix(ts, 0).UTC()
-		} else if t, err := time.Parse(time.RFC3339, startStr); err == nil {
-			startTime = t.UTC()
-		}
-	}
-	if endStr := q.Get("end"); endStr != "" {
-		if ts, err := strconv.ParseInt(endStr, 10, 64); err == nil {
-			endTime = time.Unix(ts, 0).UTC()
-		} else if t, err := time.Parse(time.RFC3339, endStr); err == nil {
-			endTime = t.UTC()
-		}
-	}
-
-	page, _ := strconv.Atoi(q.Get("page"))
-	limit, _ := strconv.Atoi(q.Get("limit"))
-	eventType := q.Get("type")
-
-	resp, err := provider.ListRecordings(r.Context(), startTime, endTime, page, limit, eventType)
-	if err != nil {
-		if errors.Is(err, storage.ErrStorageBusy) {
-			http.Error(w, `{"error":"sdcard busy"}`, http.StatusTooManyRequests)
-			return
-		}
-		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	if resp == nil || len(resp.List) == 0 {
-		_, _ = w.Write([]byte(`[]`))
-		return
-	}
-	_ = json.NewEncoder(w).Encode(resp.List)
-}
-
-func (s *Server) handleAPISDCardItem(w http.ResponseWriter, r *http.Request) {
-	if s.recordingProvider == nil {
-		http.Error(w, `{"error":"sdcard recording feature not configured"}`, http.StatusNotImplemented)
-		return
-	}
-	provider := s.recordingProvider()
-	if provider == nil {
-		http.Error(w, `{"error":"camera offline"}`, http.StatusServiceUnavailable)
-		return
-	}
-
-	subPath := strings.TrimPrefix(r.URL.Path, "/api/sdcard/events/")
-	parts := strings.Split(strings.Trim(subPath, "/"), "/")
-	if len(parts) == 0 || parts[0] == "" {
-		http.Error(w, "Invalid path format. Expected /api/sdcard/events/<id> or /api/sdcard/events/<id>/<action>", http.StatusBadRequest)
-		return
-	}
-
-	id := parts[0]
-
-	// 1. Single recording metadata query: GET /api/sdcard/events/{id}
-	if len(parts) == 1 {
-		rec, err := provider.GetRecording(r.Context(), id)
-		if err != nil {
-			if errors.Is(err, storage.ErrStorageNotFound) {
-				http.NotFound(w, r)
-				return
-			}
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(rec)
-		return
-	}
-
-	// 2. Action query: GET /api/sdcard/events/{id}/thumbnail.jpg or video.mp4
-	action := parts[1]
-	switch action {
-	case "snapshot.jpg", "thumbnail.jpg", "snapshot":
-		var buf bytes.Buffer
-		if err := provider.StreamThumbnail(r.Context(), id, &buf); err != nil {
-			if errors.Is(err, storage.ErrStorageBusy) {
-				http.Error(w, "SD card busy", http.StatusTooManyRequests)
-				return
-			}
-			if errors.Is(err, storage.ErrFeatureDisabled) {
-				http.Error(w, "Thumbnail not supported on this model", http.StatusNotImplemented)
-				return
-			}
-			logger.Warn("SDCard", "Snapshot streaming error: %v", err)
-			http.Error(w, fmt.Sprintf("Failed to load snapshot: %v", err), http.StatusInternalServerError)
-			return
-		}
-		if buf.Len() == 0 {
-			http.Error(w, "Snapshot is empty", http.StatusNotFound)
-			return
-		}
-		w.Header().Set("Content-Type", "image/jpeg")
-		w.Header().Set("Cache-Control", "public, max-age=86400")
-		w.Header().Set("Content-Length", strconv.Itoa(buf.Len()))
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(buf.Bytes())
-
-	case "video.mp4", "download.mp4", "video", "stream.mp4":
-		err := provider.StreamVideo(r.Context(), id, w, func(name string, size int64) {
-			if name == "" {
-				name = fmt.Sprintf("event_%s.mp4", id)
-			}
-			w.Header().Set("Content-Type", "video/mp4")
-			w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", name))
-			if size > 0 {
-				w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
-			}
-			w.WriteHeader(http.StatusOK)
-		})
-		if err != nil {
-			if errors.Is(err, storage.ErrStorageBusy) {
-				http.Error(w, "SD card busy", http.StatusTooManyRequests)
-				return
-			}
-			if !errors.Is(err, storage.ErrTransferAborted) {
-				logger.Warn("SDCard", "Video streaming error: %v", err)
-			}
-		}
-
-	default:
-		http.NotFound(w, r)
-	}
 }
 
 func wrapSOAPResponse(innerXML string) string {
