@@ -14,7 +14,7 @@ import (
 
 func TestServerStartClose(t *testing.T) {
 	// 1. Test AAC Server
-	srvAAC, err := NewServer(8556, "test", "aac")
+	srvAAC, err := NewServer(8556, "test", "aac", "", "")
 	if err != nil {
 		t.Fatalf("Failed to create AAC server: %v", err)
 	}
@@ -26,7 +26,7 @@ func TestServerStartClose(t *testing.T) {
 	srvAAC.Close()
 
 	// 2. Test PCMU Server
-	srvPCMU, err := NewServer(8558, "test", "pcmu")
+	srvPCMU, err := NewServer(8558, "test", "pcmu", "", "")
 	if err != nil {
 		t.Fatalf("Failed to create PCMU server: %v", err)
 	}
@@ -38,7 +38,7 @@ func TestServerStartClose(t *testing.T) {
 }
 
 func TestCheckPath(t *testing.T) {
-	srv, err := NewServer(8559, "steinel", "aac")
+	srv, err := NewServer(8559, "steinel", "aac", "", "")
 	assert.NoError(t, err)
 	defer srv.Close()
 
@@ -62,7 +62,7 @@ func TestCheckPath(t *testing.T) {
 }
 
 func TestServerBackchannelPacketHandling(t *testing.T) {
-	srv, err := NewServer(8560, "test", "pcmu")
+	srv, err := NewServer(8560, "test", "pcmu", "", "")
 	assert.NoError(t, err)
 	defer srv.Close()
 
@@ -91,7 +91,7 @@ func TestServerBackchannelPacketHandling(t *testing.T) {
 }
 
 func TestClientConnectSetupPlay(t *testing.T) {
-	srv, err := NewServer(8562, "test", "aac")
+	srv, err := NewServer(8562, "test", "aac", "", "")
 	assert.NoError(t, err)
 	defer srv.Close()
 
@@ -123,7 +123,7 @@ func TestClientConnectSetupPlay(t *testing.T) {
 }
 
 func TestClientTCPInterleavedBackchannel(t *testing.T) {
-	srv, err := NewServer(8564, "test", "aac")
+	srv, err := NewServer(8564, "test", "aac", "", "")
 	assert.NoError(t, err)
 	defer srv.Close()
 
@@ -198,7 +198,7 @@ func TestClientTCPInterleavedBackchannel(t *testing.T) {
 }
 
 func BenchmarkInterceptingConnRead(b *testing.B) {
-	srv, _ := NewServer(8566, "bench", "aac")
+	srv, _ := NewServer(8566, "bench", "aac", "", "")
 	defer srv.Close()
 
 	clientConn, serverConn := net.Pipe()
@@ -223,4 +223,56 @@ func BenchmarkInterceptingConnRead(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		_, _ = iconn.Read(p)
 	}
+}
+
+func TestServerAuthentication(t *testing.T) {
+	srv, err := NewServer(8570, "authstream", "aac", "myuser", "mypass")
+	assert.NoError(t, err)
+	defer srv.Close()
+
+	err = srv.Start()
+	assert.NoError(t, err)
+
+	// 1. Unauthenticated client request should fail
+	cNoAuth := gortsplib.Client{}
+	uNoAuth, err := base.ParseURL("rtsp://127.0.0.1:8570/authstream")
+	assert.NoError(t, err)
+
+	err = cNoAuth.Start(uNoAuth.Scheme, uNoAuth.Host)
+	assert.NoError(t, err)
+	defer cNoAuth.Close()
+
+	_, _, err = cNoAuth.Describe(uNoAuth)
+	assert.Error(t, err, "Unauthenticated request must fail")
+
+	// 2. Client with wrong credentials should fail
+	cWrong := gortsplib.Client{}
+	uWrong, err := base.ParseURL("rtsp://myuser:wrongpass@127.0.0.1:8570/authstream")
+	assert.NoError(t, err)
+
+	err = cWrong.Start(uWrong.Scheme, uWrong.Host)
+	assert.NoError(t, err)
+	defer cWrong.Close()
+
+	_, _, err = cWrong.Describe(uWrong)
+	assert.Error(t, err, "Request with invalid credentials must fail")
+
+	// 3. Client with valid credentials should succeed
+	cValid := gortsplib.Client{}
+	uValid, err := base.ParseURL("rtsp://myuser:mypass@127.0.0.1:8570/authstream")
+	assert.NoError(t, err)
+
+	err = cValid.Start(uValid.Scheme, uValid.Host)
+	assert.NoError(t, err)
+	defer cValid.Close()
+
+	desc, _, err := cValid.Describe(uValid)
+	assert.NoError(t, err, "Request with valid credentials must succeed")
+	assert.NotNil(t, desc)
+
+	err = cValid.SetupAll(desc.BaseURL, desc.Medias)
+	assert.NoError(t, err)
+
+	_, err = cValid.Play(nil)
+	assert.NoError(t, err)
 }

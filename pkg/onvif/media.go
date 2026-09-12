@@ -45,6 +45,18 @@ func (h *MediaHandler) Handle(action string, reqXML string, host string) (string
 	if strings.Contains(action, "GetStreamUri") || strings.Contains(reqXML, "GetStreamUri") {
 		return h.getStreamUri(host), nil
 	}
+	if strings.Contains(action, "GetVideoSourceConfigurations") || strings.Contains(reqXML, "GetVideoSourceConfigurations") ||
+		strings.Contains(action, "GetVideoSourceConfiguration") || strings.Contains(reqXML, "GetVideoSourceConfiguration") {
+		return h.getVideoSourceConfigurations(), nil
+	}
+	if strings.Contains(action, "GetAudioSourceConfigurations") || strings.Contains(reqXML, "GetAudioSourceConfigurations") ||
+		strings.Contains(action, "GetAudioSourceConfiguration") || strings.Contains(reqXML, "GetAudioSourceConfiguration") {
+		return h.getAudioSourceConfigurations(), nil
+	}
+	if strings.Contains(action, "GetAudioOutputConfigurations") || strings.Contains(reqXML, "GetAudioOutputConfigurations") ||
+		strings.Contains(action, "GetAudioOutputConfiguration") || strings.Contains(reqXML, "GetAudioOutputConfiguration") {
+		return h.getAudioOutputConfigurations(), nil
+	}
 	if strings.Contains(action, "GetVideoEncoderConfigurationOptions") || strings.Contains(reqXML, "GetVideoEncoderConfigurationOptions") {
 		return h.getVideoEncoderConfigurationOptions(), nil
 	}
@@ -275,4 +287,37 @@ func (h *MediaHandler) getVideoSources() string {
     <tt:Resolution><tt:Width>1920</tt:Width><tt:Height>1080</tt:Height></tt:Resolution>
   </trt:VideoSources>
 </trt:GetVideoSourcesResponse>`, NS_TRT, NS_TT)
+}
+
+func (h *MediaHandler) getVideoSourceConfigurations() string {
+	return fmt.Sprintf(`<trt:GetVideoSourceConfigurationsResponse xmlns:trt="%s" xmlns:tt="%s">
+  <trt:Configurations token="VideoSourceConfig_1">
+    <tt:Name>VideoSourceConfig_1</tt:Name>
+    <tt:UseCount>2</tt:UseCount>
+    <tt:SourceToken>VideoSource_1</tt:SourceToken>
+    <tt:Bounds x="0" y="0" width="1920" height="1080"/>
+  </trt:Configurations>
+</trt:GetVideoSourceConfigurationsResponse>`, NS_TRT, NS_TT)
+}
+
+func (h *MediaHandler) getAudioSourceConfigurations() string {
+	return fmt.Sprintf(`<trt:GetAudioSourceConfigurationsResponse xmlns:trt="%s" xmlns:tt="%s">
+  <trt:Configurations token="AudioSourceConfig_1">
+    <tt:Name>AudioSourceConfig_1</tt:Name>
+    <tt:UseCount>2</tt:UseCount>
+    <tt:SourceToken>AudioSource_1</tt:SourceToken>
+  </trt:Configurations>
+</trt:GetAudioSourceConfigurationsResponse>`, NS_TRT, NS_TT)
+}
+
+func (h *MediaHandler) getAudioOutputConfigurations() string {
+	return fmt.Sprintf(`<trt:GetAudioOutputConfigurationsResponse xmlns:trt="%s" xmlns:tt="%s">
+  <trt:Configurations token="AudioOutputConfig_1">
+    <tt:Name>AudioOutputConfig_1</tt:Name>
+    <tt:UseCount>1</tt:UseCount>
+    <tt:OutputToken>AudioOutput_1</tt:OutputToken>
+    <tt:SendPrimacy>www.onvif.org/ver20/HalfDuplex/Server</tt:SendPrimacy>
+    <tt:OutputLevel>80</tt:OutputLevel>
+  </trt:Configurations>
+</trt:GetAudioOutputConfigurationsResponse>`, NS_TRT, NS_TT)
 }
