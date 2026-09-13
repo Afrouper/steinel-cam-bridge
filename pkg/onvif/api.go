@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -124,7 +125,12 @@ func (s *Server) handleAPISDCardItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id := parts[0]
+	rawID := parts[0]
+	id := filepath.Base(rawID)
+	if id == "" || id == "." || id == "/" || id != rawID || strings.ContainsAny(rawID, `/\`) || strings.Contains(rawID, "..") {
+		http.Error(w, "Invalid recording ID", http.StatusBadRequest)
+		return
+	}
 
 	// 1. Single recording metadata query: GET /api/sdcard/events/{id}
 	if len(parts) == 1 {
@@ -176,9 +182,10 @@ func (s *Server) handleAPISDCardItem(w http.ResponseWriter, r *http.Request) {
 			GetCachedVideoPath(id string) (string, bool)
 		}); ok {
 			if path, exists := fileProvider.GetCachedVideoPath(id); exists {
+				cleanPath := filepath.Clean(path)
 				w.Header().Set("Content-Type", "video/mp4")
 				w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", fmt.Sprintf("event_%s.mp4", id)))
-				http.ServeFile(w, r, path)
+				http.ServeFile(w, r, cleanPath)
 				return
 			}
 		}

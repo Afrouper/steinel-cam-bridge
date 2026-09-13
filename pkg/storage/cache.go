@@ -257,7 +257,16 @@ func (c *RecordingCache) GetVideoPath(id string) (string, bool) {
 	if _, ok := c.items[id]; !ok {
 		return "", false
 	}
-	path := filepath.Join(c.dir, id+".mp4")
+	baseID := filepath.Base(id)
+	if baseID != id || strings.ContainsAny(id, `/\`) || strings.Contains(id, "..") {
+		return "", false
+	}
+	cleanDir := filepath.Clean(c.dir)
+	path := filepath.Clean(filepath.Join(cleanDir, baseID+".mp4"))
+	rel, err := filepath.Rel(cleanDir, path)
+	if err != nil || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+		return "", false
+	}
 	if fi, err := os.Stat(path); err == nil && fi.Size() > 0 {
 		return path, true
 	}
@@ -271,7 +280,16 @@ func (c *RecordingCache) GetThumbnailPath(id string) (string, bool) {
 	if item, ok := c.items[id]; !ok || item.ThumbnailURL == "" {
 		return "", false
 	}
-	path := filepath.Join(c.dir, id+".jpg")
+	baseID := filepath.Base(id)
+	if baseID != id || strings.ContainsAny(id, `/\`) || strings.Contains(id, "..") {
+		return "", false
+	}
+	cleanDir := filepath.Clean(c.dir)
+	path := filepath.Clean(filepath.Join(cleanDir, baseID+".jpg"))
+	rel, err := filepath.Rel(cleanDir, path)
+	if err != nil || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+		return "", false
+	}
 	if fi, err := os.Stat(path); err == nil && fi.Size() > 0 {
 		return path, true
 	}
