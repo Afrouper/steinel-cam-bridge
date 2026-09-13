@@ -72,6 +72,9 @@ COPY --from=builder /app/launcher /app/launcher
 COPY --from=builder /app/steinel-bridge /app/steinel-bridge
 COPY --from=builder /data /data
 
+# Copy static multi-arch FFmpeg binary for video thumbnail snapshot extraction
+COPY --from=mwader/static-ffmpeg:7.1 /ffmpeg /usr/local/bin/ffmpeg
+
 # OCI Image Labels
 LABEL org.opencontainers.image.title="steinel-cam-bridge" \
       org.opencontainers.image.description="Standalone ONVIF, 2-Way Audio & Home Assistant Bridge for Steinel L 625 CAM SC" \

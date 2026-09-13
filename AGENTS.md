@@ -70,10 +70,10 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
 
 - **`pkg/config/`** *(Neu in Milestone 2)*:
   - `config.go`: Zentrales, validiertes Konfigurationsobjekt (`Config`) mit strenger Präzedenz:
-    1. CLI-Flags (`-ip`, `-type`, `-user`, `-pass`, `-bridge-user`, `-bridge-pass`, `-qr`, `-key`, `-port`, `-path`, `-res`, `-audio-codec`, `-onvif`, `-reset-pairing`, `-mqtt-broker`, `-sync-interval`, `-log-level`, etc.)
-    2. Umgebungsvariablen (`CAMERA_IP`, `CAMERA_TYPE`, `CAMERA_USER`, `CAMERA_PASSWORD`, `BRIDGE_USER`, `BRIDGE_PASS`, `QR_CODE`, `KEY_PATH`, `RESOLUTION`, `AUDIO_CODEC`, `RTSP_PORT`, `ONVIF_PORT`, `MQTT_BROKER`, `SDCARD_SYNC_INTERVAL`, `USE_CGO_NABTO`, `LOG_LEVEL`, `LOG_FORMAT`, etc.)
+    1. CLI-Flags (`-ip`, `-type`, `-user`, `-pass`, `-bridge-user`, `-bridge-pass`, `-cache-recordings`, `-cache-dir`, `-qr`, `-key`, `-port`, `-path`, `-res`, `-audio-codec`, `-onvif`, `-reset-pairing`, `-mqtt-broker`, `-sync-interval`, `-log-level`, etc.)
+    2. Umgebungsvariablen (`CAMERA_IP`, `CAMERA_TYPE`, `CAMERA_USER`, `CAMERA_PASSWORD`, `BRIDGE_USER`, `BRIDGE_PASS`, `CACHE_RECORDINGS`, `CACHE_DIR`, `QR_CODE`, `KEY_PATH`, `RESOLUTION`, `AUDIO_CODEC`, `RTSP_PORT`, `ONVIF_PORT`, `MQTT_BROKER`, `SDCARD_SYNC_INTERVAL`, `USE_CGO_NABTO`, `LOG_LEVEL`, `LOG_FORMAT`, etc.)
     3. Home Assistant Add-on Konfigurationsdatei (`/data/options.json` & Home Assistant Supervisor MQTT Auto-Discovery API via `X-Supervisor-Token`)
-    4. Sichere Standardwerte.
+    4. Sichere Standardwerte (z. B. `cache_recordings: 10` für die letzten 10 Aufnahmen im lokalen Speicher).
   - `probe.go`: Führt bei `camera_type: "auto"` einen schnellen Non-Blocking TCP-Probe auf Port `34567` durch, um automatisch zwischen `L 620 CAM` (Xiongmai Sofia) und `L 625 CAM SC` (Nabto Edge) zu unterscheiden.
 
 - **`pkg/supervisor/`** *(Neu in Milestone 2)*:
@@ -132,8 +132,11 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
   - `talk.go`: Rückkanal-Audiokommunikation (G.711u / PCMU) über das Xiongmai Talk-Protokoll.
 
 - **`pkg/storage/`**:
-  - `storage.go`: Definiert das gemeinsame Interface `RecordingProvider` und kanonische Speicherfehler (`ErrStorageBusy`, `ErrStorageTimeout`, `ErrFeatureDisabled`).
-  - `syncer.go`: Hintergrund-Syncer (`RecordingSyncer`), der neue SD-Karten-Aufnahmen periodisch pollt, bei Bewegung sofort abgleicht und neue Aufnahme-Events an MQTT / Home Assistant publiziert.
+  - `storage.go`: Definiert das gemeinsame Interface `RecordingProvider`, Metadatenstrukturen (`RecordingItem`, `RecordingListResponse`) und kanonische Speicherfehler (`ErrStorageBusy`, `ErrStorageTimeout`, `ErrFeatureDisabled`).
+  - `extractor.go`: Modulare Abstraktion `FrameExtractor` zur Video-Einzelbild-Extraktion mit `FFmpegExtractor` (extrahiert 5-Sekunden-Keyframe als 640px JPEG mit Fallback-Kette bei kurzen Videos; statisches Multi-Arch FFmpeg im Distroless-Container).
+  - `cache.go`: Persistenter On-Disk Speicher (`RecordingCache`) in `/data/recordings`. Speichert `<id>.mp4`, `<id>.jpg` und `<id>.json` mit atomaren Schreibvorgängen (`.tmp`), Thread-sicherer In-Memory-Indexierung und automatischem FIFO-Housekeeping (älteste Aufnahmen werden bereinigt, wenn `cache_recordings` überschritten wird).
+  - `cached_provider.go`: `CachedRecordingProvider` nach dem Go-Decorator-Pattern. Beantwortet Abfragen für REST-API und ONVIF Profile G standardmäßig direkt aus dem lokalen Cache (0 ms Latenz, keine Belastung der Kamera-CPU). Erst wenn über den Cache hinausgehende Aufnahmen angefragt werden, wird die Kamera kontaktiert.
+  - `syncer.go`: Hintergrund-Syncer (`RecordingSyncer`), der neue SD-Karten-Aufnahmen periodisch oder bei Bewegungstriggern in den Cache lädt und neue Aufnahme-Events mit vollständiger `thumbnail_url` an MQTT / Home Assistant publiziert.
 
 - **`pkg/audio/`**:
   - `g711.go`: ITU-T G.711 µ-law Decoder (8-Bit $\rightarrow$ 16-Bit Linear PCM).
@@ -153,7 +156,7 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
   - `deviceio.go`: DeviceIO / Relay / Auxiliary Service für Licht- und Sirenensteuerung.
   - `recording.go`, `replay.go`, `search.go`: **ONVIF Profile G Services** zur standardisierten Suche und Wiedergabe von SD-Karten-Aufnahmen in NVRs.
   - `server.go`: HTTP Server auf Port `8000` (SOAP Dispatcher mit Triple-Auth via `authenticateSOAP`: HTTP Digest, HTTP Basic und WS-Security).
-  - `api.go`: HTTP REST-API Endpunkte (`/api/status`, `/api/light`, `/api/sdcard/*` Chunks & Thumbnails) mit HTTP Basic Auth Schutz für Home Assistant.
+  - `api.go`: HTTP REST-API Endpunkte (`/api/status`, `/api/light`, `/api/sdcard/*` Chunks & Thumbnails) mit HTTP Basic Auth Schutz für Home Assistant; liefert gecachte Videos mit vollem HTTP 206 Range-Request-Support (`http.ServeFile`) und extrahierte 5s-Thumbnails (`/thumbnail.jpg`) direkt vom lokalen Speicher aus.
 
 - **`pkg/mqtt/`**:
   - Modularisiert in vier fokussierte Komponenten:

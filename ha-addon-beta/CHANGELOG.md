@@ -2,6 +2,22 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.3.8-beta.1
+
+### 🎞️ Lokaler Aufnahme-Cache, automatische Snapshot-Generierung & Housekeeping (Issue #30)
+- **Lokaler Aufnahme-Cache (`cache_recordings`)**:
+  - Hält standardmäßig die letzten 10 Video-Aufnahmen (`.mp4`, `.jpg`, `.json`) im schnellen lokalen Speicher vor (`/data/recordings`, ca. 80–150 MB).
+  - Anfragen an die REST-API (`/api/sdcard/events`) und ONVIF Profile G werden mit 0 ms Latenz und ohne jegliche Belastung der Kamera-CPU direkt aus dem Speicher beantwortet.
+  - Vollständig konfigurierbar (0–100, `0` deaktiviert den Cache).
+- **Automatisches FIFO-Housekeeping**:
+  - Bereinigt älteste Aufnahmen automatisch, sobald neue Aufnahmen hinzukommen oder die konfigurierte Kapazität überschritten wird.
+- **Automatische 5s-Snapshot-Generierung (`FrameExtractor`)**:
+  - Extrahiert bei neuen Aufnahmen automatisch einen 640px JPEG-Keyframe (Sekunde 5), ideal für Home Assistant Push-Benachrichtigungen und Lovelace-Vorschauen.
+  - Modulares `FrameExtractor`-Interface mit isoliertem `FFmpegExtractor` (statisches Multi-Arch FFmpeg im Distroless-Container).
+  - Stellt `thumbnail_url` in MQTT-Aufnahme-Events wieder her.
+- **Range-Request-Support für Video-Streaming**:
+  - Gecachte MP4-Videos unterstützen HTTP 206 Partial Content (`http.ServeFile`) für flüssiges Vor- und Zurückspulen in Browsern und Medienplayern.
+
 ## 1.3.7-beta.5
 
 ### 🔐 RFC 2617 HTTP Digest Authentication für ONVIF (Synology Surveillance Station)

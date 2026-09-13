@@ -39,12 +39,19 @@ type Config struct {
 	NabtoDriver        string // "cgo" (default) or "pure"
 	BridgeUser         string
 	BridgePass         string
+	CacheRecordings    int
+	CacheDir           string
 	IsBeta             bool
 	AppVersion         string
 }
 
 // NewDefaultConfig returns a Config initialized with Layer 1 (code) defaults.
 func NewDefaultConfig() *Config {
+	cacheDir := "data/recordings"
+	if fi, err := os.Stat("/data"); err == nil && fi.IsDir() {
+		cacheDir = "/data/recordings"
+	}
+
 	return &Config{
 		NabtoConfig: &nabto.Config{
 			CameraIP:   "",
@@ -68,6 +75,8 @@ func NewDefaultConfig() *Config {
 		NabtoDriver:        "cgo",
 		BridgeUser:         "",
 		BridgePass:         "",
+		CacheRecordings:    10,
+		CacheDir:           cacheDir,
 		IsBeta:             false,
 		AppVersion:         "dev",
 	}
@@ -108,6 +117,8 @@ func LoadHomeAssistantOptionsFromPath(path string, cfg *Config) {
 		BridgeUser          string `json:"bridge_user"`
 		BridgePass          string `json:"bridge_pass"`
 		BridgePassword      string `json:"bridge_password"`
+		CacheRecordings     *int   `json:"cache_recordings"`
+		CacheDir            string `json:"cache_dir"`
 	}
 
 	if err := json.Unmarshal(data, &opts); err != nil {
@@ -186,6 +197,12 @@ func LoadHomeAssistantOptionsFromPath(path string, cfg *Config) {
 		cfg.BridgePass = opts.BridgePass
 	} else if opts.BridgePassword != "" {
 		cfg.BridgePass = opts.BridgePassword
+	}
+	if opts.CacheRecordings != nil {
+		cfg.CacheRecordings = *opts.CacheRecordings
+	}
+	if opts.CacheDir != "" {
+		cfg.CacheDir = opts.CacheDir
 	}
 }
 
@@ -325,6 +342,14 @@ func Resolve(optionsPath string, fs *flag.FlagSet) *Config {
 	} else if envVer := os.Getenv("VERSION"); envVer != "" {
 		cfg.AppVersion = envVer
 	}
+	if cacheRecStr := os.Getenv("CACHE_RECORDINGS"); cacheRecStr != "" {
+		if c, err := strconv.Atoi(cacheRecStr); err == nil && c >= 0 {
+			cfg.CacheRecordings = c
+		}
+	}
+	if cd := os.Getenv("CACHE_DIR"); cd != "" {
+		cfg.CacheDir = cd
+	}
 
 	// 4. Layer 4: Explicit CLI Flags (POSIX)
 	var cliBeta bool
@@ -379,6 +404,12 @@ func Resolve(optionsPath string, fs *flag.FlagSet) *Config {
 				if s, err := strconv.Atoi(f.Value.String()); err == nil && s > 0 {
 					cfg.SDCardSyncInterval = s
 				}
+			case "cache-recordings":
+				if c, err := strconv.Atoi(f.Value.String()); err == nil && c >= 0 {
+					cfg.CacheRecordings = c
+				}
+			case "cache-dir":
+				cfg.CacheDir = f.Value.String()
 			case "nabto-driver":
 				cfg.NabtoDriver = f.Value.String()
 			case "use-cgo":

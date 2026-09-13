@@ -97,7 +97,18 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 	rtspServer.SetOnPlayHandler(bridgeMgr.RequestKeyframe)
 	rtspServer.SetAudioBackchannelHandler(bridgeMgr.WriteAudioBackchannel)
 
-	// 2. Embedded ONVIF Server
+	// 2. Embedded ONVIF Server & Storage Cache
+	var extractor storage.FrameExtractor = storage.NewFFmpegExtractor("")
+	recordingCache := storage.NewRecordingCache(cfg.CacheDir, cfg.CacheRecordings, extractor)
+	cachedProvider := storage.NewCachedRecordingProvider(recordingCache, bridgeMgr.GetRecordingProvider)
+
+	getRecordingProvider := func() storage.RecordingProvider {
+		if cfg.CacheRecordings > 0 {
+			return cachedProvider
+		}
+		return bridgeMgr.GetRecordingProvider()
+	}
+
 	onvifServer := onvif.NewServer(
 		cfg.ONVIFPort,
 		cfg.RTSPPort,
@@ -114,13 +125,13 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 		},
 		bridgeMgr.SetLampState,
 		bridgeMgr.SetSiren,
-		bridgeMgr.GetRecordingProvider,
+		getRecordingProvider,
 		eventBus,
 	)
 
 	// 3. Optional MQTT Client & SD-Card Recording Syncer
 	var mqttClient *mqtt.Client
-	var recordingSyncer *storage.RecordingSyncer
+	var onNewRec func(storage.RecordingItem)
 
 	if cfg.MQTTBroker != "" {
 		mqttClient = mqtt.NewClient(mqtt.Config{
@@ -145,20 +156,22 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 			SetResolution:     bridgeMgr.SetResolution,
 		}, eventBus)
 
-		recordingSyncer = storage.NewRecordingSyncer(
-			bridgeMgr.GetRecordingProvider,
-			mqttClient.PublishRecordingEvent,
-			time.Duration(cfg.SDCardSyncInterval)*time.Second,
-		)
-
-		eventBus.SubscribeMotion(func(isMotion bool) {
-			if isMotion {
-				recordingSyncer.TriggerSync()
-			}
-		})
+		onNewRec = mqttClient.PublishRecordingEvent
 	} else {
 		logger.Info("Config", "ℹ️ MQTT is disabled (no broker configured). To enable Home Assistant entities, configure 'mqtt_broker' in addon options or install an MQTT broker addon.")
 	}
+
+	recordingSyncer := storage.NewRecordingSyncer(
+		getRecordingProvider,
+		onNewRec,
+		time.Duration(cfg.SDCardSyncInterval)*time.Second,
+	)
+
+	eventBus.SubscribeMotion(func(isMotion bool) {
+		if isMotion {
+			recordingSyncer.TriggerSync()
+		}
+	})
 
 	// 4. Instantiate Polymorphic Camera Driver
 	onDeviceDiscovered := func(deviceID, productID string) {

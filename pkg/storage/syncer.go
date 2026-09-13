@@ -89,6 +89,43 @@ func (s *RecordingSyncer) syncOnce(ctx context.Context, isInitial bool) {
 		return
 	}
 
+	// 1. Proactive cache sync if provider wraps a local RecordingCache
+	if cacheSyncer, ok := provider.(interface {
+		SyncLatest(ctx context.Context) ([]RecordingItem, error)
+	}); ok {
+		newlyCached, err := cacheSyncer.SyncLatest(ctx)
+		if err != nil {
+			if isInitial {
+				logger.Warn("Recording Sync", "⚠️ Initial cache sync returned error: %v", err)
+			} else {
+				logger.Debug("Recording Sync", "Periodic cache sync error: %v", err)
+			}
+		}
+		if len(newlyCached) > 0 {
+			latest := newlyCached[0]
+			s.mu.Lock()
+			isFirst := (s.lastSeenID == "")
+			s.lastSeenID = latest.ID
+			s.lastSeenTime = latest.StartTime
+			s.mu.Unlock()
+
+			if isFirst {
+				logger.Info("Recording Sync", "📌 Initial sync: Cached latest recording %s (%s, Thumb: %t)",
+					latest.ID, latest.FileName, latest.ThumbnailURL != "")
+			} else {
+				logger.Info("Recording Sync", "🆕 New recording cached: %s (%s, Thumb: %t)",
+					latest.ID, latest.FileName, latest.ThumbnailURL != "")
+			}
+			logger.Trace("Recording Sync", "Recording details: %+v", latest)
+
+			if s.onNewRecording != nil {
+				s.onNewRecording(latest)
+			}
+			return
+		}
+	}
+
+	// 2. Query fallback (for non-cached providers or when cache already holds latest items)
 	reqCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 

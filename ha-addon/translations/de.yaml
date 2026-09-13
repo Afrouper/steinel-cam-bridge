@@ -38,6 +38,9 @@ configuration:
   sdcard_sync_interval:
     name: "SD-Karten Sync-Intervall"
     description: "Intervall in Sekunden zur Hintergrundabfrage neuer Aufnahmen von der MicroSD-Karte (Standard: 60s)."
+  cache_recordings:
+    name: "Lokaler Aufnahme-Cache"
+    description: "Anzahl der jüngsten Aufnahmen, die im lokalen Bridge-Speicher vorgehalten werden (Standard: 10, ca. 80–150 MB). Erlaubt sofortigen Zugriff, extrahiert Snapshots und entlastet die Kamera. 0 deaktiviert den Cache."
   nabto_driver:
     name: "Nabto Edge Treiber (L 625)"
     description: "Treiber für die L 625 CAM SC: 'cgo' (offizielles C-SDK, empfohlen & Standard) oder 'pure' (nativer Go-Stack, experimentell)."
