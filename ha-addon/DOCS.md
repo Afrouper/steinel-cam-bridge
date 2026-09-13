@@ -30,6 +30,8 @@ Der QR-Code wird initial für das Pairing benötigt. Danach muss er nicht mehr z
 | `camera_type` | Liste | `auto` | Kameramodell: `auto` (automatische Erkennung), `l625` (L 625 CAM SC), `l620` (L 620 CAM / XLED CAM 1) |
 | `camera_user` | String | `admin` | Benutzername für L 620 CAM (Standard: `admin`) |
 | `camera_password` | String | `""` | Geräte-Passwort für L 620 CAM |
+| `bridge_user` | String | `""` | Optional: Benutzername für den Zugriffsschutz der Bridge (RTSP, ONVIF, REST). Leer = ungeschützt |
+| `bridge_pass` | Passwort | `""` | Optional: Passwort für den Zugriffsschutz der Bridge (RTSP Digest/Basic, ONVIF HTTP Digest / WS-Security, REST) |
 | `qr_code` | String | `""` | QR-Code Payload zum automatischen Pairing der L 625 CAM SC |
 | `resolution` | Liste | `1080p` | Standardauflösung (`1080p`, `720p`, `360p`) |
 | `audio_codec` | Liste | `aac` | Audio-Codec des RTSP-Streams: `aac` (nativ transkodiert) oder `pcmu` |
