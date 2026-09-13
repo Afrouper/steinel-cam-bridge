@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -54,4 +55,35 @@ func TestFFmpegExtractorInvalidVideo(t *testing.T) {
 
 	err := extractor.ExtractFrame(context.Background(), emptyVideo, 5*time.Second, filepath.Join(tempDir, "thumb.jpg"))
 	assert.ErrorIs(t, err, ErrInvalidVideoFile)
+}
+
+func TestFFmpegExtractorRealVideo(t *testing.T) {
+	extractor := NewFFmpegExtractor("")
+	if !extractor.IsAvailable() {
+		t.Skip("ffmpeg is not installed on this system")
+	}
+
+	tempDir := t.TempDir()
+	videoPath := filepath.Join(tempDir, "sample.mp4")
+	thumbPath := filepath.Join(tempDir, "sample.jpg")
+
+	// Generate a 1-second test MP4 using ffmpeg lavfi testsrc
+	genCmd := exec.Command(extractor.binaryPath, "-y", "-f", "lavfi", "-i", "testsrc=duration=1:size=320x240:rate=10", videoPath)
+	if out, err := genCmd.CombinedOutput(); err != nil {
+		t.Fatalf("failed to generate test video: %v (%s)", err, string(out))
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err := extractor.ExtractFrame(ctx, videoPath, 0, thumbPath)
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(thumbPath)
+	require.NoError(t, err)
+	assert.Greater(t, len(data), 100)
+	// Check JPEG magic bytes: FF D8 FF
+	assert.Equal(t, byte(0xFF), data[0])
+	assert.Equal(t, byte(0xD8), data[1])
+	assert.Equal(t, byte(0xFF), data[2])
 }

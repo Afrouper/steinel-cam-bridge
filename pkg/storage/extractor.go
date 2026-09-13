@@ -117,8 +117,8 @@ func (e *FFmpegExtractor) runExtraction(ctx context.Context, videoPath string, o
 	extractCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	// Temporary file to ensure atomic write
-	tmpThumb := thumbPath + ".tmp"
+	// Temporary file to ensure atomic write (preserves .jpg extension and uses .tmp_ prefix)
+	tmpThumb := filepath.Join(filepath.Dir(thumbPath), ".tmp_"+filepath.Base(thumbPath))
 	defer func() { _ = os.Remove(tmpThumb) }()
 
 	offsetSec := fmt.Sprintf("%.2f", offset.Seconds())
@@ -129,6 +129,7 @@ func (e *FFmpegExtractor) runExtraction(ctx context.Context, videoPath string, o
 	// -frames:v 1: Extract exactly 1 frame
 	// -vf "scale=640:-1": Downscale width to 640px while preserving aspect ratio
 	// -q:v 3: High quality JPEG compression (resulting in ~30-60 KB)
+	// -f mjpeg: Force JPEG/MJPEG format even if extension differs
 	cmd := exec.CommandContext(extractCtx, e.binaryPath,
 		"-y",
 		"-ss", offsetSec,
@@ -136,6 +137,7 @@ func (e *FFmpegExtractor) runExtraction(ctx context.Context, videoPath string, o
 		"-frames:v", "1",
 		"-vf", "scale=640:-1",
 		"-q:v", "3",
+		"-f", "mjpeg",
 		tmpThumb,
 	)
 
