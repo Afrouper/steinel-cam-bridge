@@ -37,6 +37,8 @@ type Config struct {
 	LogFormat          string
 	SDCardSyncInterval int
 	NabtoDriver        string // "cgo" (default) or "pure"
+	BridgeUser         string
+	BridgePass         string
 	IsBeta             bool
 	AppVersion         string
 }
@@ -64,6 +66,8 @@ func NewDefaultConfig() *Config {
 		LogFormat:          "",
 		SDCardSyncInterval: 120,
 		NabtoDriver:        "cgo",
+		BridgeUser:         "",
+		BridgePass:         "",
 		IsBeta:             false,
 		AppVersion:         "dev",
 	}
@@ -101,6 +105,9 @@ func LoadHomeAssistantOptionsFromPath(path string, cfg *Config) {
 		SDCardSyncInterval  int    `json:"sdcard_sync_interval"`
 		NabtoDriver         string `json:"nabto_driver"`
 		UseCGONabto         bool   `json:"use_cgo_nabto"`
+		BridgeUser          string `json:"bridge_user"`
+		BridgePass          string `json:"bridge_pass"`
+		BridgePassword      string `json:"bridge_password"`
 	}
 
 	if err := json.Unmarshal(data, &opts); err != nil {
@@ -171,6 +178,14 @@ func LoadHomeAssistantOptionsFromPath(path string, cfg *Config) {
 		cfg.NabtoDriver = opts.NabtoDriver
 	} else if opts.UseCGONabto {
 		cfg.NabtoDriver = "cgo"
+	}
+	if opts.BridgeUser != "" {
+		cfg.BridgeUser = opts.BridgeUser
+	}
+	if opts.BridgePass != "" {
+		cfg.BridgePass = opts.BridgePass
+	} else if opts.BridgePassword != "" {
+		cfg.BridgePass = opts.BridgePassword
 	}
 }
 
@@ -247,6 +262,14 @@ func Resolve(optionsPath string, fs *flag.FlagSet) *Config {
 	} else if cp := os.Getenv("CAMERA_PASS"); cp != "" {
 		cfg.CameraPassword = cp
 	}
+	if bu := os.Getenv("BRIDGE_USER"); bu != "" {
+		cfg.BridgeUser = bu
+	}
+	if bp := os.Getenv("BRIDGE_PASS"); bp != "" {
+		cfg.BridgePass = bp
+	} else if bp := os.Getenv("BRIDGE_PASSWORD"); bp != "" {
+		cfg.BridgePass = bp
+	}
 	if mb := os.Getenv("MQTT_BROKER"); mb != "" {
 		cfg.MQTTBroker = mb
 	}
@@ -316,6 +339,10 @@ func Resolve(optionsPath string, fs *flag.FlagSet) *Config {
 				cfg.CameraUser = f.Value.String()
 			case "pass", "password":
 				cfg.CameraPassword = f.Value.String()
+			case "bridge-user":
+				cfg.BridgeUser = f.Value.String()
+			case "bridge-pass", "bridge-password":
+				cfg.BridgePass = f.Value.String()
 			case "qr":
 				nabto.ParseQRCode(f.Value.String(), cfg.NabtoConfig)
 			case "key":

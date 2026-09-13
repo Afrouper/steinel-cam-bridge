@@ -13,11 +13,12 @@ type DeviceHandler struct {
 	productID  string
 	onvifPort  int
 	rtspPort   int
+	authUser   string
 	rebootFunc func() error
 	eventBus   *events.Bus
 }
 
-func NewDeviceHandler(deviceID, productID string, onvifPort, rtspPort int, rebootFunc func() error, eventBus *events.Bus) *DeviceHandler {
+func NewDeviceHandler(deviceID, productID string, onvifPort, rtspPort int, authUser string, rebootFunc func() error, eventBus *events.Bus) *DeviceHandler {
 	if eventBus == nil {
 		eventBus = events.GlobalBus
 	}
@@ -26,6 +27,7 @@ func NewDeviceHandler(deviceID, productID string, onvifPort, rtspPort int, reboo
 		productID:  productID,
 		onvifPort:  onvifPort,
 		rtspPort:   rtspPort,
+		authUser:   authUser,
 		rebootFunc: rebootFunc,
 		eventBus:   eventBus,
 	}
@@ -46,6 +48,27 @@ func (h *DeviceHandler) Handle(action string, reqXML string, host string) (strin
 	}
 	if strings.Contains(action, "GetNetworkInterfaces") || strings.Contains(reqXML, "GetNetworkInterfaces") {
 		return h.getNetworkInterfaces(), nil
+	}
+	if strings.Contains(action, "GetUsers") || strings.Contains(reqXML, "GetUsers") {
+		return h.getUsers(), nil
+	}
+	if strings.Contains(action, "GetScopes") || strings.Contains(reqXML, "GetScopes") {
+		return h.getScopes(), nil
+	}
+	if strings.Contains(action, "GetNetworkProtocols") || strings.Contains(reqXML, "GetNetworkProtocols") {
+		return h.getNetworkProtocols(), nil
+	}
+	if strings.Contains(action, "GetHostname") || strings.Contains(reqXML, "GetHostname") {
+		return h.getHostname(), nil
+	}
+	if strings.Contains(action, "GetDNS") || strings.Contains(reqXML, "GetDNS") {
+		return h.getDNS(), nil
+	}
+	if strings.Contains(action, "GetNTP") || strings.Contains(reqXML, "GetNTP") {
+		return h.getNTP(), nil
+	}
+	if strings.Contains(action, "GetDiscoveryMode") || strings.Contains(reqXML, "GetDiscoveryMode") {
+		return h.getDiscoveryMode(), nil
 	}
 	if strings.Contains(action, "SystemReboot") || strings.Contains(reqXML, "SystemReboot") {
 		if h.rebootFunc != nil {
@@ -105,6 +128,26 @@ func (h *DeviceHandler) getCapabilities(host string) string {
           <tt:Minor>0</tt:Minor>
         </tt:SupportedVersions>
       </tt:System>
+      <tt:Security>
+        <tt:TLS1.1>false</tt:TLS1.1>
+        <tt:TLS1.2>false</tt:TLS1.2>
+        <tt:OnboardKeyGeneration>false</tt:OnboardKeyGeneration>
+        <tt:AccessPolicyFiles>false</tt:AccessPolicyFiles>
+        <tt:EnableNormalizedDirectory>false</tt:EnableNormalizedDirectory>
+        <tt:ApplicationDefaultContext>false</tt:ApplicationDefaultContext>
+        <tt:KerberosToken>false</tt:KerberosToken>
+        <tt:RELToken>false</tt:RELToken>
+        <tt:Extension>
+          <tt:TLS1.0>false</tt:TLS1.0>
+          <tt:Extension>
+            <tt:Dot1X>false</tt:Dot1X>
+            <tt:SupportedEAPMethod>0</tt:SupportedEAPMethod>
+            <tt:RemoteUserHandling>false</tt:RemoteUserHandling>
+            <tt:UsernameToken>true</tt:UsernameToken>
+            <tt:HttpDigest>true</tt:HttpDigest>
+          </tt:Extension>
+        </tt:Extension>
+      </tt:Security>
     </tt:Device>
     <tt:Events>
       <tt:XAddr>%s</tt:XAddr>
@@ -247,6 +290,94 @@ func (h *DeviceHandler) getNetworkInterfaces() string {
     </tt:IPv4>
   </tds:NetworkInterfaces>
 </tds:GetNetworkInterfacesResponse>`, NS_TDS, NS_TT)
+}
+
+func (h *DeviceHandler) getUsers() string {
+	username := h.authUser
+	if username == "" {
+		username = "admin"
+	}
+	return fmt.Sprintf(`<tds:GetUsersResponse xmlns:tds="%s" xmlns:tt="%s">
+  <tds:User>
+    <tt:Username>%s</tt:Username>
+    <tt:UserLevel>Administrator</tt:UserLevel>
+  </tds:User>
+</tds:GetUsersResponse>`, NS_TDS, NS_TT, username)
+}
+
+func (h *DeviceHandler) getScopes() string {
+	return fmt.Sprintf(`<tds:GetScopesResponse xmlns:tds="%s" xmlns:tt="%s">
+  <tds:Scopes>
+    <tt:ScopeDef>Fixed</tt:ScopeDef>
+    <tt:ScopeItem>onvif://www.onvif.org/type/video_encoder</tt:ScopeItem>
+  </tds:Scopes>
+  <tds:Scopes>
+    <tt:ScopeDef>Fixed</tt:ScopeDef>
+    <tt:ScopeItem>onvif://www.onvif.org/type/audio_encoder</tt:ScopeItem>
+  </tds:Scopes>
+  <tds:Scopes>
+    <tt:ScopeDef>Fixed</tt:ScopeDef>
+    <tt:ScopeItem>onvif://www.onvif.org/hardware/Steinel</tt:ScopeItem>
+  </tds:Scopes>
+  <tds:Scopes>
+    <tt:ScopeDef>Fixed</tt:ScopeDef>
+    <tt:ScopeItem>onvif://www.onvif.org/name/Steinel-CAM</tt:ScopeItem>
+  </tds:Scopes>
+  <tds:Scopes>
+    <tt:ScopeDef>Fixed</tt:ScopeDef>
+    <tt:ScopeItem>onvif://www.onvif.org/location/outdoor</tt:ScopeItem>
+  </tds:Scopes>
+  <tds:Scopes>
+    <tt:ScopeDef>Fixed</tt:ScopeDef>
+    <tt:ScopeItem>onvif://www.onvif.org/Profile/Streaming</tt:ScopeItem>
+  </tds:Scopes>
+</tds:GetScopesResponse>`, NS_TDS, NS_TT)
+}
+
+func (h *DeviceHandler) getNetworkProtocols() string {
+	return fmt.Sprintf(`<tds:GetNetworkProtocolsResponse xmlns:tds="%s" xmlns:tt="%s">
+  <tds:NetworkProtocols>
+    <tt:Name>HTTP</tt:Name>
+    <tt:Enabled>true</tt:Enabled>
+    <tt:Port>%d</tt:Port>
+  </tds:NetworkProtocols>
+  <tds:NetworkProtocols>
+    <tt:Name>RTSP</tt:Name>
+    <tt:Enabled>true</tt:Enabled>
+    <tt:Port>%d</tt:Port>
+  </tds:NetworkProtocols>
+</tds:GetNetworkProtocolsResponse>`, NS_TDS, NS_TT, h.onvifPort, h.rtspPort)
+}
+
+func (h *DeviceHandler) getHostname() string {
+	return fmt.Sprintf(`<tds:GetHostnameResponse xmlns:tds="%s" xmlns:tt="%s">
+  <tds:HostnameInformation>
+    <tt:FromDHCP>true</tt:FromDHCP>
+    <tt:Name>Steinel-CAM</tt:Name>
+  </tds:HostnameInformation>
+</tds:GetHostnameResponse>`, NS_TDS, NS_TT)
+}
+
+func (h *DeviceHandler) getDNS() string {
+	return fmt.Sprintf(`<tds:GetDNSResponse xmlns:tds="%s" xmlns:tt="%s">
+  <tds:DNSInformation>
+    <tt:FromDHCP>true</tt:FromDHCP>
+  </tds:DNSInformation>
+</tds:GetDNSResponse>`, NS_TDS, NS_TT)
+}
+
+func (h *DeviceHandler) getNTP() string {
+	return fmt.Sprintf(`<tds:GetNTPResponse xmlns:tds="%s" xmlns:tt="%s">
+  <tds:NTPInformation>
+    <tt:FromDHCP>true</tt:FromDHCP>
+  </tds:NTPInformation>
+</tds:GetNTPResponse>`, NS_TDS, NS_TT)
+}
+
+func (h *DeviceHandler) getDiscoveryMode() string {
+	return fmt.Sprintf(`<tds:GetDiscoveryModeResponse xmlns:tds="%s">
+  <tds:DiscoveryMode>Discoverable</tds:DiscoveryMode>
+</tds:GetDiscoveryModeResponse>`, NS_TDS)
 }
 
 func extractHostIP(host string) string {

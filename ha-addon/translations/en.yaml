@@ -17,6 +17,12 @@ configuration:
   camera_user:
     name: "Camera Username (L 620)"
     description: "Username for L 620 CAM (default: admin)."
+  bridge_user:
+    name: "Bridge Username (Access Protection)"
+    description: "Optional username to protect RTSP stream, ONVIF, and Web API. Leave empty for open access without password."
+  bridge_pass:
+    name: "Bridge Password (Access Protection)"
+    description: "Optional password to protect RTSP stream, ONVIF, and Web API."
   resolution:
     name: "Video Resolution"
     description: "Target camera resolution (1080p, 720p, or 360p)."

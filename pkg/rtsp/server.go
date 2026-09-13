@@ -10,6 +10,7 @@ import (
 
 	"github.com/Afrouper/steinel-cam-bridge/pkg/logger"
 	"github.com/bluenviron/gortsplib/v4"
+	"github.com/bluenviron/gortsplib/v4/pkg/auth"
 	"github.com/bluenviron/gortsplib/v4/pkg/base"
 	"github.com/bluenviron/gortsplib/v4/pkg/description"
 	"github.com/bluenviron/gortsplib/v4/pkg/format"
@@ -35,6 +36,10 @@ type Server struct {
 	backchannelMedia        *description.Media
 	pathName                string
 	port                    int
+	authUser                string
+	authPass                string
+	realm                   string
+	nonce                   string
 	udpConn                 *net.UDPConn
 	audioBackchannelHandler AudioBackchannelHandler
 	onPlayHandler           OnPlayHandler
@@ -45,7 +50,7 @@ type Server struct {
 	mu                      sync.RWMutex
 }
 
-func NewServer(port int, pathName string, audioCodec string) (*Server, error) {
+func NewServer(port int, pathName string, audioCodec string, authUser string, authPass string) (*Server, error) {
 	if port == 0 {
 		port = 8554
 	}
@@ -121,6 +126,15 @@ func NewServer(port int, pathName string, audioCodec string) (*Server, error) {
 		Medias: []*description.Media{vMedia, aMedia, bcMedia},
 	}
 
+	var nonce string
+	if authUser != "" {
+		var err error
+		nonce, err = auth.GenerateNonce()
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate rtsp auth nonce: %w", err)
+		}
+	}
+
 	s := &Server{
 		session:           meds,
 		videoFormat:       vFormat,
@@ -133,6 +147,10 @@ func NewServer(port int, pathName string, audioCodec string) (*Server, error) {
 		backchannelMedia:  bcMedia,
 		pathName:          pathName,
 		port:              port,
+		authUser:          authUser,
+		authPass:          authPass,
+		realm:             "Steinel CAM Bridge",
+		nonce:             nonce,
 	}
 
 	srv := &gortsplib.Server{
@@ -170,7 +188,11 @@ func (s *Server) SetOnPlayHandler(handler OnPlayHandler) {
 }
 
 func (s *Server) Start() error {
-	logger.Info("RTSP", "Server listening at rtsp://0.0.0.0:%d/%s (Profile T Audio Backchannel enabled)", s.port, s.pathName)
+	if s.authUser != "" {
+		logger.Info("RTSP", "Server listening at rtsp://0.0.0.0:%d/%s (Auth: user '%s', Profile T Audio Backchannel enabled)", s.port, s.pathName, s.authUser)
+	} else {
+		logger.Info("RTSP", "Server listening at rtsp://0.0.0.0:%d/%s (Profile T Audio Backchannel enabled)", s.port, s.pathName)
+	}
 	if err := s.server.Start(); err != nil {
 		return err
 	}
@@ -331,9 +353,60 @@ func (s *Server) WriteAudioPacket(pkt *rtp.Packet) {
 	_ = st.WritePacketRTP(s.audioMedia, pkt)
 }
 
+// validateAuth validates incoming RTSP requests against configured authUser and authPass.
+func (s *Server) validateAuth(req *base.Request, conn *gortsplib.ServerConn, sess *gortsplib.ServerSession) (bool, *base.Response) {
+	if s.authUser == "" {
+		return true, nil
+	}
+
+	// If session or connection was already authenticated and request has no new Authorization header, allow
+	if req.Header["Authorization"] == nil {
+		if sess != nil && sess.UserData() == true {
+			return true, nil
+		}
+		if conn != nil && conn.UserData() == true {
+			return true, nil
+		}
+	}
+
+	err := auth.Validate(
+		req,
+		s.authUser,
+		s.authPass,
+		[]auth.ValidateMethod{auth.ValidateMethodBasic, auth.ValidateMethodDigestMD5, auth.ValidateMethodSHA256},
+		s.realm,
+		s.nonce,
+	)
+	if err != nil {
+		logger.Debug("RTSP", "🔒 Client auth challenge/failure for %s (%s): %v", req.Method, req.URL, err)
+		return false, &base.Response{
+			StatusCode: base.StatusUnauthorized,
+			Header: base.Header{
+				"WWW-Authenticate": auth.GenerateWWWAuthenticate(
+					[]auth.ValidateMethod{auth.ValidateMethodBasic, auth.ValidateMethodDigestMD5, auth.ValidateMethodSHA256},
+					s.realm,
+					s.nonce,
+				),
+			},
+		}
+	}
+
+	if sess != nil {
+		sess.SetUserData(true)
+	}
+	if conn != nil {
+		conn.SetUserData(true)
+	}
+	return true, nil
+}
+
 // --- gortsplib Server Callbacks ---
 
 func (s *Server) OnDescribe(ctx *gortsplib.ServerHandlerOnDescribeCtx) (*base.Response, *gortsplib.ServerStream, error) {
+	if ok, resp := s.validateAuth(ctx.Request, ctx.Conn, nil); !ok {
+		return resp, nil, nil
+	}
+
 	logger.Trace("RTSP", "DESCRIBE request for path: %s", ctx.Path)
 	if !s.checkPath(ctx.Path) {
 		return &base.Response{
@@ -351,6 +424,10 @@ func (s *Server) OnDescribe(ctx *gortsplib.ServerHandlerOnDescribeCtx) (*base.Re
 }
 
 func (s *Server) OnSetup(ctx *gortsplib.ServerHandlerOnSetupCtx) (*base.Response, *gortsplib.ServerStream, error) {
+	if ok, resp := s.validateAuth(ctx.Request, ctx.Conn, ctx.Session); !ok {
+		return resp, nil, nil
+	}
+
 	logger.Trace("RTSP", "SETUP request for path: %s", ctx.Path)
 	if !s.checkPath(ctx.Path) {
 		return &base.Response{
@@ -368,6 +445,10 @@ func (s *Server) OnSetup(ctx *gortsplib.ServerHandlerOnSetupCtx) (*base.Response
 }
 
 func (s *Server) OnPlay(ctx *gortsplib.ServerHandlerOnPlayCtx) (*base.Response, error) {
+	if ok, resp := s.validateAuth(ctx.Request, ctx.Conn, ctx.Session); !ok {
+		return resp, nil
+	}
+
 	count := s.activeClients.Add(1)
 	logger.Debug("RTSP", "▶️ Client connected and playing stream (%s, active clients: %d)", ctx.Path, count)
 	if count == 1 {
@@ -386,6 +467,10 @@ func (s *Server) OnPlay(ctx *gortsplib.ServerHandlerOnPlayCtx) (*base.Response, 
 }
 
 func (s *Server) OnRecord(ctx *gortsplib.ServerHandlerOnRecordCtx) (*base.Response, error) {
+	if ok, resp := s.validateAuth(ctx.Request, ctx.Conn, ctx.Session); !ok {
+		return resp, nil
+	}
+
 	logger.Debug("RTSP", "🎙️ OnRecord called on %s", ctx.Path)
 	if ctx.Session != nil {
 		for _, medi := range ctx.Session.SetuppedMedias() {

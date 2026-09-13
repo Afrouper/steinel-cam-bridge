@@ -33,6 +33,8 @@ func TestONVIFServices(t *testing.T) {
 		"aac",
 		"de-xxxxxxx",
 		"pr-xxxxx",
+		"",
+		"",
 		changeRes,
 		nil,
 		setLamp,

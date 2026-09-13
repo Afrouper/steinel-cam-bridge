@@ -2,6 +2,29 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge** Add-on werden hier dokumentiert.
 
+## 1.3.7
+
+### 🔐 Authentifizierung, NVR-Kompatibilität (Synology) & Architektur-Schärfung
+
+- **Flexibler Bridge-Zugriffsschutz (`bridge_user` & `bridge_pass`) (Issue #19)**:
+  - Optionaler Benutzername- und Passwortschutz für RTSP-Streaming, ONVIF und Web-REST-API.
+  - Klare Trennung zwischen Upstream-Kamera-Zugangsdaten (`camera_user`/`camera_password`) und Downstream-Client-Zugangsdaten (`bridge_user`/`bridge_pass`).
+  - Bleiben die Felder unkonfiguriert, bleibt der Zugriff wie bisher abwärtskompatibel offen.
+  - Sichere Handhabung: Passwörter werden niemals im Klartext geloggt.
+- **Vollständige Synology Surveillance Station Kompatibilität (Issue #33)**:
+  - **RFC 2617 HTTP Digest Authentication**: ONVIF Core Spec 5.1.2 konforme Digest-Authentifizierung für unverschlüsselte HTTP-Verbindungen mit `qop="auth"` und Nonce-Management.
+  - **Triple-Authentication**: Nahtlose Koexistenz von HTTP Digest (Synology), HTTP Basic und WS-Security `UsernameToken` (`PasswordDigest` & `PasswordText`).
+  - **gSOAP Schema-Konformität**: Schachtelung von `<tt:Security>` in `<tt:Extension>` zur Vermeidung von Parsing-Fehlern in gSOAP C++ Clients.
+  - **Erweiterte Setup-Aktionen**: Implementierung von `GetUsers`, `GetScopes`, `GetNetworkProtocols` (HTTP/RTSP Port), `GetHostname`, `GetDNS`, `GetNTP`.
+- **Apple Home / Scrypted Snapshot Erhalt**:
+  - Dynamisches Keyframe-Grabbing direkt aus dem RTSP-Videostream – keine statischen Dummy-JPEG-Bilder.
+- **Architektur & Go Clean Code**:
+  - Trennung der Home Assistant REST-API in ein eigenes Modul (`pkg/onvif/api.go`), Verschlankung des ONVIF-Servers auf unter 300 Zeilen.
+  - Zustandsloses, per HMAC-SHA256 kryptographisch abgesichertes `NonceManager` mit 4-Byte Zufallssalz gegen Replay-Angriffe.
+  - Typsicherer `AuthStatus`-Enum und schema-bewusstes URI-Matching via `net/url`.
+- **Dependency Update**:
+  - Aktualisierung von `github.com/pion/webrtc/v4` auf Version `4.2.20`.
+
 ## 1.3.6
 
 ### 🚀 Architektur, Stabilität & Performance

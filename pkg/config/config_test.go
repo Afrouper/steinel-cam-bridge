@@ -32,6 +32,8 @@ func TestLayer1_CodeDefaults(t *testing.T) {
 	assert.Equal(t, "homeassistant", cfg.MQTTDiscovery)
 	assert.Equal(t, "cgo", cfg.NabtoDriver)
 	assert.Equal(t, 120, cfg.SDCardSyncInterval)
+	assert.Equal(t, "", cfg.BridgeUser)
+	assert.Equal(t, "", cfg.BridgePass)
 }
 
 // TestLayer2_ConfigFileOverridesDefaults verifies that options.json overrides Layer 1 defaults
@@ -53,7 +55,9 @@ func TestLayer2_ConfigFileOverridesDefaults(t *testing.T) {
 		"mqtt_password": "pwd_test",
 		"mqtt_topic_prefix": "steinel_test",
 		"mqtt_discovery_prefix": "ha_test",
-		"nabto_driver": "cgo"
+		"nabto_driver": "cgo",
+		"bridge_user": "buser_test",
+		"bridge_pass": "bpass_test"
 	}`
 	err := os.WriteFile(optsFile, []byte(jsonContent), 0644)
 	require.NoError(t, err)
@@ -77,6 +81,8 @@ func TestLayer2_ConfigFileOverridesDefaults(t *testing.T) {
 	assert.Equal(t, "steinel_test", cfg.MQTTTopic)
 	assert.Equal(t, "ha_test", cfg.MQTTDiscovery)
 	assert.Equal(t, "cgo", cfg.NabtoDriver)
+	assert.Equal(t, "buser_test", cfg.BridgeUser)
+	assert.Equal(t, "bpass_test", cfg.BridgePass)
 }
 
 // TestLayer2_UseCGONabtoFallback verifies that boolean use_cgo_nabto in options.json sets NabtoDriver to cgo
@@ -128,6 +134,8 @@ func TestLayer3_EnvOverrides(t *testing.T) {
 	t.Setenv("RTSP_PORT", "9554")
 	t.Setenv("ONVIF_PORT", "9000")
 	t.Setenv("USE_CGO_NABTO", "false")
+	t.Setenv("BRIDGE_USER", "env_user")
+	t.Setenv("BRIDGE_PASS", "env_pass")
 
 	cfg := Resolve(optsFile, nil)
 
@@ -136,18 +144,23 @@ func TestLayer3_EnvOverrides(t *testing.T) {
 	assert.Equal(t, 9554, cfg.RTSPPort)
 	assert.Equal(t, 9000, cfg.ONVIFPort)
 	assert.Equal(t, "pure", cfg.NabtoDriver)
+	assert.Equal(t, "env_user", cfg.BridgeUser)
+	assert.Equal(t, "env_pass", cfg.BridgePass)
 }
 
 // TestLayer4_CLIOverrides verifies that explicit CLI flags override all lower layers
 func TestLayer4_CLIOverrides(t *testing.T) {
 	t.Setenv("CAMERA_IP", "192.168.1.99")
 	t.Setenv("LOG_LEVEL", "warn")
+	t.Setenv("BRIDGE_USER", "env_user")
 
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
 	fs.String("ip", "", "")
 	fs.String("log-level", "", "")
 	fs.Int("port", 0, "")
-	err := fs.Parse([]string{"-ip", "10.0.0.1", "-log-level", "debug", "-port", "8556"})
+	fs.String("bridge-user", "", "")
+	fs.String("bridge-pass", "", "")
+	err := fs.Parse([]string{"-ip", "10.0.0.1", "-log-level", "debug", "-port", "8556", "-bridge-user", "cli_user", "-bridge-pass", "cli_pass"})
 	require.NoError(t, err)
 
 	cfg := Resolve("", fs)
@@ -155,6 +168,8 @@ func TestLayer4_CLIOverrides(t *testing.T) {
 	assert.Equal(t, "10.0.0.1", cfg.NabtoConfig.CameraIP)
 	assert.Equal(t, "debug", cfg.LogLevel)
 	assert.Equal(t, 8556, cfg.RTSPPort)
+	assert.Equal(t, "cli_user", cfg.BridgeUser)
+	assert.Equal(t, "cli_pass", cfg.BridgePass)
 }
 
 // TestValidate verifies configuration validation

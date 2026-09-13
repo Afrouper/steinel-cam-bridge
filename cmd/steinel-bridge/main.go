@@ -21,6 +21,8 @@ func registerFlags(fs *flag.FlagSet) {
 	fs.String("type", "", "Camera model type ('auto', 'l625', 'l620')")
 	fs.String("user", "", "Camera authentication username (for L 620 CAM)")
 	fs.String("pass", "", "Camera authentication password (for L 620 CAM)")
+	fs.String("bridge-user", "", "Downstream bridge authentication username for RTSP, ONVIF and REST")
+	fs.String("bridge-pass", "", "Downstream bridge authentication password for RTSP, ONVIF and REST")
 	fs.String("key", "", "Path to client private key file")
 	fs.String("res", "", "Video resolution (1080p, 720p, 360p)")
 	fs.Int("port", 0, "RTSP server port")
