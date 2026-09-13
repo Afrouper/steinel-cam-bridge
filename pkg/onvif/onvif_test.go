@@ -139,6 +139,36 @@ func TestONVIFServices(t *testing.T) {
 		t.Fatalf("PullMessages did not return Motion=true: %s", string(body))
 	}
 
+	// 4b. Test SetSynchronizationPoint
+	reqBody = `<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
+  <s:Body>
+    <SetSynchronizationPoint xmlns="http://www.onvif.org/ver10/events/wsdl"/>
+  </s:Body>
+</s:Envelope>`
+	req = httptest.NewRequest("POST", "/onvif/event_service", bytes.NewBufferString(reqBody))
+	w = httptest.NewRecorder()
+	server.handleSOAP(w, req)
+	body, _ = io.ReadAll(w.Result().Body)
+	if !strings.Contains(string(body), "SetSynchronizationPointResponse") {
+		t.Fatalf("SetSynchronizationPoint failed: %s", string(body))
+	}
+
+	// 4c. Test SubscribeRequest
+	reqBody = `<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
+  <s:Body>
+    <Subscribe xmlns="http://docs.oasis-open.org/wsn/b-2"/>
+  </s:Body>
+</s:Envelope>`
+	req = httptest.NewRequest("POST", "/onvif/event_service", bytes.NewBufferString(reqBody))
+	w = httptest.NewRecorder()
+	server.handleSOAP(w, req)
+	body, _ = io.ReadAll(w.Result().Body)
+	if !strings.Contains(string(body), "CreatePullPointSubscriptionResponse") {
+		t.Fatalf("Subscribe failed: %s", string(body))
+	}
+
 	// 5. Test DeviceIO / Auxiliary Command (Light:On)
 	reqBody = `<?xml version="1.0" encoding="utf-8"?>
 <s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">

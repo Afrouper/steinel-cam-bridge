@@ -111,7 +111,7 @@ func LoadHomeAssistantOptionsFromPath(path string, cfg *Config) {
 		MQTTTopicPrefix     string `json:"mqtt_topic_prefix"`
 		MQTTDiscoveryPrefix string `json:"mqtt_discovery_prefix"`
 		LogLevel            string `json:"log_level"`
-		SDCardSyncInterval  int    `json:"sdcard_sync_interval"`
+		SDCardSyncInterval  *int   `json:"sdcard_sync_interval"`
 		NabtoDriver         string `json:"nabto_driver"`
 		UseCGONabto         bool   `json:"use_cgo_nabto"`
 		BridgeUser          string `json:"bridge_user"`
@@ -182,8 +182,8 @@ func LoadHomeAssistantOptionsFromPath(path string, cfg *Config) {
 	if opts.LogLevel != "" {
 		cfg.LogLevel = opts.LogLevel
 	}
-	if opts.SDCardSyncInterval > 0 {
-		cfg.SDCardSyncInterval = opts.SDCardSyncInterval
+	if opts.SDCardSyncInterval != nil && *opts.SDCardSyncInterval >= 0 {
+		cfg.SDCardSyncInterval = *opts.SDCardSyncInterval
 	}
 	if opts.NabtoDriver != "" {
 		cfg.NabtoDriver = opts.NabtoDriver
@@ -303,11 +303,11 @@ func Resolve(optionsPath string, fs *flag.FlagSet) *Config {
 		cfg.MQTTDiscovery = md
 	}
 	if syncStr := os.Getenv("SDCARD_SYNC_INTERVAL"); syncStr != "" {
-		if s, err := strconv.Atoi(syncStr); err == nil && s > 0 {
+		if s, err := strconv.Atoi(syncStr); err == nil && s >= 0 {
 			cfg.SDCardSyncInterval = s
 		}
 	} else if syncStr := os.Getenv("SYNC_INTERVAL"); syncStr != "" {
-		if s, err := strconv.Atoi(syncStr); err == nil && s > 0 {
+		if s, err := strconv.Atoi(syncStr); err == nil && s >= 0 {
 			cfg.SDCardSyncInterval = s
 		}
 	}
@@ -401,7 +401,7 @@ func Resolve(optionsPath string, fs *flag.FlagSet) *Config {
 			case "audio-codec":
 				cfg.AudioCodec = f.Value.String()
 			case "sync-interval", "sdcard-sync-interval":
-				if s, err := strconv.Atoi(f.Value.String()); err == nil && s > 0 {
+				if s, err := strconv.Atoi(f.Value.String()); err == nil && s >= 0 {
 					cfg.SDCardSyncInterval = s
 				}
 			case "cache-recordings":

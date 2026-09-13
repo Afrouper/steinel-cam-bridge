@@ -159,7 +159,7 @@ func (b *Bridge) Run(ctx context.Context) error {
 		}
 	})
 
-	iceMgr := newICEStateManager(5*time.Second, sessCancel)
+	iceMgr := newICEStateManager(20*time.Second, sessCancel)
 	defer iceMgr.Cancel()
 	pc.OnICEConnectionStateChange(iceMgr.OnStateChange)
 

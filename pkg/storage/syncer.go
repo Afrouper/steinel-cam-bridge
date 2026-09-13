@@ -47,33 +47,41 @@ func (s *RecordingSyncer) TriggerSync() {
 
 // Start runs the periodic and event-driven sync loops until ctx is cancelled.
 func (s *RecordingSyncer) Start(ctx context.Context) {
-	logger.Info("Recording Sync", "🚀 Background sync engine started (Interval: %v)", s.pollInterval)
-
-	// Step 1: Initial Sync after 3 seconds startup delay
-	select {
-	case <-ctx.Done():
-		return
-	case <-time.After(3 * time.Second):
-		s.syncOnce(ctx, true)
+	if s.pollInterval > 0 {
+		logger.Info("Recording Sync", "🚀 Background sync engine started (Interval: %v)", s.pollInterval)
+		// Step 1: Initial Sync after 3 seconds startup delay
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(3 * time.Second):
+			s.syncOnce(ctx, true)
+		}
+	} else {
+		logger.Info("Recording Sync", "ℹ️ Periodic background sync is disabled (Interval <= 0). Syncing will only occur on motion triggers.")
 	}
 
-	ticker := time.NewTicker(s.pollInterval)
-	defer ticker.Stop()
+	var tickerChan <-chan time.Time
+	if s.pollInterval > 0 {
+		ticker := time.NewTicker(s.pollInterval)
+		defer ticker.Stop()
+		tickerChan = ticker.C
+	}
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 
-		case <-ticker.C:
+		case <-tickerChan:
 			s.syncOnce(ctx, false)
 
 		case <-s.triggerChan:
-			// Wait 20 seconds so camera can finalize writing the MP4 file to SD card without concurrent I/O stress
+			logger.Info("Recording Sync", "⏳ Motion detected: waiting 35s to allow camera to finish writing MP4 clip before syncing...")
+			// Wait 35 seconds so camera can finalize writing the MP4 file to SD card without concurrent I/O stress
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(20 * time.Second):
+			case <-time.After(35 * time.Second):
 			}
 			s.syncOnce(ctx, false)
 		}

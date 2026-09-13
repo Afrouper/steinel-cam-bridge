@@ -53,10 +53,32 @@ func (d *L625Driver) setBridge(b *webrtc.Bridge) {
 	d.activeBridge = b
 }
 
+const (
+	reconnectCooldown  = 60 * time.Second
+	baseReconnectDelay = 15 * time.Second
+	maxReconnectDelay  = 120 * time.Second
+)
+
+// CalculateBackoff returns the exponential backoff duration based on consecutive failure count.
+// Progression: 15s -> 30s -> 60s -> 120s (max 2 minutes).
+func CalculateBackoff(consecutiveFailures int) time.Duration {
+	if consecutiveFailures <= 1 {
+		return baseReconnectDelay
+	}
+	if consecutiveFailures > 5 {
+		return maxReconnectDelay
+	}
+	delay := baseReconnectDelay * time.Duration(1<<(consecutiveFailures-1))
+	if delay > maxReconnectDelay {
+		return maxReconnectDelay
+	}
+	return delay
+}
+
 // Run manages the Nabto Edge handshakes, WebRTC signaling and automatic reconnection loop.
 func (d *L625Driver) Run(ctx context.Context) error {
-	const reconnectCooldown = 60 * time.Second
 	cfg := d.cfg.NabtoConfig
+	consecutiveFailures := 0
 
 connectionLoop:
 	for ctx.Err() == nil {
@@ -101,6 +123,8 @@ connectionLoop:
 		}
 
 		if connectErr != nil {
+			consecutiveFailures++
+			backoffDelay := CalculateBackoff(consecutiveFailures)
 			logger.Error("Supervisor", "❌ Connect failed (%v)", connectErr)
 			logger.Info("Supervisor", "🧹 Cleaning up camera connection state...")
 			client.Close()
@@ -111,11 +135,11 @@ connectionLoop:
 				logger.Warn("Supervisor", "🚨 Native Pure-Go Nabto driver failed to connect to camera.")
 				logger.Info("Supervisor", "💡 Recommendation: Set 'nabto_driver: cgo' in Home Assistant Add-on config for official Nabto C-SDK support.")
 			}
-			logger.Info("Supervisor", "⏳ Waiting 15s before retry to allow camera cooldown...")
+			logger.Info("Supervisor", "⏳ Waiting %v before retry (consecutive failure #%d, backoff active) to allow camera cooldown...", backoffDelay, consecutiveFailures)
 			select {
 			case <-ctx.Done():
 				break connectionLoop
-			case <-time.After(15 * time.Second):
+			case <-time.After(backoffDelay):
 			}
 			continue
 		}
@@ -160,6 +184,8 @@ connectionLoop:
 		}
 
 		if portErr != nil {
+			consecutiveFailures++
+			backoffDelay := CalculateBackoff(consecutiveFailures)
 			logger.Error("Supervisor", "❌ GetSignalingPort failed (%v)", portErr)
 			logger.Info("Supervisor", "🧹 Cleaning up camera connection state...")
 			client.Close()
@@ -170,11 +196,11 @@ connectionLoop:
 				logger.Warn("Supervisor", "🚨 Native Pure-Go Nabto driver failed to query signaling port from camera.")
 				logger.Info("Supervisor", "💡 Recommendation: Set 'nabto_driver: cgo' in Home Assistant Add-on config for official Nabto C-SDK support.")
 			}
-			logger.Info("Supervisor", "⏳ Waiting 15s before retry...")
+			logger.Info("Supervisor", "⏳ Waiting %v before retry (consecutive failure #%d, backoff active)...", backoffDelay, consecutiveFailures)
 			select {
 			case <-ctx.Done():
 				break connectionLoop
-			case <-time.After(15 * time.Second):
+			case <-time.After(backoffDelay):
 			}
 			continue
 		}
@@ -214,6 +240,8 @@ connectionLoop:
 		}
 
 		if streamErr != nil {
+			consecutiveFailures++
+			backoffDelay := CalculateBackoff(consecutiveFailures)
 			logger.Error("Supervisor", "❌ OpenSignalingStream failed (%v)", streamErr)
 			logger.Info("Supervisor", "🧹 Cleaning up camera connection state...")
 			client.Close()
@@ -224,11 +252,11 @@ connectionLoop:
 				logger.Warn("Supervisor", "🚨 Native Pure-Go Nabto driver failed to open signaling stream with camera.")
 				logger.Info("Supervisor", "💡 Recommendation: Set 'nabto_driver: cgo' in Home Assistant Add-on config for official Nabto C-SDK support.")
 			}
-			logger.Info("Supervisor", "⏳ Waiting 15s before retry...")
+			logger.Info("Supervisor", "⏳ Waiting %v before retry (consecutive failure #%d, backoff active)...", backoffDelay, consecutiveFailures)
 			select {
 			case <-ctx.Done():
 				break connectionLoop
-			case <-time.After(15 * time.Second):
+			case <-time.After(backoffDelay):
 			}
 			continue
 		}
@@ -240,6 +268,7 @@ connectionLoop:
 		bridge := webrtc.NewBridge(client, stream, d.rtspServer, d.eventBus, d.cfg.Resolution, 1*time.Second)
 		d.setBridge(bridge)
 
+		sessionStart := time.Now()
 		_ = bridge.Run(ctx)
 
 		d.setBridge(nil)
@@ -248,6 +277,11 @@ connectionLoop:
 		client.Close()
 
 		if ctx.Err() == nil {
+			if time.Since(sessionStart) > 60*time.Second {
+				consecutiveFailures = 0
+			} else {
+				consecutiveFailures++
+			}
 			logger.Info("Supervisor", "⏳ Stream session disconnected / Watchdog reset. Waiting %v cooldown before reconnecting to allow camera reboot...", reconnectCooldown)
 			select {
 			case <-ctx.Done():
