@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -125,16 +124,17 @@ func (p *CachedRecordingProvider) GetRecording(ctx context.Context, id string) (
 
 // StreamThumbnail implements RecordingProvider.
 func (p *CachedRecordingProvider) StreamThumbnail(ctx context.Context, id string, w io.Writer) error {
-	baseID := filepath.Base(id)
-	if baseID != id || strings.ContainsAny(id, `/\`) || strings.Contains(id, "..") {
+	if strings.Contains(id, "/") || strings.Contains(id, "\\") || strings.Contains(id, "..") {
 		return ErrStorageNotFound
 	}
 
 	// 1. Stream from cache if available
 	if p.cache != nil {
-		if thumbPath, ok := p.cache.GetThumbnailPath(baseID); ok {
-			cleanPath := filepath.Clean(thumbPath)
-			f, err := os.Open(cleanPath)
+		if thumbPath, ok := p.cache.GetThumbnailPath(id); ok {
+			if strings.Contains(thumbPath, "..") {
+				return ErrStorageNotFound
+			}
+			f, err := os.Open(thumbPath)
 			if err == nil {
 				defer func() { _ = f.Close() }()
 				_, copyErr := io.Copy(w, f)
@@ -146,7 +146,7 @@ func (p *CachedRecordingProvider) StreamThumbnail(ctx context.Context, id string
 	// 2. Fallback to upstream camera if supported
 	if p.upstreamFunc != nil {
 		if upstream := p.upstreamFunc(); upstream != nil {
-			return upstream.StreamThumbnail(ctx, baseID, w)
+			return upstream.StreamThumbnail(ctx, id, w)
 		}
 	}
 
@@ -155,21 +155,22 @@ func (p *CachedRecordingProvider) StreamThumbnail(ctx context.Context, id string
 
 // StreamVideo implements RecordingProvider.
 func (p *CachedRecordingProvider) StreamVideo(ctx context.Context, id string, w io.Writer, onStart func(name string, size int64)) error {
-	baseID := filepath.Base(id)
-	if baseID != id || strings.ContainsAny(id, `/\`) || strings.Contains(id, "..") {
+	if strings.Contains(id, "/") || strings.Contains(id, "\\") || strings.Contains(id, "..") {
 		return ErrStorageNotFound
 	}
 
 	// 1. Stream from cache if available
 	if p.cache != nil {
-		if videoPath, ok := p.cache.GetVideoPath(baseID); ok {
-			cleanPath := filepath.Clean(videoPath)
-			f, err := os.Open(cleanPath)
+		if videoPath, ok := p.cache.GetVideoPath(id); ok {
+			if strings.Contains(videoPath, "..") {
+				return ErrStorageNotFound
+			}
+			f, err := os.Open(videoPath)
 			if err == nil {
 				defer func() { _ = f.Close() }()
 				stat, statErr := f.Stat()
 				if statErr == nil && onStart != nil {
-					name := fmt.Sprintf("event_%s.mp4", baseID)
+					name := fmt.Sprintf("event_%s.mp4", id)
 					onStart(name, stat.Size())
 				}
 				_, copyErr := io.Copy(w, f)
@@ -181,7 +182,7 @@ func (p *CachedRecordingProvider) StreamVideo(ctx context.Context, id string, w 
 	// 2. Fallback to upstream camera
 	if p.upstreamFunc != nil {
 		if upstream := p.upstreamFunc(); upstream != nil {
-			return upstream.StreamVideo(ctx, baseID, w, onStart)
+			return upstream.StreamVideo(ctx, id, w, onStart)
 		}
 	}
 
@@ -191,14 +192,13 @@ func (p *CachedRecordingProvider) StreamVideo(ctx context.Context, id string, w 
 // GetCachedVideoPath returns the local path to the cached video file if present.
 // This is used by the REST API to enable HTTP 206 Partial Content (seeking/scrubbing).
 func (p *CachedRecordingProvider) GetCachedVideoPath(id string) (string, bool) {
+	if strings.Contains(id, "/") || strings.Contains(id, "\\") || strings.Contains(id, "..") {
+		return "", false
+	}
 	if p.cache == nil {
 		return "", false
 	}
-	baseID := filepath.Base(id)
-	if baseID != id || strings.ContainsAny(id, `/\`) || strings.Contains(id, "..") {
-		return "", false
-	}
-	return p.cache.GetVideoPath(baseID)
+	return p.cache.GetVideoPath(id)
 }
 
 // SyncLatest synchronizes the newest recordings from the camera into the local cache.

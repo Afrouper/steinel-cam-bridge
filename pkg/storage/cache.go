@@ -252,46 +252,54 @@ func (c *RecordingCache) Get(id string) (RecordingItem, bool) {
 
 // GetVideoPath returns the absolute path to the cached video file, if it exists.
 func (c *RecordingCache) GetVideoPath(id string) (string, bool) {
+	if strings.Contains(id, "/") || strings.Contains(id, "\\") || strings.Contains(id, "..") {
+		return "", false
+	}
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	if _, ok := c.items[id]; !ok {
 		return "", false
 	}
-	baseID := filepath.Base(id)
-	if baseID != id || strings.ContainsAny(id, `/\`) || strings.Contains(id, "..") {
+	absDir, err := filepath.Abs(c.dir)
+	if err != nil {
 		return "", false
 	}
-	cleanDir := filepath.Clean(c.dir)
-	path := filepath.Clean(filepath.Join(cleanDir, baseID+".mp4"))
-	rel, err := filepath.Rel(cleanDir, path)
-	if err != nil || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+	if !strings.HasSuffix(absDir, string(filepath.Separator)) {
+		absDir += string(filepath.Separator)
+	}
+	absPath, err := filepath.Abs(filepath.Join(absDir, id+".mp4"))
+	if err != nil || !strings.HasPrefix(absPath, absDir) {
 		return "", false
 	}
-	if fi, err := os.Stat(path); err == nil && fi.Size() > 0 {
-		return path, true
+	if fi, err := os.Stat(absPath); err == nil && fi.Size() > 0 {
+		return absPath, true
 	}
 	return "", false
 }
 
 // GetThumbnailPath returns the absolute path to the cached thumbnail JPEG, if it exists.
 func (c *RecordingCache) GetThumbnailPath(id string) (string, bool) {
+	if strings.Contains(id, "/") || strings.Contains(id, "\\") || strings.Contains(id, "..") {
+		return "", false
+	}
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	if item, ok := c.items[id]; !ok || item.ThumbnailURL == "" {
 		return "", false
 	}
-	baseID := filepath.Base(id)
-	if baseID != id || strings.ContainsAny(id, `/\`) || strings.Contains(id, "..") {
+	absDir, err := filepath.Abs(c.dir)
+	if err != nil {
 		return "", false
 	}
-	cleanDir := filepath.Clean(c.dir)
-	path := filepath.Clean(filepath.Join(cleanDir, baseID+".jpg"))
-	rel, err := filepath.Rel(cleanDir, path)
-	if err != nil || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+	if !strings.HasSuffix(absDir, string(filepath.Separator)) {
+		absDir += string(filepath.Separator)
+	}
+	absPath, err := filepath.Abs(filepath.Join(absDir, id+".jpg"))
+	if err != nil || !strings.HasPrefix(absPath, absDir) {
 		return "", false
 	}
-	if fi, err := os.Stat(path); err == nil && fi.Size() > 0 {
-		return path, true
+	if fi, err := os.Stat(absPath); err == nil && fi.Size() > 0 {
+		return absPath, true
 	}
 	return "", false
 }
