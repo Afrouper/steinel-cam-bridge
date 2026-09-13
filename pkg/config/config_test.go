@@ -251,4 +251,3 @@ func TestLayer4_CacheFlags(t *testing.T) {
 	assert.Equal(t, 30, cfg.CacheRecordings)
 	assert.Equal(t, "/flag/cache", cfg.CacheDir)
 }
-

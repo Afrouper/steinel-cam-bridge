@@ -128,7 +128,7 @@ func (p *CachedRecordingProvider) StreamThumbnail(ctx context.Context, id string
 		if thumbPath, ok := p.cache.GetThumbnailPath(id); ok {
 			f, err := os.Open(thumbPath)
 			if err == nil {
-				defer f.Close()
+				defer func() { _ = f.Close() }()
 				_, copyErr := io.Copy(w, f)
 				return copyErr
 			}
@@ -152,7 +152,7 @@ func (p *CachedRecordingProvider) StreamVideo(ctx context.Context, id string, w 
 		if videoPath, ok := p.cache.GetVideoPath(id); ok {
 			f, err := os.Open(videoPath)
 			if err == nil {
-				defer f.Close()
+				defer func() { _ = f.Close() }()
 				stat, statErr := f.Stat()
 				if statErr == nil && onStart != nil {
 					name := fmt.Sprintf("event_%s.mp4", id)
@@ -270,7 +270,7 @@ func (p *CachedRecordingProvider) SyncLatest(ctx context.Context) ([]RecordingIt
 		// Brief delay to let the camera's embedded CPU breathe between downloads
 		select {
 		case <-ctx.Done():
-			break
+			return newlyCached, ctx.Err()
 		case <-time.After(500 * time.Millisecond):
 		}
 	}

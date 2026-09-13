@@ -15,12 +15,12 @@ import (
 
 // mockUpstreamProvider implements RecordingProvider for testing
 type mockUpstreamProvider struct {
-	listCalls   int32
-	videoCalls  int32
-	recordings  []RecordingItem
-	videoData   map[string][]byte
-	listErr     error
-	streamErr   error
+	listCalls  int32
+	videoCalls int32
+	recordings []RecordingItem
+	videoData  map[string][]byte
+	listErr    error
+	streamErr  error
 }
 
 func (m *mockUpstreamProvider) ListRecordings(ctx context.Context, start, end time.Time, page, limit int, eventType string) (*RecordingListResponse, error) {
