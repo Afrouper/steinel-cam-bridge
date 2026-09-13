@@ -2,6 +2,13 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.3.8-beta.3
+
+### 🐛 Fix Snapshot-Extraktion mit FFmpeg
+- **Explizites MJPEG-Ausgabeformat (`-f mjpeg`)**:
+  - Behebt den Fehler `Unable to choose an output format for '...jpg.tmp'`, indem das Ausgabeformat für FFmpeg explizit als MJPEG deklariert und temporäre Snapshot-Dateien als `.tmp_<id>.jpg` angelegt werden.
+  - Ermöglicht das erfolgreiche Generieren von 5s-Snapshots und Dashboards-/Push-Thumbnails aus heruntergeladenen MP4-Clips.
+
 ## 1.3.8-beta.2
 
 ### 🛡️ Exponentieller Reconnect-Backoff & Schutz vor CPU-Überlastung bei Kamera-Events
