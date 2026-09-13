@@ -162,22 +162,22 @@ Egal ob Scrypted als **Home Assistant Add-on** oder als eigenständige Instanz l
 
 ---
 
-## 🗄️ SD-Karten REST API (Ereignisse, Snapshots & Video-Download)
+## 🗄️ SD-Karten REST API & Lokaler Aufnahme-Cache (Ereignisse, Snapshots & Video-Download)
 
-Die Bridge stellt auf Port `8000` eine direkte 1:1 REST-API bereit, um Aufnahmen der internen SD-Karte abzufragen und ohne Umwege per HTTP-Stream herunterzuladen (Zero-Disk I/O).
+Die Bridge stellt auf Port `8000` eine direkte 1:1 REST-API bereit, um Aufnahmen der internen SD-Karte abzufragen, per HTTP-Stream herunterzuladen oder direkt aus dem lokalen Cache der Bridge abzuspielen:
 
 | Endpunkt | Methode | Beschreibung |
 |---|---|---|
-| `/api/sdcard/events` | `GET` | Liefert die JSON-Liste aller Video-Ereignisse (Query-Parameter: `start`, `end`, `page`, `limit`) |
-| `/api/sdcard/events/{id}/thumbnail.jpg` | `GET` | Liefert das JPEG-Vorschaubild der Aufnahme direkt aus dem Kameraspeicher (sofern vom Modell unterstützt, sonst `HTTP 501 Not Implemented`) |
-| `/api/sdcard/events/{id}/video.mp4` | `GET` | Streamt die vollständige MP4-Aufnahme (2560x1440 HEVC / AAC) als Binärstream (inkl. Hardware-Überlastungsschutz) |
-
-> [!NOTE]
-> **SD-Karten Snapshots vs. Video-Downloads**:
-> Manche Kameramodelle (u. a. Steinel L 625 CAM SC) legen auf der internen MicroSD-Karte ausschließlich vollständige Video-Clips (`event_<timestamp>.mp4`) und keine separaten JPEG-Dateien ab. Um Wartezeiten und Schnittstellen-Blockaden zu vermeiden, quittiert `/api/sdcard/events/{id}/thumbnail.jpg` bei solchen Modellen Anfragen sofort mit `HTTP 501 Not Implemented`. Das MP4-Video steht unter `/api/sdcard/events/{id}/video.mp4` uneingeschränkt zum Download und zur Wiedergabe bereit.
+| `/api/sdcard/events` | `GET` | Liefert die JSON-Liste aller Video-Ereignisse (Query-Parameter: `start`, `end`, `page`, `limit`). Standardmäßig direkt aus dem schnellen lokalen Cache! |
+| `/api/sdcard/events/{id}/thumbnail.jpg` | `GET` | Liefert das extrahierte JPEG-Vorschaubild (5s-Keyframe) der Aufnahme direkt aus dem lokalen Speicher (ideal für Home Assistant Push-Benachrichtigungen) |
+| `/api/sdcard/events/{id}/video.mp4` | `GET` | Streamt die MP4-Aufnahme (2560x1440 HEVC / AAC). Bei gecachten Dateien mit vollem HTTP 206 Range-Support für sofortiges Vor- und Zurückspulen |
 
 > [!TIP]
-> **Eingebauter Hardware-Schutz (Concurrency = 1)**: Um die kleine Embedded-CPU der Steinel-Kamera vor Überlastung zu schützen, erlaubt die Bridge immer nur **genau einen aktiven Download gleichzeitig**. Parallele Abfragen werden mit `HTTP 429 Too Many Requests` beantwortet. Bricht ein Client den Download vorzeitig ab, stoppt die Bridge den Kamera-Transfer sofort.
+> **Lokaler Aufnahme-Cache & automatisches Housekeeping**:
+> Die Bridge hält standardmäßig die **letzten 10 Aufnahmen** (`CACHE_RECORDINGS=10`, ca. 80–150 MB) im lokalen Speicher vor (`/data/recordings`). Bei Erkennung einer neuen Aufnahme wird der Clip automatisch im Hintergrund heruntergeladen und ein 5-Sekunden-Snapshot generiert. Ältere Aufnahmen werden per automatischem Housekeeping (FIFO) bereinigt. Anfragen werden ohne Belastung der Kamera-CPU mit 0 ms Latenz beantwortet.
+
+> [!NOTE]
+> **Eingebauter Hardware-Schutz (Concurrency = 1)**: Um die kleine Embedded-CPU der Steinel-Kamera vor Überlastung zu schützen, erlaubt die Bridge beim Zugriff auf die Kamera immer nur **genau einen aktiven Transfer gleichzeitig**. Gecachte Aufnahmen und Snapshots werden hingegen ohne Kamera-Beteiligung parallel direkt von der Festplatte ausgeliefert.
 
 ---
 
