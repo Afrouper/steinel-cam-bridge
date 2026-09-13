@@ -2,6 +2,22 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.3.8-beta.2
+
+### 🛡️ Exponentieller Reconnect-Backoff & Schutz vor CPU-Überlastung bei Kamera-Events
+- **Exponentieller Backoff im Supervisor (`pkg/driver/l625.go`)**:
+  - Verhindert Reconnect-Stürme nach Kamera-Neustarts oder Verbindungsverlusten.
+  - Statt alle 15 Sekunden stur anzufragen, greift nun ein abgestufter Backoff: 15 s -> 30 s -> 60 s -> 120 s (max. 2 Minuten).
+  - Greift gleichermaßen für Pure-Go- und CGO-Treiber.
+- **Erhöhte WebRTC ICE Grace Period (20 s statt 5 s)**:
+  - Kurzzeitige WLAN-Jitter oder CPU-Spitzen während des MP4-Flash-Schreibens brechen die WebRTC-Sitzung nicht mehr nach 5 Sekunden ab.
+- **Entzerrte Post-Motion SD-Karten-Abfrage (35 s)**:
+  - Die Kamera zeichnet bei Bewegung 30-sekündige Videoclips auf. Die Wartezeit vor der Event-Synchronisation wurde von 20 s auf 35 s angehoben, sodass Befehle erst nach dem Schließen der MP4-Datei an die Kamera gesendet werden.
+- **Deaktivierbare periodische SD-Karten-Synchronisation (`sdcard_sync_interval: 0`)**:
+  - Durch Setzen von `sdcard_sync_interval: 0` kann die zyklische Abfrage der SD-Karte vollständig abgeschaltet werden (ideal für Scrypted-Nutzer, die HomeKit Secure Video nutzen).
+- **ONVIF `SetSynchronizationPoint` & `Subscribe` Unterstützung**:
+  - Standardkonforme Antworten für Scrypted-Anfragen zur Vermeidung von Fehlern im Log.
+
 ## 1.3.8-beta.1
 
 ### 🎞️ Lokaler Aufnahme-Cache, automatische Snapshot-Generierung & Housekeeping (Issue #30)
