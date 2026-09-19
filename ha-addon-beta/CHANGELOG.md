@@ -2,6 +2,29 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.3.8-beta.6
+
+### 🐛 Fix 15-Sekunden-Disconnect im Pure-Go Nabto-Treiber (`pkg/nabtopure`)
+- **Entfernen der künstlichen 15s-Deadline in `Stream.ReadMsg()`**:
+  - `Stream.ReadMsg()` wartet nun passiv auf dem Signalisierungskanal, bis neue Nachrichten (z. B. Renegotiation Offers oder ICE-Updates) eintreffen oder der Stream aktiv geschlossen wird (`io.EOF`).
+  - Dies entspricht exakt der offiziellen Semantik des Nabto C-SDKs (`nabto_client_stream_read_all`), das ebenfalls keinen Inaktivitäts-Timeout auf dem Signalisierungs-Stream besitzt.
+  - **Behebt**: Den periodischen Verbindungsabbruch nach exakt 14–15 Sekunden (`Video track read ended: EOF`) und die dadurch abgewürgten SD-Karten-Downloads (`read/write on closed pipe`) bei Wahl von `nabto_driver: pure`.
+  - **Absicherung**: Zusätzlicher Nil-Check für `s.client` in ACK-Sendeschleifen und neue Unit-Tests für passives Idle-Warten.
+
+## 1.3.8-beta.5
+
+### ⚡ Eliminierung von Chunk-Buffer Drops & Validierung der SD-Aufnahmen
+- **Puffervergrößerung für binäre Chanks (`chunkChan`)**: Kapazität von 32 auf 1024 Chunks erhöht, um Packet-Drops bei schnellen SD-Übertragungen zu verhindern.
+- **Backpressure & Drain**: Flusskontrolle in `HandleBinaryChunk` und vollständiges Entleeren (`drain`) aller gepufferten Chunks bei `action: "end"`.
+- **Dateigrößen-Validierung & Auto-Purge**: Strikte Validierung der heruntergeladenen MP4-Größe gegen den Kamera-Index; automatische Bereinigung unvollständiger Dateien (`LoadExisting`) beim Bridge-Start.
+
+## 1.3.8-beta.4
+
+### 🏠 Dual MQTT Topic Pattern & Home Assistant Auto-Discovery
+- **Dual Topic Pattern**: `event/recording` (nicht retained für Event-Automatisierungen) und `recording/latest` (retained für UI/State).
+- **Home Assistant Sensor**: Automatische Discovery des Sensors `sensor.<deviceid>_letzte_sd_aufnahme` mit Zeitstempel als State und Video/Thumbnail-Metadaten als Attribute.
+- **Thumbnail Self-Healing**: Automatisches Nachgenerieren fehlender Thumbnails für gecachte Videos beim Start.
+
 ## 1.3.8-beta.3
 
 ### 🐛 Fix Snapshot-Extraktion mit FFmpeg

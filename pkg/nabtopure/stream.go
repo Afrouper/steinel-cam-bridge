@@ -149,13 +149,9 @@ func (s *Stream) Open(timeout time.Duration) error {
 }
 
 // ReadMsg reads a 4-byte little-endian length-prefixed WebRTC signaling message.
+// It blocks passively until a message is received or the stream is closed, matching Nabto C-SDK semantics.
 func (s *Stream) ReadMsg() ([]byte, error) {
-	deadline := time.Now().Add(15 * time.Second)
 	for {
-		if time.Now().After(deadline) {
-			return nil, fmt.Errorf("read signaling message timed out after 15s")
-		}
-
 		s.mu.Lock()
 		if s.closed {
 			s.mu.Unlock()
@@ -186,7 +182,9 @@ func (s *Stream) ReadMsg() ([]byte, error) {
 		case <-time.After(2 * time.Second):
 			// Retransmit ACK if waiting for camera
 			ackPkt := s.buildACKPacket(nil)
-			_ = s.client.writeRawStream(ackPkt)
+			if s.client != nil {
+				_ = s.client.writeRawStream(ackPkt)
+			}
 			continue
 		}
 
@@ -219,7 +217,9 @@ func (s *Stream) ReadMsg() ([]byte, error) {
 		if hasNewData || (hdr.flags&StreamFlagACK) != 0 {
 			// Acknowledge received data
 			ackPkt := s.buildACKPacket(nil)
-			_ = s.client.writeRawStream(ackPkt)
+			if s.client != nil {
+				_ = s.client.writeRawStream(ackPkt)
+			}
 		}
 	}
 }

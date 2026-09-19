@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"io"
 	"testing"
+	"time"
 )
 
 func TestStreamSYNPacketBuildAndParse(t *testing.T) {
@@ -91,3 +92,34 @@ func TestStreamReadMsg(t *testing.T) {
 		t.Fatalf("expected io.EOF on closed stream, got %v", err)
 	}
 }
+
+func TestStreamReadMsgIdleAndClose(t *testing.T) {
+	s := NewStream(nil, 0, 1234)
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := s.ReadMsg()
+		errCh <- err
+	}()
+
+	// Ensure ReadMsg is blocking while idle
+	select {
+	case err := <-errCh:
+		t.Fatalf("ReadMsg returned prematurely: %v", err)
+	case <-time.After(100 * time.Millisecond):
+		// Expected: stream remains blocking on idle
+	}
+
+	// Close stream and verify ReadMsg unblocks with io.EOF
+	s.Close()
+
+	select {
+	case err := <-errCh:
+		if err != io.EOF {
+			t.Fatalf("expected io.EOF on stream Close, got %v", err)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("ReadMsg did not unblock after stream Close")
+	}
+}
+
