@@ -2,6 +2,18 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.3.8-beta.7
+
+### 🤫 Entrümpelung der Log-Ausgaben & Reduzierung des Default-Caches auf 5 Clips
+- **Herabstufung interner Transfer- und Poll-Meldungen auf `DEBUG`**:
+  - `[SDCard] 📋 Received event list with ...`: Die periodische 2-Minuten-Abfrage der SD-Karte loggt unter `INFO` nun überhaupt nichts mehr, wenn keine neue Aufnahme vorliegt.
+  - `[CacheProvider] 📥 Pre-loading recording ...`, `[SDCard] 📥 Transfer started ...`, `[SDCard] ✅ Transfer completed ...` und `[Cache] 💾 Cached recording ...` wurden auf `DEBUG`-Level verschoben.
+- **Prägnante `INFO`-Meldung pro neuer Aufnahme**:
+  - Pro aufgenommenem Event wird nun genau **eine** Zeile mit Zeitstempel, Clip-ID, Dateiname, Dateigröße in MB und Thumbnail-Status geloggt:  
+    `[INFO] [Recording Sync] 🆕 New recording cached: 1789844189 (event_1789844189.mp4, 6.6 MB, Thumb: true)`
+- **Reduzierung des Standard-Aufnahme-Caches (`cache_recordings`) von 10 auf 5**:
+  - Halbiert die anfängliche Ladezeit bei leerem Cache und spart Speicherplatz (ca. 35–40 MB).
+
 ## 1.3.8-beta.6
 
 ### 🐛 Fix 15-Sekunden-Disconnect im Pure-Go Nabto-Treiber (`pkg/nabtopure`)
