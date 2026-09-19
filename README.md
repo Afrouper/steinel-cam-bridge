@@ -295,6 +295,21 @@ Die Konfiguration erfolgt nach den Grundsätzen einer [12-Factor App](https://12
 | `LOG_FORMAT` | — | `console` | Ausgabeformat der Logs: `console` (menschenlesbar mit Timestamps) oder `json` (strukturiertes JSON) |
 | `IS_BETA` / `BETA` | `-beta` | `false` | Kennzeichnet die Instanz bei der IAM-Registrierung auf der Kamera als Beta (`steinel-bridge-beta-...`) |
 
+#### Nabto Treiber-Vergleich: CGo vs. Pure Go (`nabto_driver`)
+
+Die Bridge bietet für die **Steinel L 625 CAM SC** zwei austauschbare Nabto Edge Treiber-Implementierungen. Sämtliche übergeordneten Features (WebRTC-Streaming, Zwei-Wege-Audio, SD-Karten-Aufnahmen, MQTT, Home Assistant Sensoren, Exponential Backoff und Watchdogs) funktionieren **zu 100 % identisch und unabhängig** von der Treiber-Wahl:
+
+| Kriterium | CGo Treiber (`nabto_driver: cgo`) *(Standard)* | Pure Go Treiber (`nabto_driver: pure`) *(Experimentell)* |
+| :--- | :--- | :--- |
+| **Technologie** | Offizielle C-Bibliothek (`libnabto_client.so`) von Nabto ApS über CGo | 100 % nativer Go-Code (Pion DTLS 1.2 + Custom Stream Framer) |
+| **Abhängigkeiten** | Lädt beim 1. Start die native C-Library automatisch nach | **Null externe C-Abhängigkeiten** (reines Go Single Binary) |
+| **Kamera-Findung** | Unterstützt mDNS-Broadcasts und automatische Erkennung | Benötigt zwingend die Angabe der festen lokalen IP (`camera_ip`) |
+| **Verbindungsaufbau** | Extrem fehlertolerant durch jahrelang gereifte C-State-Machine | Funktioniert stabil; bei abruptem Stromverlust der Kamera evtl. 1 Reconnect-Zyklus mehr |
+| **Ressourcen** | Minimaler CGo-Overhead beim Context-Switching | Sehr speichereffizient dank eigenem `sync.Pool` Buffer-Pooling |
+
+> [!TIP]
+> **Empfehlung**: Für den produktiven Einsatz im Home Assistant Add-on ist **`nabto_driver: cgo`** als Standardeinstellung die beste Wahl (*„Set and forget“*). Der **`pure`**-Treiber ist ideal für schlanke Container-Umgebungen, Architekturen ohne C-Toolchain oder als zukunftssichere, vollständig quelloffene Alternative.
+
 ### MQTT & Home Assistant Integration
 
 | Umgebungsvariable | CLI-Flag | Standard | Beschreibung |
