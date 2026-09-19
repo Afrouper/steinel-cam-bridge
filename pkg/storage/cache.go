@@ -266,7 +266,7 @@ func (c *RecordingCache) Add(ctx context.Context, item RecordingItem, videoReade
 	c.pruneLocked()
 	c.mu.Unlock()
 
-	logger.Info("Cache", "💾 Cached recording %s (%s, %.1f MB, Thumb: %t)",
+	logger.Debug("Cache", "💾 Cached recording %s (%s, %.1f MB, Thumb: %t)",
 		id, item.FileName, float64(written)/(1024*1024), item.ThumbnailURL != "")
 
 	return &item, nil

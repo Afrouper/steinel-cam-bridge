@@ -254,7 +254,7 @@ func (p *CachedRecordingProvider) SyncLatest(ctx context.Context) ([]RecordingIt
 			continue
 		}
 
-		logger.Info("CacheProvider", "📥 Pre-loading recording %s (%s) into bridge cache...", item.ID, item.FileName)
+		logger.Debug("CacheProvider", "📥 Pre-loading recording %s (%s) into bridge cache...", item.ID, item.FileName)
 
 		// Download video via streaming pipe into cache
 		pr, pw := io.Pipe()

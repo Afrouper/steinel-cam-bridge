@@ -119,11 +119,11 @@ func (s *RecordingSyncer) syncOnce(ctx context.Context, isInitial bool) {
 			s.mu.Unlock()
 
 			if isFirst {
-				logger.Info("Recording Sync", "📌 Initial sync: Cached latest recording %s (%s, Thumb: %t)",
-					latest.ID, latest.FileName, latest.ThumbnailURL != "")
+				logger.Info("Recording Sync", "📌 Initial sync: Cached latest recording %s (%s, %.1f MB, Thumb: %t)",
+					latest.ID, latest.FileName, float64(latest.FileSizeBytes)/(1024*1024), latest.ThumbnailURL != "")
 			} else {
-				logger.Info("Recording Sync", "🆕 New recording cached: %s (%s, Thumb: %t)",
-					latest.ID, latest.FileName, latest.ThumbnailURL != "")
+				logger.Info("Recording Sync", "🆕 New recording cached: %s (%s, %.1f MB, Thumb: %t)",
+					latest.ID, latest.FileName, float64(latest.FileSizeBytes)/(1024*1024), latest.ThumbnailURL != "")
 			}
 			logger.Trace("Recording Sync", "Recording details: %+v", latest)
 

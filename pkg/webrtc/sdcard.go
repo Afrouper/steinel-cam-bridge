@@ -119,7 +119,7 @@ func (m *SDCardManager) GetEventList(ctx context.Context, startTime, endTime int
 		if resp == nil {
 			return &EventListResponse{Count: 0, Total: 0, List: []EventItem{}}, nil
 		}
-		logger.Info("SDCard", "📋 Received event list with %d items (Total: %d)", resp.Count, resp.Total)
+		logger.Debug("SDCard", "📋 Received event list with %d items (Total: %d)", resp.Count, resp.Total)
 		logger.Trace("SDCard", "Event list items: %+v", resp.List)
 		return resp, nil
 	}
@@ -400,10 +400,10 @@ func (m *SDCardManager) HandleJSONMessage(msg map[string]interface{}) bool {
 					t.fileSize = int64(size)
 				}
 			}
-			logger.Info("SDCard", "📥 Transfer started: %s (Size: %d bytes)", t.fileName, t.fileSize)
+			logger.Debug("SDCard", "📥 Transfer started: %s (Size: %d bytes)", t.fileName, t.fileSize)
 
 		case "end":
-			logger.Info("SDCard", "✅ Transfer completed: %s", t.fileName)
+			logger.Debug("SDCard", "✅ Transfer completed: %s", t.fileName)
 			close(t.doneChan)
 
 		case "state":
