@@ -174,3 +174,54 @@ func TestRecordingCacheListAndPagination(t *testing.T) {
 	assert.Equal(t, "4", respFiltered.List[0].ID)
 	assert.Equal(t, "2", respFiltered.List[2].ID)
 }
+
+func TestRecordingCacheSelfHealingAndLatest(t *testing.T) {
+	tempDir := t.TempDir()
+	mockExt := NewMockExtractor()
+
+	// 1. Manually prepare an MP4 and JSON metadata without thumbnail (simulating beta.2 failed extraction)
+	now := time.Now().UTC().Truncate(time.Second)
+	mp4Path := filepath.Join(tempDir, "3001.mp4")
+	require.NoError(t, os.WriteFile(mp4Path, []byte("fake-mp4-data"), 0644))
+
+	jsonPath := filepath.Join(tempDir, "3001.json")
+	metaJSON := []byte(`{
+		"id": "3001",
+		"start_time": "` + now.Format(time.RFC3339) + `",
+		"end_time": "` + now.Add(30*time.Second).Format(time.RFC3339) + `",
+		"duration_sec": 30,
+		"file_name": "event_3001.mp4",
+		"video_url": "/api/sdcard/events/3001/video.mp4",
+		"thumbnail_url": ""
+	}`)
+	require.NoError(t, os.WriteFile(jsonPath, metaJSON, 0644))
+
+	// Leftover temporary files from earlier extraction or download
+	tmpFile1 := filepath.Join(tempDir, "test.tmp")
+	require.NoError(t, os.WriteFile(tmpFile1, []byte("garbage1"), 0644))
+	tmpFile2 := filepath.Join(tempDir, ".tmp_3001_deadbeef.jpg")
+	require.NoError(t, os.WriteFile(tmpFile2, []byte("garbage2"), 0644))
+
+	// 2. Instantiate cache - LoadExisting should self-heal the missing thumbnail
+	cache := NewRecordingCache(tempDir, 5, mockExt)
+
+	assert.Equal(t, 1, cache.Count())
+	assert.True(t, cache.Has("3001"))
+
+	// Verify temporary files were removed
+	assert.NoFileExists(t, tmpFile1)
+	assert.NoFileExists(t, tmpFile2)
+
+	// Verify thumbnail was created and self-healed
+	thumbPath := filepath.Join(tempDir, "3001.jpg")
+	assert.FileExists(t, thumbPath)
+
+	item, ok := cache.Get("3001")
+	assert.True(t, ok)
+	assert.Equal(t, "/api/sdcard/events/3001/thumbnail.jpg", item.ThumbnailURL)
+
+	// Verify Latest() method
+	latest, ok := cache.Latest()
+	assert.True(t, ok)
+	assert.Equal(t, "3001", latest.ID)
+}

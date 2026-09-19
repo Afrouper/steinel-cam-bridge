@@ -137,12 +137,22 @@ func (c *Client) publishDiscovery(client paho.Client) {
 		"command_topic":   fmt.Sprintf("%s/resolution/set", c.baseTopic),
 	})
 
-	// 10. Event (Letzte SD-Aufnahme)
+	// 10. Event (Letzte SD-Aufnahme Event Trigger)
 	publishEntity("event", "recording", map[string]interface{}{
-		"name":        "Letzte SD-Aufnahme",
+		"name":        "Letzte SD-Aufnahme Event",
 		"icon":        "mdi:video-box",
 		"state_topic": fmt.Sprintf("%s/event/recording", c.baseTopic),
 		"event_types": []string{"motion", "manual", "alarm", "record", "plan", "all"},
+	})
+
+	// 11. Sensor (Letzte SD-Aufnahme Status & Attribute)
+	publishEntity("sensor", "recording_latest", map[string]interface{}{
+		"name":                  "Letzte SD-Aufnahme",
+		"icon":                  "mdi:filmstrip",
+		"device_class":          "timestamp",
+		"state_topic":           fmt.Sprintf("%s/recording/latest", c.baseTopic),
+		"value_template":        "{{ value_json.timestamp }}",
+		"json_attributes_topic": fmt.Sprintf("%s/recording/latest", c.baseTopic),
 	})
 
 	logger.Info("MQTT", "📢 Published Home Assistant Auto-Discovery entities for %s under %s", c.nodeID, c.cfg.DiscoveryPrefix)

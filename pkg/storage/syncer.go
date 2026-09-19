@@ -49,15 +49,16 @@ func (s *RecordingSyncer) TriggerSync() {
 func (s *RecordingSyncer) Start(ctx context.Context) {
 	if s.pollInterval > 0 {
 		logger.Info("Recording Sync", "🚀 Background sync engine started (Interval: %v)", s.pollInterval)
-		// Step 1: Initial Sync after 3 seconds startup delay
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(3 * time.Second):
-			s.syncOnce(ctx, true)
-		}
 	} else {
-		logger.Info("Recording Sync", "ℹ️ Periodic background sync is disabled (Interval <= 0). Syncing will only occur on motion triggers.")
+		logger.Info("Recording Sync", "ℹ️ Periodic background sync is disabled (Interval <= 0). Syncing will only occur on startup and motion triggers.")
+	}
+
+	// Step 1: Initial Sync / Startup Publication after 3 seconds startup delay
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(3 * time.Second):
+		s.syncOnce(ctx, true)
 	}
 
 	var tickerChan <-chan time.Time

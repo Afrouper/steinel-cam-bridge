@@ -50,10 +50,26 @@ an der Hardware.
     - **Alarmsirene (`siren.siren`)**: Sofortiges Auslösen und Stoppen des akustischen Alarms der Außenleuchte mit
       Live-Zustandsrückmeldung (`ON` / `OFF`).
   - **🎬 Ereignisse & Aufnahmen**:
-    - **Letzte SD-Aufnahme (`event.letzte_sd_aufnahme`)**: Übermittlung des neuesten MicroSD-Aufnahmeereignisses mit 
-      Metadaten (Zeitstempel, Dauer – standardmäßig 30 s, Dateigröße) und direkter URL für das MP4-Video (`video_url`).
-      Sofern vom Kameramodell unterstützt, wird zusätzlich `thumbnail_url` bereitgestellt (Kameras wie die L 625 CAM SC speichern
-      reine MP4-Videodateien ohne separate Standbilder).
+    - **Letzte SD-Aufnahme (`sensor.letzte_sd_aufnahme`)**: Persistente Entität (`retained: true`) für Dashboards mit aktuellem Zeitstempel und vollständigen Attributen (`thumbnail_url`, `video_url`, `duration_sec`, `file_size_bytes`).
+    - **Letzte SD-Aufnahme Event (`event.letzte_sd_aufnahme_event`)**: Flüchtiger Event-Trigger (`retained: false`) für Automationen und Push-Mitteilungen ohne unerwünschte Geister-Benachrichtigungen bei Home-Assistant-Neustarts.
+    - **Automatisches Thumbnail Self-Healing**: Fehlende Vorschaubilder bestehender Aufnahmen werden beim Start automatisch repariert.
+  - **📊 Home Assistant Dashboard Beispiel (Lovelace Markdown-Karte)**:
+    ```yaml
+    type: markdown
+    title: Letzte Aufnahme
+    content: >
+      {% set rec = states.sensor.steinel_cam_letzte_sd_aufnahme.attributes %}
+      {% if rec.thumbnail_url %}
+      ![Vorschau]({{ rec.thumbnail_url }})
+
+      **Zeitpunkt:** {{ states('sensor.steinel_cam_letzte_sd_aufnahme') | as_timestamp | timestamp_custom('%d.%m.%Y %H:%M:%S') }}
+      **Dauer:** {{ rec.duration_sec }}s | **Größe:** {{ (rec.file_size_bytes / 1024 / 1024) | round(1) }} MB
+
+      [▶️ Video ansehen / herunterladen]({{ rec.video_url }})
+      {% else %}
+      Noch keine Aufnahme im Cache.
+      {% endif %}
+    ```
   - **⚙️ Konfiguration (Einstellungsbereich)**:
     - **Dämmerungsschwelle (`number.lux_threshold`)**: Schaltschwelle in Lux (`2`–`1000 lx`), ab welcher Umgebungsdunkelheit das Licht bei Bewegung schaltet.
     - **Hauptlicht Helligkeit (`number.highlight`)**: Maximale Leuchtstärke des Flutlichts (`10`–`100 %`).

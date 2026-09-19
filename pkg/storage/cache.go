@@ -78,8 +78,8 @@ func (c *RecordingCache) LoadExisting() error {
 	for _, entry := range entries {
 		name := entry.Name()
 
-		// Clean up leftover temporary files from aborted transfers
-		if strings.HasSuffix(name, ".tmp") {
+		// Clean up leftover temporary files from aborted transfers or thumbnail extractions
+		if strings.HasSuffix(name, ".tmp") || strings.HasPrefix(name, ".tmp_") {
 			_ = os.Remove(filepath.Join(c.dir, name))
 			continue
 		}
@@ -115,7 +115,29 @@ func (c *RecordingCache) LoadExisting() error {
 			if tStat, err := os.Stat(thumbPath); err == nil && tStat.Size() > 0 {
 				item.ThumbnailURL = fmt.Sprintf("/api/sdcard/events/%s/thumbnail.jpg", id)
 			} else {
-				item.ThumbnailURL = ""
+				// Thumbnail missing or empty: Attempt self-healing if extractor is available
+				if c.extractor != nil && c.extractor.IsAvailable() {
+					offset := 5 * time.Second
+					if item.DurationSeconds > 0 && item.DurationSeconds < 5 {
+						offset = time.Duration(item.DurationSeconds/2) * time.Second
+					}
+					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+					extractErr := c.extractor.ExtractFrame(ctx, videoPath, offset, thumbPath)
+					cancel()
+					if extractErr == nil {
+						item.ThumbnailURL = fmt.Sprintf("/api/sdcard/events/%s/thumbnail.jpg", id)
+						logger.Info("Cache", "🩹 Self-healed missing thumbnail for recording %s", id)
+						// Update metadata JSON on disk so it is up-to-date
+						if metaBytes, err := json.MarshalIndent(item, "", "  "); err == nil {
+							_ = os.WriteFile(jsonPath, metaBytes, 0644)
+						}
+					} else {
+						logger.Debug("Cache", "Self-healing thumbnail failed for %s: %v", id, extractErr)
+						item.ThumbnailURL = ""
+					}
+				} else {
+					item.ThumbnailURL = ""
+				}
 			}
 
 			c.items[id] = item
@@ -363,6 +385,17 @@ func (c *RecordingCache) Count() int {
 // MaxCount returns the configured capacity of the cache.
 func (c *RecordingCache) MaxCount() int {
 	return c.maxCount
+}
+
+// Latest returns the most recent cached recording item, if available.
+func (c *RecordingCache) Latest() (*RecordingItem, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if len(c.sortedIDs) == 0 {
+		return nil, false
+	}
+	item := c.items[c.sortedIDs[0]]
+	return &item, true
 }
 
 // OldestStartTime returns the StartTime of the oldest cached recording.
