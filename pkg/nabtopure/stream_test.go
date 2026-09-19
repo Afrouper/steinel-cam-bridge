@@ -122,4 +122,3 @@ func TestStreamReadMsgIdleAndClose(t *testing.T) {
 		t.Fatal("ReadMsg did not unblock after stream Close")
 	}
 }
-
