@@ -234,7 +234,7 @@ func (m *SDCardManager) streamFile(ctx context.Context, cmd string, timestamp in
 	transfer := &activeTransfer{
 		cmd:       cmd,
 		timestamp: timestamp,
-		chunkChan: make(chan []byte, 32),
+		chunkChan: make(chan []byte, 1024),
 		doneChan:  make(chan struct{}),
 		errChan:   make(chan error, 1),
 		lastData:  time.Now(),
@@ -282,8 +282,23 @@ func (m *SDCardManager) streamFile(ctx context.Context, cmd string, timestamp in
 			return err
 
 		case <-transfer.doneChan:
-			// Transfer completed successfully
-			return nil
+			// Transfer completed from camera side: drain any remaining buffered chunks
+			for {
+				select {
+				case chunk := <-transfer.chunkChan:
+					if len(chunk) > 0 {
+						if _, err := w.Write(chunk); err != nil {
+							m.sendStopCommand(cmd)
+							return err
+						}
+					}
+				default:
+					if flusher, ok := w.(interface{ Flush() }); ok {
+						flusher.Flush()
+					}
+					return nil
+				}
+			}
 
 		case <-ticker.C:
 			// Transfer watchdog: abort if camera goes silent for > 10s
@@ -434,9 +449,14 @@ func (m *SDCardManager) HandleBinaryChunk(data []byte) {
 	// Trace: log chunk receipt with size only, NEVER dump raw MP4 video bytes
 	logger.Trace("SDCard", "Received binary chunk for %s (%d bytes)", t.fileName, len(data))
 
+	// Deliver chunk to consumer with backpressure timeout. Never drop chunks silently as it corrupts MP4 files.
 	select {
 	case t.chunkChan <- data:
-	default:
-		logger.Warn("SDCard", "⚠️ Chunk buffer full, dropping chunk (%d bytes)", len(data))
+	case <-time.After(5 * time.Second):
+		logger.Error("SDCard", "❌ Chunk buffer full for >5s, consumer stalled. Aborting transfer for %s", t.fileName)
+		select {
+		case t.errChan <- fmt.Errorf("chunk buffer full for >5s: consumer stalled"):
+		default:
+		}
 	}
 }

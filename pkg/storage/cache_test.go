@@ -225,3 +225,39 @@ func TestRecordingCacheSelfHealingAndLatest(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, "3001", latest.ID)
 }
+
+func TestRecordingCachePurgeTruncatedAndAddValidation(t *testing.T) {
+	tempDir := t.TempDir()
+	mockExt := NewMockExtractor()
+
+	// 1. Prepare a truncated video (reported size 1000 bytes, but only 200 bytes on disk)
+	mp4Path := filepath.Join(tempDir, "4001.mp4")
+	require.NoError(t, os.WriteFile(mp4Path, []byte("short-corrupted-data"), 0644))
+
+	jsonPath := filepath.Join(tempDir, "4001.json")
+	metaJSON := []byte(`{
+		"id": "4001",
+		"file_name": "event_4001.mp4",
+		"file_size_bytes": 1000000
+	}`)
+	require.NoError(t, os.WriteFile(jsonPath, metaJSON, 0644))
+
+	// LoadExisting should purge the truncated recording
+	cache := NewRecordingCache(tempDir, 5, mockExt)
+	assert.Equal(t, 0, cache.Count())
+	assert.False(t, cache.Has("4001"))
+	assert.NoFileExists(t, mp4Path)
+	assert.NoFileExists(t, jsonPath)
+
+	// 2. Test Add validation: item reporting 500 bytes but stream only provides 100 bytes
+	item := RecordingItem{
+		ID:            "4002",
+		FileSizeBytes: 500,
+	}
+	shortStream := bytes.NewReader([]byte("short-stream-100-bytes"))
+	_, err := cache.Add(context.Background(), item, shortStream)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "incomplete video download")
+	assert.NoFileExists(t, filepath.Join(tempDir, "4002.mp4"))
+	assert.NoFileExists(t, filepath.Join(tempDir, "4002.mp4.tmp"))
+}

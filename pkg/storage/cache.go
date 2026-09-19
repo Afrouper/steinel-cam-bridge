@@ -107,6 +107,16 @@ func (c *RecordingCache) LoadExisting() error {
 				continue
 			}
 
+			// Validate if file was incompletely downloaded / corrupted (e.g. from earlier dropped chunks)
+			if item.FileSizeBytes > 0 && vStat.Size() < item.FileSizeBytes {
+				logger.Warn("Cache", "🗑️ Purging truncated/corrupted recording %s (disk: %d bytes, expected: %d bytes)",
+					id, vStat.Size(), item.FileSizeBytes)
+				_ = os.Remove(videoPath)
+				_ = os.Remove(jsonPath)
+				_ = os.Remove(filepath.Join(c.dir, id+".jpg"))
+				continue
+			}
+
 			// Ensure valid paths and URLs
 			item.FileSizeBytes = vStat.Size()
 			item.VideoURL = fmt.Sprintf("/api/sdcard/events/%s/video.mp4", id)
@@ -188,6 +198,12 @@ func (c *RecordingCache) Add(ctx context.Context, item RecordingItem, videoReade
 	if written == 0 {
 		_ = os.Remove(tmpVideoPath)
 		return nil, fmt.Errorf("received 0 bytes of video data")
+	}
+
+	// Validate against reported file size (if known): prevent saving truncated video
+	if item.FileSizeBytes > 0 && written < item.FileSizeBytes {
+		_ = os.Remove(tmpVideoPath)
+		return nil, fmt.Errorf("incomplete video download: received %d of %d bytes", written, item.FileSizeBytes)
 	}
 
 	// Atomic rename to final video path
