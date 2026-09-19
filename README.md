@@ -50,10 +50,26 @@ an der Hardware.
     - **Alarmsirene (`siren.siren`)**: Sofortiges Auslösen und Stoppen des akustischen Alarms der Außenleuchte mit
       Live-Zustandsrückmeldung (`ON` / `OFF`).
   - **🎬 Ereignisse & Aufnahmen**:
-    - **Letzte SD-Aufnahme (`event.letzte_sd_aufnahme`)**: Übermittlung des neuesten MicroSD-Aufnahmeereignisses mit 
-      Metadaten (Zeitstempel, Dauer – standardmäßig 30 s, Dateigröße) und direkter URL für das MP4-Video (`video_url`).
-      Sofern vom Kameramodell unterstützt, wird zusätzlich `thumbnail_url` bereitgestellt (Kameras wie die L 625 CAM SC speichern
-      reine MP4-Videodateien ohne separate Standbilder).
+    - **Letzte SD-Aufnahme (`sensor.letzte_sd_aufnahme`)**: Persistente Entität (`retained: true`) für Dashboards mit aktuellem Zeitstempel und vollständigen Attributen (`thumbnail_url`, `video_url`, `duration_sec`, `file_size_bytes`).
+    - **Letzte SD-Aufnahme Event (`event.letzte_sd_aufnahme_event`)**: Flüchtiger Event-Trigger (`retained: false`) für Automationen und Push-Mitteilungen ohne unerwünschte Geister-Benachrichtigungen bei Home-Assistant-Neustarts.
+    - **Automatisches Thumbnail Self-Healing**: Fehlende Vorschaubilder bestehender Aufnahmen werden beim Start automatisch repariert.
+  - **📊 Home Assistant Dashboard Beispiel (Lovelace Markdown-Karte)**:
+    ```yaml
+    type: markdown
+    title: Letzte Aufnahme
+    content: >
+      {% set rec = states.sensor.steinel_cam_letzte_sd_aufnahme.attributes %}
+      {% if rec.thumbnail_url %}
+      ![Vorschau]({{ rec.thumbnail_url }})
+
+      **Zeitpunkt:** {{ states('sensor.steinel_cam_letzte_sd_aufnahme') | as_timestamp | timestamp_custom('%d.%m.%Y %H:%M:%S') }}
+      **Dauer:** {{ rec.duration_sec }}s | **Größe:** {{ (rec.file_size_bytes / 1024 / 1024) | round(1) }} MB
+
+      [▶️ Video ansehen / herunterladen]({{ rec.video_url }})
+      {% else %}
+      Noch keine Aufnahme im Cache.
+      {% endif %}
+    ```
   - **⚙️ Konfiguration (Einstellungsbereich)**:
     - **Dämmerungsschwelle (`number.lux_threshold`)**: Schaltschwelle in Lux (`2`–`1000 lx`), ab welcher Umgebungsdunkelheit das Licht bei Bewegung schaltet.
     - **Hauptlicht Helligkeit (`number.highlight`)**: Maximale Leuchtstärke des Flutlichts (`10`–`100 %`).
@@ -162,22 +178,22 @@ Egal ob Scrypted als **Home Assistant Add-on** oder als eigenständige Instanz l
 
 ---
 
-## 🗄️ SD-Karten REST API (Ereignisse, Snapshots & Video-Download)
+## 🗄️ SD-Karten REST API & Lokaler Aufnahme-Cache (Ereignisse, Snapshots & Video-Download)
 
-Die Bridge stellt auf Port `8000` eine direkte 1:1 REST-API bereit, um Aufnahmen der internen SD-Karte abzufragen und ohne Umwege per HTTP-Stream herunterzuladen (Zero-Disk I/O).
+Die Bridge stellt auf Port `8000` eine direkte 1:1 REST-API bereit, um Aufnahmen der internen SD-Karte abzufragen, per HTTP-Stream herunterzuladen oder direkt aus dem lokalen Cache der Bridge abzuspielen:
 
 | Endpunkt | Methode | Beschreibung |
 |---|---|---|
-| `/api/sdcard/events` | `GET` | Liefert die JSON-Liste aller Video-Ereignisse (Query-Parameter: `start`, `end`, `page`, `limit`) |
-| `/api/sdcard/events/{id}/thumbnail.jpg` | `GET` | Liefert das JPEG-Vorschaubild der Aufnahme direkt aus dem Kameraspeicher (sofern vom Modell unterstützt, sonst `HTTP 501 Not Implemented`) |
-| `/api/sdcard/events/{id}/video.mp4` | `GET` | Streamt die vollständige MP4-Aufnahme (2560x1440 HEVC / AAC) als Binärstream (inkl. Hardware-Überlastungsschutz) |
-
-> [!NOTE]
-> **SD-Karten Snapshots vs. Video-Downloads**:
-> Manche Kameramodelle (u. a. Steinel L 625 CAM SC) legen auf der internen MicroSD-Karte ausschließlich vollständige Video-Clips (`event_<timestamp>.mp4`) und keine separaten JPEG-Dateien ab. Um Wartezeiten und Schnittstellen-Blockaden zu vermeiden, quittiert `/api/sdcard/events/{id}/thumbnail.jpg` bei solchen Modellen Anfragen sofort mit `HTTP 501 Not Implemented`. Das MP4-Video steht unter `/api/sdcard/events/{id}/video.mp4` uneingeschränkt zum Download und zur Wiedergabe bereit.
+| `/api/sdcard/events` | `GET` | Liefert die JSON-Liste aller Video-Ereignisse (Query-Parameter: `start`, `end`, `page`, `limit`). Standardmäßig direkt aus dem schnellen lokalen Cache! |
+| `/api/sdcard/events/{id}/thumbnail.jpg` | `GET` | Liefert das extrahierte JPEG-Vorschaubild (5s-Keyframe) der Aufnahme direkt aus dem lokalen Speicher (ideal für Home Assistant Push-Benachrichtigungen) |
+| `/api/sdcard/events/{id}/video.mp4` | `GET` | Streamt die MP4-Aufnahme (2560x1440 HEVC / AAC). Bei gecachten Dateien mit vollem HTTP 206 Range-Support für sofortiges Vor- und Zurückspulen |
 
 > [!TIP]
-> **Eingebauter Hardware-Schutz (Concurrency = 1)**: Um die kleine Embedded-CPU der Steinel-Kamera vor Überlastung zu schützen, erlaubt die Bridge immer nur **genau einen aktiven Download gleichzeitig**. Parallele Abfragen werden mit `HTTP 429 Too Many Requests` beantwortet. Bricht ein Client den Download vorzeitig ab, stoppt die Bridge den Kamera-Transfer sofort.
+> **Lokaler Aufnahme-Cache & automatisches Housekeeping**:
+> Die Bridge hält standardmäßig die **letzten 10 Aufnahmen** (`CACHE_RECORDINGS=10`, ca. 80–150 MB) im lokalen Speicher vor (`/data/recordings`). Bei Erkennung einer neuen Aufnahme wird der Clip automatisch im Hintergrund heruntergeladen und ein 5-Sekunden-Snapshot generiert. Ältere Aufnahmen werden per automatischem Housekeeping (FIFO) bereinigt. Anfragen werden ohne Belastung der Kamera-CPU mit 0 ms Latenz beantwortet.
+
+> [!NOTE]
+> **Eingebauter Hardware-Schutz (Concurrency = 1)**: Um die kleine Embedded-CPU der Steinel-Kamera vor Überlastung zu schützen, erlaubt die Bridge beim Zugriff auf die Kamera immer nur **genau einen aktiven Transfer gleichzeitig**. Gecachte Aufnahmen und Snapshots werden hingegen ohne Kamera-Beteiligung parallel direkt von der Festplatte ausgeliefert.
 
 ---
 
@@ -278,6 +294,21 @@ Die Konfiguration erfolgt nach den Grundsätzen einer [12-Factor App](https://12
 | `LOG_LEVEL` | `-log-level` | `info` | Log-Level zur System- und Fehleranalyse: `error`, `warning` / `warn`, `info` (Standard), `debug` (ausführlich), `trace` (inkl. Steuersignale & Pakete) |
 | `LOG_FORMAT` | — | `console` | Ausgabeformat der Logs: `console` (menschenlesbar mit Timestamps) oder `json` (strukturiertes JSON) |
 | `IS_BETA` / `BETA` | `-beta` | `false` | Kennzeichnet die Instanz bei der IAM-Registrierung auf der Kamera als Beta (`steinel-bridge-beta-...`) |
+
+#### Nabto Treiber-Vergleich: CGo vs. Pure Go (`nabto_driver`)
+
+Die Bridge bietet für die **Steinel L 625 CAM SC** zwei austauschbare Nabto Edge Treiber-Implementierungen. Sämtliche übergeordneten Features (WebRTC-Streaming, Zwei-Wege-Audio, SD-Karten-Aufnahmen, MQTT, Home Assistant Sensoren, Exponential Backoff und Watchdogs) funktionieren **zu 100 % identisch und unabhängig** von der Treiber-Wahl:
+
+| Kriterium | CGo Treiber (`nabto_driver: cgo`) *(Standard)* | Pure Go Treiber (`nabto_driver: pure`) *(Experimentell)* |
+| :--- | :--- | :--- |
+| **Technologie** | Offizielle C-Bibliothek (`libnabto_client.so`) von Nabto ApS über CGo | 100 % nativer Go-Code (Pion DTLS 1.2 + Custom Stream Framer) |
+| **Abhängigkeiten** | Lädt beim 1. Start die native C-Library automatisch nach | **Null externe C-Abhängigkeiten** (reines Go Single Binary) |
+| **Kamera-Findung** | Unterstützt mDNS-Broadcasts und automatische Erkennung | Benötigt zwingend die Angabe der festen lokalen IP (`camera_ip`) |
+| **Verbindungsaufbau** | Extrem fehlertolerant durch jahrelang gereifte C-State-Machine | Funktioniert stabil; bei abruptem Stromverlust der Kamera evtl. 1 Reconnect-Zyklus mehr |
+| **Ressourcen** | Minimaler CGo-Overhead beim Context-Switching | Sehr speichereffizient dank eigenem `sync.Pool` Buffer-Pooling |
+
+> [!TIP]
+> **Empfehlung**: Für den produktiven Einsatz im Home Assistant Add-on ist **`nabto_driver: cgo`** als Standardeinstellung die beste Wahl (*„Set and forget“*). Der **`pure`**-Treiber ist ideal für schlanke Container-Umgebungen, Architekturen ohne C-Toolchain oder als zukunftssichere, vollständig quelloffene Alternative.
 
 ### MQTT & Home Assistant Integration
 
