@@ -27,7 +27,7 @@ options:
   rtsp_port: 8554
   onvif_port: 8000
   sdcard_sync_interval: 120
-  cache_recordings: 10
+  cache_recordings: 5
   nabto_driver: "cgo"
   log_level: "info"
 schema:

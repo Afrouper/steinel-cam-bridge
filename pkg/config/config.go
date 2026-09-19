@@ -75,7 +75,7 @@ func NewDefaultConfig() *Config {
 		NabtoDriver:        "cgo",
 		BridgeUser:         "",
 		BridgePass:         "",
-		CacheRecordings:    10,
+		CacheRecordings:    5,
 		CacheDir:           cacheDir,
 		IsBeta:             false,
 		AppVersion:         "dev",

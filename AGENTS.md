@@ -73,7 +73,7 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
     1. CLI-Flags (`-ip`, `-type`, `-user`, `-pass`, `-bridge-user`, `-bridge-pass`, `-cache-recordings`, `-cache-dir`, `-qr`, `-key`, `-port`, `-path`, `-res`, `-audio-codec`, `-onvif`, `-reset-pairing`, `-mqtt-broker`, `-sync-interval`, `-log-level`, etc.)
     2. Umgebungsvariablen (`CAMERA_IP`, `CAMERA_TYPE`, `CAMERA_USER`, `CAMERA_PASSWORD`, `BRIDGE_USER`, `BRIDGE_PASS`, `CACHE_RECORDINGS`, `CACHE_DIR`, `QR_CODE`, `KEY_PATH`, `RESOLUTION`, `AUDIO_CODEC`, `RTSP_PORT`, `ONVIF_PORT`, `MQTT_BROKER`, `SDCARD_SYNC_INTERVAL`, `USE_CGO_NABTO`, `LOG_LEVEL`, `LOG_FORMAT`, etc.)
     3. Home Assistant Add-on Konfigurationsdatei (`/data/options.json` & Home Assistant Supervisor MQTT Auto-Discovery API via `X-Supervisor-Token`)
-    4. Sichere Standardwerte (z. B. `cache_recordings: 10` für die letzten 10 Aufnahmen im lokalen Speicher).
+    4. Sichere Standardwerte (z. B. `cache_recordings: 5` für die letzten 5 Aufnahmen im lokalen Speicher).
   - `probe.go`: Führt bei `camera_type: "auto"` einen schnellen Non-Blocking TCP-Probe auf Port `34567` durch, um automatisch zwischen `L 620 CAM` (Xiongmai Sofia) und `L 625 CAM SC` (Nabto Edge) zu unterscheiden.
 
 - **`pkg/supervisor/`** *(Neu in Milestone 2)*:

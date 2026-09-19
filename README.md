@@ -190,7 +190,7 @@ Die Bridge stellt auf Port `8000` eine direkte 1:1 REST-API bereit, um Aufnahmen
 
 > [!TIP]
 > **Lokaler Aufnahme-Cache & automatisches Housekeeping**:
-> Die Bridge hält standardmäßig die **letzten 10 Aufnahmen** (`CACHE_RECORDINGS=10`, ca. 80–150 MB) im lokalen Speicher vor (`/data/recordings`). Bei Erkennung einer neuen Aufnahme wird der Clip automatisch im Hintergrund heruntergeladen und ein 5-Sekunden-Snapshot generiert. Ältere Aufnahmen werden per automatischem Housekeeping (FIFO) bereinigt. Anfragen werden ohne Belastung der Kamera-CPU mit 0 ms Latenz beantwortet.
+> Die Bridge hält standardmäßig die **letzten 5 Aufnahmen** (`CACHE_RECORDINGS=5`, ca. 40–75 MB) im lokalen Speicher vor (`/data/recordings`). Bei Erkennung einer neuen Aufnahme wird der Clip automatisch im Hintergrund heruntergeladen und ein 5-Sekunden-Snapshot generiert. Ältere Aufnahmen werden per automatischem Housekeeping (FIFO) bereinigt. Anfragen werden ohne Belastung der Kamera-CPU mit 0 ms Latenz beantwortet.
 
 > [!NOTE]
 > **Eingebauter Hardware-Schutz (Concurrency = 1)**: Um die kleine Embedded-CPU der Steinel-Kamera vor Überlastung zu schützen, erlaubt die Bridge beim Zugriff auf die Kamera immer nur **genau einen aktiven Transfer gleichzeitig**. Gecachte Aufnahmen und Snapshots werden hingegen ohne Kamera-Beteiligung parallel direkt von der Festplatte ausgeliefert.

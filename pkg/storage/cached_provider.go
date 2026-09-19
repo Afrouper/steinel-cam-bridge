@@ -226,7 +226,7 @@ func (p *CachedRecordingProvider) SyncLatest(ctx context.Context) ([]RecordingIt
 	// Query top N recordings from camera
 	queryLimit := p.cache.MaxCount()
 	if queryLimit <= 0 {
-		queryLimit = 10
+		queryLimit = 5
 	}
 
 	queryCtx, cancel := context.WithTimeout(ctx, 15*time.Second)

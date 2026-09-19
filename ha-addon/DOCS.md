@@ -38,7 +38,7 @@ Der QR-Code wird initial für das Pairing benötigt. Danach muss er nicht mehr z
 | `rtsp_port` | Port | `8554` | RTSP Server Port |
 | `onvif_port` | Port | `8000` | ONVIF HTTP & SD-Karten REST API Service Port |
 | `sdcard_sync_interval` | Ganzzahl | `60` | Intervall in Sekunden für die Hintergrundabfrage neuer SD-Karten-Aufnahmen (5–300 s) |
-| `cache_recordings` | Ganzzahl | `10` | Anzahl der jüngsten Aufnahmen im lokalen Bridge-Cache (0–100). Hält Videos und 5s-Snapshots vor, entlastet die Kamera und ermöglicht sofortiges Abspielen / Vorschaubilder (0 = deaktiviert) |
+| `cache_recordings` | Ganzzahl | `5` | Anzahl der jüngsten Aufnahmen im lokalen Bridge-Cache (0–100). Hält Videos und 5s-Snapshots vor, entlastet die Kamera und ermöglicht sofortiges Abspielen / Vorschaubilder (0 = deaktiviert) |
 | `nabto_driver` | Liste | `cgo` | Nabto-Treiber-Engine für L 625: `cgo` (offizielles C-SDK, empfohlen & Standard) oder `pure` (nativer Go-Stack, experimentell) |
 | `reset_pairing` | Boolean | `false` | Setzen Sie diese Option auf `true`, um den gespeicherten Schlüssel zu löschen und ein erneutes Pairing der L 625 mit dem angegebenen `qr_code` zu erzwingen |
 | `log_level` | Liste | `info` | Detaillierungsgrad des Loggings: `trace`, `debug`, `info` (Standard), `warning`, `error` |

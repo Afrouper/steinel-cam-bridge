@@ -34,7 +34,7 @@ func TestLayer1_CodeDefaults(t *testing.T) {
 	assert.Equal(t, 120, cfg.SDCardSyncInterval)
 	assert.Equal(t, "", cfg.BridgeUser)
 	assert.Equal(t, "", cfg.BridgePass)
-	assert.Equal(t, 10, cfg.CacheRecordings)
+	assert.Equal(t, 5, cfg.CacheRecordings)
 	assert.NotEmpty(t, cfg.CacheDir)
 }
 
