@@ -34,6 +34,8 @@ func TestLayer1_CodeDefaults(t *testing.T) {
 	assert.Equal(t, 120, cfg.SDCardSyncInterval)
 	assert.Equal(t, "", cfg.BridgeUser)
 	assert.Equal(t, "", cfg.BridgePass)
+	assert.Equal(t, 5, cfg.CacheRecordings)
+	assert.NotEmpty(t, cfg.CacheDir)
 }
 
 // TestLayer2_ConfigFileOverridesDefaults verifies that options.json overrides Layer 1 defaults
@@ -57,7 +59,9 @@ func TestLayer2_ConfigFileOverridesDefaults(t *testing.T) {
 		"mqtt_discovery_prefix": "ha_test",
 		"nabto_driver": "cgo",
 		"bridge_user": "buser_test",
-		"bridge_pass": "bpass_test"
+		"bridge_pass": "bpass_test",
+		"cache_recordings": 25,
+		"cache_dir": "/custom/cache"
 	}`
 	err := os.WriteFile(optsFile, []byte(jsonContent), 0644)
 	require.NoError(t, err)
@@ -83,6 +87,8 @@ func TestLayer2_ConfigFileOverridesDefaults(t *testing.T) {
 	assert.Equal(t, "cgo", cfg.NabtoDriver)
 	assert.Equal(t, "buser_test", cfg.BridgeUser)
 	assert.Equal(t, "bpass_test", cfg.BridgePass)
+	assert.Equal(t, 25, cfg.CacheRecordings)
+	assert.Equal(t, "/custom/cache", cfg.CacheDir)
 }
 
 // TestLayer2_UseCGONabtoFallback verifies that boolean use_cgo_nabto in options.json sets NabtoDriver to cgo
@@ -222,4 +228,26 @@ func TestProbeCameraModel(t *testing.T) {
 		assert.True(t, isL620)
 		assert.Equal(t, "L 620 CAM", model)
 	}
+}
+
+func TestLayer3_CacheEnvVars(t *testing.T) {
+	t.Setenv("CACHE_RECORDINGS", "15")
+	t.Setenv("CACHE_DIR", "/env/cache/recordings")
+
+	cfg := Resolve("", nil)
+	assert.Equal(t, 15, cfg.CacheRecordings)
+	assert.Equal(t, "/env/cache/recordings", cfg.CacheDir)
+}
+
+func TestLayer4_CacheFlags(t *testing.T) {
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.Int("cache-recordings", 10, "usage")
+	fs.String("cache-dir", "", "usage")
+
+	err := fs.Parse([]string{"-cache-recordings", "30", "-cache-dir", "/flag/cache"})
+	require.NoError(t, err)
+
+	cfg := Resolve("", fs)
+	assert.Equal(t, 30, cfg.CacheRecordings)
+	assert.Equal(t, "/flag/cache", cfg.CacheDir)
 }

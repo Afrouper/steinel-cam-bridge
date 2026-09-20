@@ -124,7 +124,12 @@ func (s *Server) handleAPISDCardItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id := parts[0]
+	rawID := parts[0]
+	if strings.Contains(rawID, "/") || strings.Contains(rawID, "\\") || strings.Contains(rawID, "..") {
+		http.Error(w, "Invalid recording ID", http.StatusBadRequest)
+		return
+	}
+	id := rawID
 
 	// 1. Single recording metadata query: GET /api/sdcard/events/{id}
 	if len(parts) == 1 {
@@ -171,6 +176,22 @@ func (s *Server) handleAPISDCardItem(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(buf.Bytes())
 
 	case "video.mp4", "download.mp4", "video", "stream.mp4":
+		// If cached on local disk, serve via http.ServeFile for instant seeking and Range request (HTTP 206) support
+		if fileProvider, ok := provider.(interface {
+			GetCachedVideoPath(id string) (string, bool)
+		}); ok {
+			if path, exists := fileProvider.GetCachedVideoPath(id); exists {
+				if strings.Contains(path, "..") {
+					http.Error(w, "Invalid file path", http.StatusBadRequest)
+					return
+				}
+				w.Header().Set("Content-Type", "video/mp4")
+				w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", fmt.Sprintf("event_%s.mp4", id)))
+				http.ServeFile(w, r, path)
+				return
+			}
+		}
+
 		err := provider.StreamVideo(r.Context(), id, w, func(name string, size int64) {
 			if name == "" {
 				name = fmt.Sprintf("event_%s.mp4", id)

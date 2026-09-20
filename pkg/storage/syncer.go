@@ -47,9 +47,13 @@ func (s *RecordingSyncer) TriggerSync() {
 
 // Start runs the periodic and event-driven sync loops until ctx is cancelled.
 func (s *RecordingSyncer) Start(ctx context.Context) {
-	logger.Info("Recording Sync", "🚀 Background sync engine started (Interval: %v)", s.pollInterval)
+	if s.pollInterval > 0 {
+		logger.Info("Recording Sync", "🚀 Background sync engine started (Interval: %v)", s.pollInterval)
+	} else {
+		logger.Info("Recording Sync", "ℹ️ Periodic background sync is disabled (Interval <= 0). Syncing will only occur on startup and motion triggers.")
+	}
 
-	// Step 1: Initial Sync after 3 seconds startup delay
+	// Step 1: Initial Sync / Startup Publication after 3 seconds startup delay
 	select {
 	case <-ctx.Done():
 		return
@@ -57,23 +61,28 @@ func (s *RecordingSyncer) Start(ctx context.Context) {
 		s.syncOnce(ctx, true)
 	}
 
-	ticker := time.NewTicker(s.pollInterval)
-	defer ticker.Stop()
+	var tickerChan <-chan time.Time
+	if s.pollInterval > 0 {
+		ticker := time.NewTicker(s.pollInterval)
+		defer ticker.Stop()
+		tickerChan = ticker.C
+	}
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 
-		case <-ticker.C:
+		case <-tickerChan:
 			s.syncOnce(ctx, false)
 
 		case <-s.triggerChan:
-			// Wait 20 seconds so camera can finalize writing the MP4 file to SD card without concurrent I/O stress
+			logger.Info("Recording Sync", "⏳ Motion detected: waiting 35s to allow camera to finish writing MP4 clip before syncing...")
+			// Wait 35 seconds so camera can finalize writing the MP4 file to SD card without concurrent I/O stress
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(20 * time.Second):
+			case <-time.After(35 * time.Second):
 			}
 			s.syncOnce(ctx, false)
 		}
@@ -89,6 +98,43 @@ func (s *RecordingSyncer) syncOnce(ctx context.Context, isInitial bool) {
 		return
 	}
 
+	// 1. Proactive cache sync if provider wraps a local RecordingCache
+	if cacheSyncer, ok := provider.(interface {
+		SyncLatest(ctx context.Context) ([]RecordingItem, error)
+	}); ok {
+		newlyCached, err := cacheSyncer.SyncLatest(ctx)
+		if err != nil {
+			if isInitial {
+				logger.Warn("Recording Sync", "⚠️ Initial cache sync returned error: %v", err)
+			} else {
+				logger.Debug("Recording Sync", "Periodic cache sync error: %v", err)
+			}
+		}
+		if len(newlyCached) > 0 {
+			latest := newlyCached[0]
+			s.mu.Lock()
+			isFirst := (s.lastSeenID == "")
+			s.lastSeenID = latest.ID
+			s.lastSeenTime = latest.StartTime
+			s.mu.Unlock()
+
+			if isFirst {
+				logger.Info("Recording Sync", "📌 Initial sync: Cached latest recording %s (%s, %.1f MB, Thumb: %t)",
+					latest.ID, latest.FileName, float64(latest.FileSizeBytes)/(1024*1024), latest.ThumbnailURL != "")
+			} else {
+				logger.Info("Recording Sync", "🆕 New recording cached: %s (%s, %.1f MB, Thumb: %t)",
+					latest.ID, latest.FileName, float64(latest.FileSizeBytes)/(1024*1024), latest.ThumbnailURL != "")
+			}
+			logger.Trace("Recording Sync", "Recording details: %+v", latest)
+
+			if s.onNewRecording != nil {
+				s.onNewRecording(latest)
+			}
+			return
+		}
+	}
+
+	// 2. Query fallback (for non-cached providers or when cache already holds latest items)
 	reqCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 

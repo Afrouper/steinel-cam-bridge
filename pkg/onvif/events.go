@@ -85,8 +85,19 @@ func (h *EventHandler) Handle(action string, reqXML string, host string, subID s
 	if strings.Contains(action, "Unsubscribe") || strings.Contains(reqXML, "Unsubscribe") {
 		return h.unsubscribe(subID), nil
 	}
+	if strings.Contains(action, "SetSynchronizationPoint") || strings.Contains(reqXML, "SetSynchronizationPoint") {
+		return h.setSynchronizationPoint(), nil
+	}
+	if strings.Contains(action, "Subscribe") || strings.Contains(reqXML, "Subscribe") {
+		return h.createPullPointSubscription(host), nil
+	}
 
 	return "", fmt.Errorf("unhandled event action: %s", action)
+}
+
+func (h *EventHandler) setSynchronizationPoint() string {
+	h.broadcastMotionEvent(h.eventBus.GetStatus().IsMotion)
+	return fmt.Sprintf(`<tev:SetSynchronizationPointResponse xmlns:tev="%s"/>`, NS_TEV)
 }
 
 func (h *EventHandler) getServiceCapabilities() string {

@@ -27,6 +27,7 @@ options:
   rtsp_port: 8554
   onvif_port: 8000
   sdcard_sync_interval: 120
+  cache_recordings: 5
   nabto_driver: "cgo"
   log_level: "info"
 schema:
@@ -43,6 +44,7 @@ schema:
   rtsp_port: "port"
   onvif_port: "port"
   sdcard_sync_interval: "int(5,300)?"
+  cache_recordings: "int(0,100)?"
   nabto_driver: "list(cgo|pure)?"
   log_level: "list(trace|debug|info|warning|error)?"
   mqtt_broker: "str?"

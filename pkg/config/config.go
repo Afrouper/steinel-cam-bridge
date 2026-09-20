@@ -39,12 +39,19 @@ type Config struct {
 	NabtoDriver        string // "cgo" (default) or "pure"
 	BridgeUser         string
 	BridgePass         string
+	CacheRecordings    int
+	CacheDir           string
 	IsBeta             bool
 	AppVersion         string
 }
 
 // NewDefaultConfig returns a Config initialized with Layer 1 (code) defaults.
 func NewDefaultConfig() *Config {
+	cacheDir := "data/recordings"
+	if fi, err := os.Stat("/data"); err == nil && fi.IsDir() {
+		cacheDir = "/data/recordings"
+	}
+
 	return &Config{
 		NabtoConfig: &nabto.Config{
 			CameraIP:   "",
@@ -68,6 +75,8 @@ func NewDefaultConfig() *Config {
 		NabtoDriver:        "cgo",
 		BridgeUser:         "",
 		BridgePass:         "",
+		CacheRecordings:    5,
+		CacheDir:           cacheDir,
 		IsBeta:             false,
 		AppVersion:         "dev",
 	}
@@ -102,12 +111,14 @@ func LoadHomeAssistantOptionsFromPath(path string, cfg *Config) {
 		MQTTTopicPrefix     string `json:"mqtt_topic_prefix"`
 		MQTTDiscoveryPrefix string `json:"mqtt_discovery_prefix"`
 		LogLevel            string `json:"log_level"`
-		SDCardSyncInterval  int    `json:"sdcard_sync_interval"`
+		SDCardSyncInterval  *int   `json:"sdcard_sync_interval"`
 		NabtoDriver         string `json:"nabto_driver"`
 		UseCGONabto         bool   `json:"use_cgo_nabto"`
 		BridgeUser          string `json:"bridge_user"`
 		BridgePass          string `json:"bridge_pass"`
 		BridgePassword      string `json:"bridge_password"`
+		CacheRecordings     *int   `json:"cache_recordings"`
+		CacheDir            string `json:"cache_dir"`
 	}
 
 	if err := json.Unmarshal(data, &opts); err != nil {
@@ -171,8 +182,8 @@ func LoadHomeAssistantOptionsFromPath(path string, cfg *Config) {
 	if opts.LogLevel != "" {
 		cfg.LogLevel = opts.LogLevel
 	}
-	if opts.SDCardSyncInterval > 0 {
-		cfg.SDCardSyncInterval = opts.SDCardSyncInterval
+	if opts.SDCardSyncInterval != nil && *opts.SDCardSyncInterval >= 0 {
+		cfg.SDCardSyncInterval = *opts.SDCardSyncInterval
 	}
 	if opts.NabtoDriver != "" {
 		cfg.NabtoDriver = opts.NabtoDriver
@@ -186,6 +197,12 @@ func LoadHomeAssistantOptionsFromPath(path string, cfg *Config) {
 		cfg.BridgePass = opts.BridgePass
 	} else if opts.BridgePassword != "" {
 		cfg.BridgePass = opts.BridgePassword
+	}
+	if opts.CacheRecordings != nil {
+		cfg.CacheRecordings = *opts.CacheRecordings
+	}
+	if opts.CacheDir != "" {
+		cfg.CacheDir = opts.CacheDir
 	}
 }
 
@@ -286,11 +303,11 @@ func Resolve(optionsPath string, fs *flag.FlagSet) *Config {
 		cfg.MQTTDiscovery = md
 	}
 	if syncStr := os.Getenv("SDCARD_SYNC_INTERVAL"); syncStr != "" {
-		if s, err := strconv.Atoi(syncStr); err == nil && s > 0 {
+		if s, err := strconv.Atoi(syncStr); err == nil && s >= 0 {
 			cfg.SDCardSyncInterval = s
 		}
 	} else if syncStr := os.Getenv("SYNC_INTERVAL"); syncStr != "" {
-		if s, err := strconv.Atoi(syncStr); err == nil && s > 0 {
+		if s, err := strconv.Atoi(syncStr); err == nil && s >= 0 {
 			cfg.SDCardSyncInterval = s
 		}
 	}
@@ -324,6 +341,14 @@ func Resolve(optionsPath string, fs *flag.FlagSet) *Config {
 		cfg.AppVersion = envVer
 	} else if envVer := os.Getenv("VERSION"); envVer != "" {
 		cfg.AppVersion = envVer
+	}
+	if cacheRecStr := os.Getenv("CACHE_RECORDINGS"); cacheRecStr != "" {
+		if c, err := strconv.Atoi(cacheRecStr); err == nil && c >= 0 {
+			cfg.CacheRecordings = c
+		}
+	}
+	if cd := os.Getenv("CACHE_DIR"); cd != "" {
+		cfg.CacheDir = cd
 	}
 
 	// 4. Layer 4: Explicit CLI Flags (POSIX)
@@ -376,9 +401,15 @@ func Resolve(optionsPath string, fs *flag.FlagSet) *Config {
 			case "audio-codec":
 				cfg.AudioCodec = f.Value.String()
 			case "sync-interval", "sdcard-sync-interval":
-				if s, err := strconv.Atoi(f.Value.String()); err == nil && s > 0 {
+				if s, err := strconv.Atoi(f.Value.String()); err == nil && s >= 0 {
 					cfg.SDCardSyncInterval = s
 				}
+			case "cache-recordings":
+				if c, err := strconv.Atoi(f.Value.String()); err == nil && c >= 0 {
+					cfg.CacheRecordings = c
+				}
+			case "cache-dir":
+				cfg.CacheDir = f.Value.String()
 			case "nabto-driver":
 				cfg.NabtoDriver = f.Value.String()
 			case "use-cgo":

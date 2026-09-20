@@ -42,8 +42,14 @@ func (c *Client) PublishRecordingEvent(item storage.RecordingItem) {
 	data, err := json.Marshal(payload)
 	if err == nil {
 		logger.Debug("MQTT", "📢 Publishing recording event to %s/event/recording: %s", c.baseTopic, string(data))
-		token := cl.Publish(fmt.Sprintf("%s/event/recording", c.baseTopic), 1, false, data)
-		_ = token.WaitTimeout(2 * time.Second)
+		// 1. Momentary event for automations (non-retained)
+		tokenEvt := cl.Publish(fmt.Sprintf("%s/event/recording", c.baseTopic), 1, false, data)
+		_ = tokenEvt.WaitTimeout(2 * time.Second)
+
+		// 2. Persistent state for dashboards and sensors (retained)
+		logger.Debug("MQTT", "📢 Publishing latest recording state to %s/recording/latest: %s", c.baseTopic, string(data))
+		tokenLatest := cl.Publish(fmt.Sprintf("%s/recording/latest", c.baseTopic), 1, true, data)
+		_ = tokenLatest.WaitTimeout(2 * time.Second)
 	}
 }
 
