@@ -2,6 +2,35 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge** Add-on werden hier dokumentiert.
 
+## 1.3.8
+
+### 🎬 Lokaler Aufnahme-Cache, Snapshot-Generierung & Pure-Go Stabilität
+
+- **Lokaler Aufnahme-Cache (`/data/recordings`) & FIFO-Housekeeping (Issue #30)**:
+  - Automatischer Download neuer SD-Karten-Aufnahmen in den lokalen Bridge-Speicher (`cache_recordings`, Standard: 5 Aufnahmen).
+  - Ringpuffer-Bereinigung: Älteste Aufnahmen und zugehörige Thumbnails werden automatisch bereinigt, sobald das konfigurierte Limit überschritten wird.
+  - Automatisches Bereinigen unvollständiger oder korrupter Aufnahmen (`LoadExisting`) beim Bridge-Start.
+- **Automatische Snapshot- & Thumbnail-Generierung**:
+  - Zuverlässige Extraktion von 5s-Snapshots direkt aus heruntergeladenen MP4-Dateien mittels integriertem, statischem FFmpeg 7.1.
+  - Temporäre Generierung mit explizitem MJPEG-Format (`-f mjpeg`) für Home Assistant Dashboards und Benachrichtigungen.
+  - Thumbnail Self-Healing: Fehlende Thumbnails bereits gecachter Videos werden beim Start automatisch nachgeneriert.
+- **Home Assistant Auto-Discovery & Dual MQTT Topic Pattern**:
+  - Vollständige MQTT Auto-Discovery des Sensors `sensor.<deviceid>_letzte_sd_aufnahme`.
+  - Saubere Trennung: `event/recording` (nicht-retained für Event-Automatisierungen) und `recording/latest` (retained für UI-Status & Dashboard-Karten).
+  - Zeitstempel als Sensor-Zustand, vollständige Metadaten (Dateiname, Dauer, Größe, Snapshot-URL, Video-URL) als Sensor-Attribute.
+- **Pure-Go Nabto Edge Treiber (`nabto_driver: pure`)**:
+  - 100% native Go-Implementierung des Nabto Edge Client Stacks ohne CGO-Abhängigkeit.
+  - Behebung des 15-Sekunden-Disconnects: `Stream.ReadMsg()` wartet passiv auf Signalisierungsereignisse ohne künstliche Timeout-Abbrüche (analog Nabto C-SDK).
+  - Beseitigung von Chunk-Drops durch erweiterte Puffer (`chunkChan` mit 1024 Chunks) und strikte Flusskontrolle mit Drain.
+  - Dateigrößen-Validierung gegen den Kamera-Index garantiert vollständige Video-Downloads.
+- **Entrümplung der Log-Ausgaben**:
+  - Periodische 2-Minuten-Abfragen der SD-Karte sowie Zwischentransfers auf `DEBUG` herabgestuft.
+  - Absolut ruhiges Protokoll bei Leerlauf: Exakt **eine** informative Zeile pro neuer Aufnahme (`[INFO] [Recording Sync] 🆕 New recording cached: ...`).
+- **Verbindungs-Resilienz & Performance**:
+  - Exponentieller Supervisor-Reconnect-Backoff (15 s -> 30 s -> 60 s -> 120 s) verhindert Reconnect-Stürme nach Reboots.
+  - Erhöhte WebRTC ICE Grace Period (20 s) schützt vor Verbindungsabbrüchen bei kurzzeitigem WLAN-Jitter oder Schreiblast auf der SD-Karte.
+  - Zyklische SD-Karten-Abfrage kann bei Bedarf vollständig deaktiviert werden (`sdcard_sync_interval: 0`).
+
 ## 1.3.7
 
 ### 🔐 Authentifizierung, NVR-Kompatibilität (Synology) & Architektur-Schärfung
