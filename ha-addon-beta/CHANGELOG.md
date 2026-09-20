@@ -2,6 +2,12 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.3.8
+
+### 🚀 Abschluss des Beta-Zyklus (Finales Release)
+- Übernahme des stabilen Release-Stands **v1.3.8**.
+- Synchronisation mit dem offiziellen Haupt-Add-on bis zum Beginn des nächsten Beta-Zyklus (v1.3.9-beta.1).
+
 ## 1.3.8-beta.7
 
 ### 🤫 Entrümpelung der Log-Ausgaben & Reduzierung des Default-Caches auf 5 Clips
