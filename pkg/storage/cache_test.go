@@ -261,3 +261,49 @@ func TestRecordingCachePurgeTruncatedAndAddValidation(t *testing.T) {
 	assert.NoFileExists(t, filepath.Join(tempDir, "4002.mp4"))
 	assert.NoFileExists(t, filepath.Join(tempDir, "4002.mp4.tmp"))
 }
+
+func TestRecordingCacheFailedMarker(t *testing.T) {
+	tempDir := t.TempDir()
+	mockExt := NewMockExtractor()
+	cache := NewRecordingCache(tempDir, 2, mockExt)
+
+	// Attempt 1: Should not permanently fail yet
+	permFailed := cache.RecordFailure("5001", os.ErrDeadlineExceeded)
+	assert.False(t, permFailed)
+	assert.False(t, cache.Has("5001"))
+	assert.False(t, cache.HasFailed("5001"))
+	assert.NoFileExists(t, filepath.Join(tempDir, "5001.failed"))
+
+	// Attempt 2: Reaches threshold (2), should mark permanently failed
+	permFailed = cache.RecordFailure("5001", os.ErrDeadlineExceeded)
+	assert.True(t, permFailed)
+	assert.True(t, cache.Has("5001"))
+	assert.True(t, cache.HasFailed("5001"))
+	assert.FileExists(t, filepath.Join(tempDir, "5001.failed"))
+
+	// Verify file content
+	content, err := os.ReadFile(filepath.Join(tempDir, "5001.failed"))
+	require.NoError(t, err)
+	assert.Contains(t, string(content), "i/o timeout")
+
+	// Test LoadExisting restores .failed marker
+	cache2 := NewRecordingCache(tempDir, 2, mockExt)
+	assert.True(t, cache2.Has("5001"))
+	assert.True(t, cache2.HasFailed("5001"))
+
+	// Test Pruning of .failed items:
+	// Add 2 valid recordings with newer timestamps -> 5001 (oldest) should be pruned
+	now := time.Now().UTC()
+	item1 := RecordingItem{ID: "5002", StartTime: now.Add(time.Minute)}
+	_, err = cache2.Add(context.Background(), item1, bytes.NewReader([]byte("video-data-1")))
+	require.NoError(t, err)
+
+	item2 := RecordingItem{ID: "5003", StartTime: now.Add(2 * time.Minute)}
+	_, err = cache2.Add(context.Background(), item2, bytes.NewReader([]byte("video-data-2")))
+	require.NoError(t, err)
+
+	// Since maxCount is 2, 5001 should be evicted
+	assert.False(t, cache2.Has("5001"))
+	assert.False(t, cache2.HasFailed("5001"))
+	assert.NoFileExists(t, filepath.Join(tempDir, "5001.failed"))
+}

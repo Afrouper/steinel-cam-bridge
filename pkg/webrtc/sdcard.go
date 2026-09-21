@@ -58,6 +58,10 @@ type SDCardManager struct {
 	// Event list response synchronization
 	eventListMu   sync.Mutex
 	eventListChan chan *EventListResponse
+
+	// Control-plane health tracking
+	consecutiveTimeouts int
+	onUnresponsive      func()
 }
 
 // NewSDCardManager creates a new SD-Card manager instance
@@ -69,6 +73,13 @@ func NewSDCardManager(sendJSONCmd func(cmd string, info map[string]interface{}) 
 
 // SetDebug is kept for backwards compatibility (no-op as log/slog manages levels globally).
 func (m *SDCardManager) SetDebug(_ bool) {}
+
+// SetUnresponsiveHandler registers a callback invoked when consecutive get_event_list queries time out.
+func (m *SDCardManager) SetUnresponsiveHandler(handler func()) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onUnresponsive = handler
+}
 
 // GetEventList queries the list of recordings from the camera's SD card within a given time range
 func (m *SDCardManager) GetEventList(ctx context.Context, startTime, endTime int64, page, limit int) (*EventListResponse, error) {
@@ -111,11 +122,17 @@ func (m *SDCardManager) GetEventList(ctx context.Context, startTime, endTime int
 
 	select {
 	case <-ctx.Done():
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			logger.Warn("SDCard", "⚠️ Context deadline exceeded waiting for get_event_list response from camera")
+			m.recordTimeout()
+		}
 		return nil, ctx.Err()
 	case <-time.After(15 * time.Second):
 		logger.Warn("SDCard", "⚠️ Timed out waiting for get_event_list response from camera")
+		m.recordTimeout()
 		return nil, ErrSDCardTimeout
 	case resp := <-respChan:
+		m.resetTimeouts()
 		if resp == nil {
 			return &EventListResponse{Count: 0, Total: 0, List: []EventItem{}}, nil
 		}
@@ -123,6 +140,25 @@ func (m *SDCardManager) GetEventList(ctx context.Context, startTime, endTime int
 		logger.Trace("SDCard", "Event list items: %+v", resp.List)
 		return resp, nil
 	}
+}
+
+func (m *SDCardManager) recordTimeout() {
+	m.mu.Lock()
+	m.consecutiveTimeouts++
+	timeouts := m.consecutiveTimeouts
+	handler := m.onUnresponsive
+	m.mu.Unlock()
+
+	if timeouts >= 3 && handler != nil {
+		logger.Error("SDCard", "🚨 Camera control plane unresponsive (%d consecutive get_event_list timeouts). Requesting session reset...", timeouts)
+		handler()
+	}
+}
+
+func (m *SDCardManager) resetTimeouts() {
+	m.mu.Lock()
+	m.consecutiveTimeouts = 0
+	m.mu.Unlock()
 }
 
 // ListRecordings implements storage.RecordingProvider
@@ -269,16 +305,17 @@ func (m *SDCardManager) streamFile(ctx context.Context, cmd string, timestamp in
 	defer ticker.Stop()
 
 	headerReported := false
+	firstChunkReceived := false
+	const initialChunkTimeout = 25 * time.Second
+	const streamChunkTimeout = 10 * time.Second
 
 	for {
 		select {
 		case <-ctx.Done():
-			// Client cancelled download (e.g. browser tab closed) -> send stop to camera
-			m.sendStopCommand(cmd)
+			// Client cancelled download (e.g. browser tab closed)
 			return ErrTransferAborted
 
 		case err := <-transfer.errChan:
-			m.sendStopCommand(cmd)
 			return err
 
 		case <-transfer.doneChan:
@@ -288,7 +325,6 @@ func (m *SDCardManager) streamFile(ctx context.Context, cmd string, timestamp in
 				case chunk := <-transfer.chunkChan:
 					if len(chunk) > 0 {
 						if _, err := w.Write(chunk); err != nil {
-							m.sendStopCommand(cmd)
 							return err
 						}
 					}
@@ -301,17 +337,27 @@ func (m *SDCardManager) streamFile(ctx context.Context, cmd string, timestamp in
 			}
 
 		case <-ticker.C:
-			// Transfer watchdog: abort if camera goes silent for > 10s
+			// Transfer watchdog: abort if camera goes silent
 			m.mu.Lock()
 			last := transfer.lastData
 			m.mu.Unlock()
-			if time.Since(last) > 10*time.Second {
-				logger.Warn("SDCard", "⚠️ Transfer stalled (>10s no data). Aborting transfer for timestamp %d...", timestamp)
-				m.sendStopCommand(cmd)
+
+			timeout := streamChunkTimeout
+			if !firstChunkReceived {
+				timeout = initialChunkTimeout
+			}
+
+			if time.Since(last) > timeout {
+				if !firstChunkReceived {
+					logger.Warn("SDCard", "⚠️ Initial transfer wait timeout (>%v no data). Aborting transfer for timestamp %d...", timeout, timestamp)
+				} else {
+					logger.Warn("SDCard", "⚠️ Transfer stalled (>%v no data). Aborting transfer for timestamp %d...", timeout, timestamp)
+				}
 				return ErrSDCardTimeout
 			}
 
 		case chunk := <-transfer.chunkChan:
+			firstChunkReceived = true
 			m.mu.Lock()
 			transfer.lastData = time.Now()
 			name := transfer.fileName
@@ -325,8 +371,7 @@ func (m *SDCardManager) streamFile(ctx context.Context, cmd string, timestamp in
 
 			if len(chunk) > 0 {
 				if _, err := w.Write(chunk); err != nil {
-					// Writer error (e.g. broken pipe) -> cancel camera transfer
-					m.sendStopCommand(cmd)
+					// Writer error (e.g. broken pipe)
 					return err
 				}
 				// Flush if writer supports http.Flusher
@@ -336,13 +381,6 @@ func (m *SDCardManager) streamFile(ctx context.Context, cmd string, timestamp in
 			}
 		}
 	}
-}
-
-func (m *SDCardManager) sendStopCommand(cmd string) {
-	info := map[string]interface{}{
-		"action": "stop",
-	}
-	_ = m.sendJSONCmd(cmd, info)
 }
 
 // HandleJSONMessage processes incoming DataChannel JSON responses for SD card events
