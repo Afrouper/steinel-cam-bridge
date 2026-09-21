@@ -2,6 +2,26 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.3.9-beta.1
+
+### 🛡️ SD-Karten Stall Recovery, Poison-Pill Schutz & Control-Plane Watchdog (Issue #39)
+
+- **Persistenter Poison-Pill Schutz mit `.failed`-Markerdateien**:
+  - Schlägt der Download einer SD-Karten-Aufnahme 2-mal in Folge fehl (z. B. durch defekte Sektoren oder Flash-Lesefehler auf der Kamera), wird der Clip dauerhaft als fehlerhaft markiert (`<id>.failed` in `/data/recordings/`).
+  - Die Synchronisationsschleife überspringt defekte Clips dauerhaft und verhindert, dass die Bridge die Kamera alle 2 Minuten erneut blockiert.
+  - Automatisches FIFO-Housekeeping: Ältere `.failed`-Dateien werden bei Erreichen des Cache-Limits sauber gelöscht.
+- **Control-Plane / SD-Card Health Watchdog**:
+  - `SDCardManager` zählt aufeinanderfolgende Timeouts bei `get_event_list` (auch bei Context-Deadlines).
+  - Bei erfolgreicher Antwort wird der Zähler sofort zurückgesetzt.
+  - Treten **3 aufeinanderfolgende Timeouts** auf (~6 Minuten Totalausfall des Steuerkanals), löst die Bridge autonom einen WebRTC-Session-Reset aus.
+  - Der Supervisor schließt WebRTC/DTLS, wartet 1 Minute Cooldown und verbindet frisch neu – die Kamera wird so verlässlich aus dem Deadlock befreit.
+- **Adaptiver Download-Watchdog**:
+  - Karenzzeit für das Eintreffen des ersten Chunks auf **25 Sekunden** erhöht (statt 10s), um langsamen SD-Karten genügend Zeit für Initial-Seek und Dateiöffnung zu geben.
+  - Nach dem ersten Chunk bleibt der 10-Sekunden-Watchdog für laufende Chunks aktiv.
+- **Entfernung des wirkungslosen `action: stop` Kommandos**:
+  - Das Steinel-Protokoll unterstützt kein `action: stop` für `get_event_video` oder `get_snapshot`.
+  - Abbrüche terminieren nun sauber lokal auf Bridge-Seite, ohne undefinierte Befehle an die Kamera zu senden.
+
 ## 1.3.8
 
 ### 🚀 Abschluss des Beta-Zyklus (Finales Release)
