@@ -9,7 +9,7 @@ require (
 	github.com/gen2brain/aac-go v0.0.0-20230119102159-ef1e76509d21
 	github.com/google/uuid v1.6.0
 	github.com/pion/dtls/v3 v3.1.9
-	github.com/pion/rtcp v1.2.17
+	github.com/pion/rtcp v1.2.18
 	github.com/pion/rtp v1.10.5
 	github.com/pion/webrtc/v4 v4.2.20
 	github.com/stretchr/testify v1.12.1
