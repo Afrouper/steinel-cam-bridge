@@ -233,7 +233,9 @@ func (b *Bridge) Run(ctx context.Context) error {
 		// Request media tracks via CoAP
 		go func() {
 			time.Sleep(200 * time.Millisecond)
-			_, _ = b.nabtoClient.RequestTracks()
+			if status, err := b.nabtoClient.RequestTracks(); err != nil || (status != 200 && status != 204 && status != 205 && status != 0) {
+				logger.Warn("WebRTC", "⚠️ Media track request returned status %d (error: %v)", status, err)
+			}
 		}()
 
 		// Start periodic MCU polling (every 2s)
