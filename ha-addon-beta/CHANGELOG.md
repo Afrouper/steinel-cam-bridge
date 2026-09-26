@@ -2,6 +2,25 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.3.9-beta.2
+
+### 📹 Synology Surveillance Station ONVIF-Kompatibilität & PRE_AUTH Discovery (Issue #19)
+
+- **Standardkonforme ONVIF Core Spec PRE_AUTH Freigaben**:
+  - Synology Surveillance Station prüft beim Hinzufügen einer Kamera in Schritt 1 die unterstützten Dienste und Fähigkeiten noch vor der Eingabe von Zugangsdaten.
+  - Unauthentifizierte Anfragen für `GetServices`, `GetServiceCapabilities`, `GetEndpointReference`, `GetScopes`, `GetDiscoveryMode` und `GetWsdlUrl` werden nun gemäß ONVIF-Spezifikation direkt beantwortet statt mit 401 Unauthorized abgewiesen.
+  - Der Einrichtungsassistent von Synology bricht dadurch nicht mehr vorzeitig ab.
+- **Erweiterte Device-Service-Methoden**:
+  - `GetServiceCapabilities`: Liefert Netzwerk-, Sicherheits- (`UsernameToken`, `HttpDigest`) und System-Fähigkeiten der Bridge.
+  - `GetServices`: Bettet bei Abfrage mit `<IncludeCapability>true</IncludeCapability>` dynamisch die Capabilities für TDS, Media, Events und 2-Way Audio ein.
+  - `GetEndpointReference`: Liefert eine persistente URN-Endpunkt-Referenz (`urn:uuid:<DeviceID>`).
+  - `GetWsdlUrl` & `GetNetworkDefaultGateway` implementiert.
+- **Duale HA2-Berechnung bei HTTP Digest Authentication**:
+  - Unterstützt NVRs und Clients wie Synology, die bei der Digest-Berechnung das HA2 über den relativen Pfad (`/onvif/device_service`) anstelle der vollen URL bilden.
+  - Detailliertes Diagnose-Logging auf `DEBUG`-Level bei Authentifizierungsabweichungen (Username, Realm, Nonce, HA2).
+- **Dependency Updates**:
+  - Aktualisierung von `github.com/pion/rtcp` auf v1.2.18 (PR #41).
+
 ## 1.3.9-beta.1
 
 ### 🛡️ SD-Karten Stall Recovery, Poison-Pill Schutz & Control-Plane Watchdog (Issue #39)
