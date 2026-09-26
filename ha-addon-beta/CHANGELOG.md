@@ -2,6 +2,20 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.3.9-beta.3
+
+### 🛡️ Nabto Verbindungs-Robustheit, Deadlock-Beseitigung & 401 Track Diagnostics (Issue #25)
+
+- **Beseitigung des Supervisor-Deadlocks bei Verbindungs-Abbrüchen (`cgo` Treiber)**:
+  - Die CGo-Verbindung wird nun sofort bei Erstellung registriert, sodass ein Abbruch durch den Watchdog (35s-Timeout) `nabto_client_connection_close` aufruft, bevor auf den Abschluss von Threads gewartet wird.
+  - Blockierende Connect-Aufrufe brechen umgehend ab; der Supervisor friert nicht mehr ein und führt planmäßige Reconnect-Versuche mit exponentiellem Backoff durch.
+- **Erzwingung lokaler Direktverbindung im Nabto C-SDK**:
+  - Durch die Konfiguration von `{"Remote": false, "ConnectTimeout": 20000}` werden parallele Cloud-Rendezvous-Versuche bei lokalen Kameras unterbunden, was Verbindungshänger in Docker-Umgebungen verhindert.
+- **Präzise 401/403-Fehlerdiagnose bei `/webrtc/tracks` im Pure-Go-Treiber**:
+  - Wenn die Kamera eine Medienabfrage mit 401 Unauthorized abweist (z. B. nach einem Factory Reset oder bei unautorisiertem Schlüssel), gibt die Bridge nun eine detaillierte `ERROR`-Meldung mit konkreter Handlungsanweisung aus (Schlüssel löschen, QR-Code konfigurieren, Initial-Pairing mit CGo durchführen).
+- **Validierung des Track-Status im WebRTC-Bridge-Lifecycle**:
+  - Statusüberwachung beim Öffnen des DataChannels warnt frühzeitig, falls die Medienaktivierung fehlschlägt.
+
 ## 1.3.9-beta.2
 
 ### 📹 Synology Surveillance Station ONVIF-Kompatibilität & PRE_AUTH Discovery (Issue #19)
