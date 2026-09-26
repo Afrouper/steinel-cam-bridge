@@ -151,6 +151,118 @@ func isURIMatch(clientURI, reqPath string) bool {
 	return false
 }
 
+// ValidateDigestAuthWithReason validates an HTTP Digest Authorization header and returns AuthStatus along with a diagnostic reason string.
+func ValidateDigestAuthWithReason(
+	method string,
+	reqURI string,
+	authHeader string,
+	expectedUser string,
+	expectedPass string,
+	expectedRealm string,
+	nonceMgr *NonceManager,
+) (AuthStatus, string) {
+	if expectedUser == "" {
+		return AuthStatusSuccess, ""
+	}
+
+	params := ParseDigestAuthorization(authHeader)
+	if params == nil {
+		return AuthStatusFailed, "malformed or unparseable Digest header"
+	}
+
+	// 1. Verify username
+	username := params["username"]
+	if subtle.ConstantTimeCompare([]byte(username), []byte(expectedUser)) != 1 {
+		return AuthStatusFailed, fmt.Sprintf("username mismatch (got %q, expected %q)", username, expectedUser)
+	}
+
+	// 2. Verify realm (if present in params, must match expectedRealm)
+	if realm, ok := params["realm"]; ok && realm != "" {
+		if subtle.ConstantTimeCompare([]byte(realm), []byte(expectedRealm)) != 1 {
+			return AuthStatusFailed, fmt.Sprintf("realm mismatch (got %q, expected %q)", realm, expectedRealm)
+		}
+	}
+
+	// 3. Verify algorithm (empty, MD5 or md5 supported)
+	if alg, ok := params["algorithm"]; ok && alg != "" {
+		if !strings.EqualFold(alg, "MD5") {
+			return AuthStatusFailed, fmt.Sprintf("unsupported algorithm %q", alg)
+		}
+	}
+
+	// 4. Verify nonce
+	nonce := params["nonce"]
+	if nonceMgr != nil {
+		status := nonceMgr.Validate(nonce)
+		if status != AuthStatusSuccess {
+			if status == AuthStatusStale {
+				return AuthStatusStale, "nonce is stale/expired"
+			}
+			return AuthStatusFailed, "nonce is invalid or unauthenticated"
+		}
+	}
+
+	// 5. Verify URI
+	clientURI := params["uri"]
+	if clientURI == "" || !isURIMatch(clientURI, reqURI) {
+		return AuthStatusFailed, fmt.Sprintf("uri mismatch (got %q, expected %q)", clientURI, reqURI)
+	}
+
+	// 6. Compute HA1 = MD5(username:realm:password)
+	realmToUse := expectedRealm
+	if r, ok := params["realm"]; ok && r != "" {
+		realmToUse = r
+	}
+	ha1 := md5Hex(fmt.Sprintf("%s:%s:%s", expectedUser, realmToUse, expectedPass))
+
+	// 7. Compute HA2 candidates = MD5(method:digestURI)
+	// Some clients hash the exact clientURI string (e.g. full http://... URL), while others hash only the path.
+	ha2Candidates := []string{md5Hex(fmt.Sprintf("%s:%s", method, clientURI))}
+	if u, err := url.Parse(clientURI); err == nil && u.Path != "" && u.Path != clientURI {
+		candidate := md5Hex(fmt.Sprintf("%s:%s", method, u.Path))
+		if candidate != ha2Candidates[0] {
+			ha2Candidates = append(ha2Candidates, candidate)
+		}
+	}
+	if reqURI != clientURI {
+		candidate := md5Hex(fmt.Sprintf("%s:%s", method, reqURI))
+		found := false
+		for _, c := range ha2Candidates {
+			if c == candidate {
+				found = true
+				break
+			}
+		}
+		if !found {
+			ha2Candidates = append(ha2Candidates, candidate)
+		}
+	}
+
+	// 8. Compute Expected Response
+	qop := strings.ToLower(params["qop"])
+	clientResp := strings.ToLower(params["response"])
+
+	for _, ha2 := range ha2Candidates {
+		var expectedResp string
+		switch qop {
+		case "auth", "auth-int":
+			nc := params["nc"]
+			cnonce := params["cnonce"]
+			expectedResp = md5Hex(fmt.Sprintf("%s:%s:%s:%s:%s:%s", ha1, nonce, nc, cnonce, qop, ha2))
+		case "":
+			expectedResp = md5Hex(fmt.Sprintf("%s:%s:%s", ha1, nonce, ha2))
+		default:
+			return AuthStatusFailed, fmt.Sprintf("unsupported qop %q", qop)
+		}
+
+		if subtle.ConstantTimeCompare([]byte(clientResp), []byte(expectedResp)) == 1 {
+			return AuthStatusSuccess, ""
+		}
+	}
+
+	return AuthStatusFailed, fmt.Sprintf("response hash mismatch (client response %q does not match computed response)", clientResp)
+}
+
 // ValidateDigestAuth validates an HTTP Digest Authorization header against expected credentials.
 func ValidateDigestAuth(
 	method string,
@@ -161,80 +273,8 @@ func ValidateDigestAuth(
 	expectedRealm string,
 	nonceMgr *NonceManager,
 ) AuthStatus {
-	if expectedUser == "" {
-		return AuthStatusSuccess
-	}
-
-	params := ParseDigestAuthorization(authHeader)
-	if params == nil {
-		return AuthStatusFailed
-	}
-
-	// 1. Verify username
-	username := params["username"]
-	if subtle.ConstantTimeCompare([]byte(username), []byte(expectedUser)) != 1 {
-		return AuthStatusFailed
-	}
-
-	// 2. Verify realm (if present in params, must match expectedRealm)
-	if realm, ok := params["realm"]; ok && realm != "" {
-		if subtle.ConstantTimeCompare([]byte(realm), []byte(expectedRealm)) != 1 {
-			return AuthStatusFailed
-		}
-	}
-
-	// 3. Verify algorithm (empty, MD5 or md5 supported)
-	if alg, ok := params["algorithm"]; ok && alg != "" {
-		if !strings.EqualFold(alg, "MD5") {
-			return AuthStatusFailed
-		}
-	}
-
-	// 4. Verify nonce
-	nonce := params["nonce"]
-	if nonceMgr != nil {
-		status := nonceMgr.Validate(nonce)
-		if status != AuthStatusSuccess {
-			return status
-		}
-	}
-
-	// 5. Verify URI
-	clientURI := params["uri"]
-	if clientURI == "" || !isURIMatch(clientURI, reqURI) {
-		return AuthStatusFailed
-	}
-
-	// 6. Compute HA1 = MD5(username:realm:password)
-	realmToUse := expectedRealm
-	if r, ok := params["realm"]; ok && r != "" {
-		realmToUse = r
-	}
-	ha1 := md5Hex(fmt.Sprintf("%s:%s:%s", expectedUser, realmToUse, expectedPass))
-
-	// 7. Compute HA2 = MD5(method:digestURI)
-	ha2 := md5Hex(fmt.Sprintf("%s:%s", method, clientURI))
-
-	// 8. Compute Expected Response
-	qop := strings.ToLower(params["qop"])
-	var expectedResp string
-	switch qop {
-	case "auth", "auth-int":
-		nc := params["nc"]
-		cnonce := params["cnonce"]
-		expectedResp = md5Hex(fmt.Sprintf("%s:%s:%s:%s:%s:%s", ha1, nonce, nc, cnonce, qop, ha2))
-	case "":
-		expectedResp = md5Hex(fmt.Sprintf("%s:%s:%s", ha1, nonce, ha2))
-	default:
-		return AuthStatusFailed
-	}
-
-	clientResp := strings.ToLower(params["response"])
-	if subtle.ConstantTimeCompare([]byte(clientResp), []byte(expectedResp)) != 1 {
-		return AuthStatusFailed
-	}
-
-	return AuthStatusSuccess
+	status, _ := ValidateDigestAuthWithReason(method, reqURI, authHeader, expectedUser, expectedPass, expectedRealm, nonceMgr)
+	return status
 }
 
 func md5Hex(s string) string {
