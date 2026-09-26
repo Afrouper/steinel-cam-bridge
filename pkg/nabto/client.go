@@ -140,14 +140,7 @@ func (c *Client) Close() {
 	c.conn = nil
 	c.mu.Unlock()
 
-	// Stop context first to immediately cancel any in-flight futures/connects without blocking
-	if ctx != nil {
-		C.nabto_client_stop(ctx)
-	}
-
-	// Wait for in-flight operations (Connect, CoAP, Stream open) to complete
-	c.wg.Wait()
-
+	// If there is an active or in-flight connection, close it to cancel pending operations/futures
 	if conn != nil && ctx != nil {
 		fut := C.nabto_client_future_new(ctx)
 		if fut != nil {
@@ -155,6 +148,18 @@ func (c *Client) Close() {
 			C.nabto_client_future_wait(fut)
 			C.nabto_client_future_free(fut)
 		}
+	}
+
+	// Stop context to cancel any remaining background callbacks
+	if ctx != nil {
+		C.nabto_client_stop(ctx)
+	}
+
+	// Wait for in-flight operations (Connect, CoAP, Stream open) to complete
+	c.wg.Wait()
+
+	// Free the connection object after all workers have finished
+	if conn != nil {
 		C.nabto_client_connection_free(conn)
 	}
 
@@ -236,8 +241,8 @@ func (c *Client) Connect() error {
 	C.nabto_client_connection_add_direct_candidate(conn, cIP, C.uint16_t(c.cfg.CameraPort))
 	C.nabto_client_connection_end_of_direct_candidates(conn)
 
-	// Set connection attempt timeout to 25s (instead of C-SDK default 120s) so unreachable camera fails fast
-	cOpts := C.CString("{\"ConnectTimeout\":25000}")
+	// Force direct local connection and set 20s connection attempt timeout
+	cOpts := C.CString("{\"Remote\":false,\"ConnectTimeout\":20000}")
 	_ = C.nabto_client_connection_set_options(conn, cOpts)
 	C.free(unsafe.Pointer(cOpts))
 
@@ -247,6 +252,7 @@ func (c *Client) Connect() error {
 		C.nabto_client_connection_free(conn)
 		return fmt.Errorf("client closed before connect")
 	}
+	c.conn = conn
 	c.mu.Unlock()
 
 	logger.Info("Nabto", "Connecting to camera %s:%d...", c.cfg.CameraIP, c.cfg.CameraPort)
@@ -259,37 +265,37 @@ func (c *Client) Connect() error {
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
-		C.nabto_client_connection_free(conn)
+		// Connection will be closed and freed by Close()
 		return fmt.Errorf("connection aborted: client closed")
 	}
-	if errCode == C.NABTO_CLIENT_EC_OK {
-		logger.Info("Nabto", "✅ Connected successfully!")
-		c.conn = conn
+	if errCode != C.NABTO_CLIENT_EC_OK {
+		c.conn = nil
 		c.mu.Unlock()
-
-		if isNewKey {
-			if c.cfg.PairPwd == "" || c.cfg.PairPwd == "xxxx" {
-				logger.Warn("IAM", "⚠️ Warning: New client key generated, but no QR code ('qr_code') is configured. Initial pairing requires a valid QR code!")
-			} else {
-				logger.Info("IAM", "Performing initial pairing for new client key...")
-				if err := c.pairPassword(c.cfg.PairPwd); err != nil {
-					logger.Error("IAM", "❌ Initial pairing failed: %v", err)
-					return fmt.Errorf("initial pairing failed: %w", err)
-				}
-				if err := os.WriteFile(c.cfg.KeyPath, []byte(c.privateKey), 0600); err != nil {
-					logger.Warn("Nabto", "⚠️ Could not save key to %s: %v", c.cfg.KeyPath, err)
-				} else {
-					logger.Info("IAM", "✅ Saved paired key to: %s", c.cfg.KeyPath)
-				}
-			}
-		}
-		return nil
+		errMsg := C.GoString(C.nabto_client_error_get_message(errCode))
+		C.nabto_client_connection_free(conn)
+		return fmt.Errorf("connect error: %s (code %d)", errMsg, int(errCode))
 	}
+
+	logger.Info("Nabto", "✅ Connected successfully!")
 	c.mu.Unlock()
 
-	errMsg := C.GoString(C.nabto_client_error_get_message(errCode))
-	C.nabto_client_connection_free(conn)
-	return fmt.Errorf("connect error: %s (code %d)", errMsg, int(errCode))
+	if isNewKey {
+		if c.cfg.PairPwd == "" || c.cfg.PairPwd == "xxxx" {
+			logger.Warn("IAM", "⚠️ Warning: New client key generated, but no QR code ('qr_code') is configured. Initial pairing requires a valid QR code!")
+		} else {
+			logger.Info("IAM", "Performing initial pairing for new client key...")
+			if err := c.pairPassword(c.cfg.PairPwd); err != nil {
+				logger.Error("IAM", "❌ Initial pairing failed: %v", err)
+				return fmt.Errorf("initial pairing failed: %w", err)
+			}
+			if err := os.WriteFile(c.cfg.KeyPath, []byte(c.privateKey), 0600); err != nil {
+				logger.Warn("Nabto", "⚠️ Could not save key to %s: %v", c.cfg.KeyPath, err)
+			} else {
+				logger.Info("IAM", "✅ Saved paired key to: %s", c.cfg.KeyPath)
+			}
+		}
+	}
+	return nil
 }
 
 func encodeUsernameCBOR(username string) []byte {

@@ -136,6 +136,26 @@ func (s *Server) Close() {
 	}
 }
 
+// isPreAuthAction checks if the SOAP request is an ONVIF Core Spec PRE_AUTH operation.
+func isPreAuthAction(action, reqStr string) bool {
+	preAuthActions := []string{
+		"GetSystemDateAndTime",
+		"GetCapabilities",
+		"GetServices",
+		"GetServiceCapabilities",
+		"GetEndpointReference",
+		"GetScopes",
+		"GetDiscoveryMode",
+		"GetWsdlUrl",
+	}
+	for _, a := range preAuthActions {
+		if strings.Contains(action, a) || strings.Contains(reqStr, a) {
+			return true
+		}
+	}
+	return false
+}
+
 // authenticateSOAP validates incoming SOAP requests against configured credentials.
 // Returns true if authenticated or exempt, false if authentication failed (401 response sent).
 func (s *Server) authenticateSOAP(w http.ResponseWriter, r *http.Request, action, reqStr string) bool {
@@ -143,26 +163,25 @@ func (s *Server) authenticateSOAP(w http.ResponseWriter, r *http.Request, action
 		return true
 	}
 
-	// Exempt discovery and time sync from authentication (mandated by ONVIF Core Spec)
-	if strings.Contains(action, "GetSystemDateAndTime") ||
-		strings.Contains(reqStr, "GetSystemDateAndTime") ||
-		strings.Contains(action, "GetCapabilities") ||
-		strings.Contains(reqStr, "GetCapabilities") {
+	// Exempt discovery and time sync from authentication (mandated by ONVIF Core Spec PRE_AUTH class)
+	if isPreAuthAction(action, reqStr) {
 		return true
 	}
 
 	authHeader := r.Header.Get("Authorization")
 	var isStale bool
+	var digestFailReason string
 
 	// 1. Try HTTP Digest Auth Header (RFC 2617, mandated by ONVIF Core Spec 5.1.2)
 	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(authHeader)), "digest ") {
-		status := ValidateDigestAuth(r.Method, r.URL.Path, authHeader, s.authUser, s.authPass, ONVIFAuthRealm, s.nonceManager)
+		status, reason := ValidateDigestAuthWithReason(r.Method, r.URL.Path, authHeader, s.authUser, s.authPass, ONVIFAuthRealm, s.nonceManager)
 		if status == AuthStatusSuccess {
 			return true
 		}
 		if status == AuthStatusStale {
 			isStale = true
 		}
+		digestFailReason = reason
 	}
 
 	// 2. Try HTTP Basic Auth Header (used by simple HTTP clients)
@@ -179,6 +198,9 @@ func (s *Server) authenticateSOAP(w http.ResponseWriter, r *http.Request, action
 		return true
 	}
 
+	if digestFailReason != "" {
+		logger.Debug("ONVIF", "🔒 Digest Auth rejected: %s (Client: %s)", digestFailReason, r.RemoteAddr)
+	}
 	logger.Warn("ONVIF", "🔒 Authentication failure from %s for action '%s' on %s (Auth: %s)",
 		r.RemoteAddr, action, r.URL.Path, RedactAuthHeader(authHeader))
 

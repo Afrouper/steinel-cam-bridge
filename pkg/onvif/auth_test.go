@@ -326,3 +326,119 @@ func TestServer_SOAPDigestAuthRoundtrip(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w3.Code)
 	assert.Contains(t, w3.Body.String(), "ter:NotAuthorized")
 }
+
+func TestValidateDigestAuth_DualHA2PathAndAbsoluteURI(t *testing.T) {
+	mgr := NewNonceManager(5 * time.Minute)
+	nonce := mgr.Generate()
+
+	user := "syno"
+	pass := "secret123"
+	realm := ONVIFAuthRealm
+	method := "POST"
+	path := "/onvif/device_service"
+	fullURL := "http://192.168.88.88:8000/onvif/device_service"
+	nc := "00000001"
+	cnonce := "synoclient456"
+	qop := "auth"
+
+	ha1 := md5Hex(fmt.Sprintf("%s:%s:%s", user, realm, pass))
+
+	// Case 1: Client sends full URL in uri="..." and hashes the full URL in HA2
+	ha2Full := md5Hex(fmt.Sprintf("%s:%s", method, fullURL))
+	respFull := md5Hex(fmt.Sprintf("%s:%s:%s:%s:%s:%s", ha1, nonce, nc, cnonce, qop, ha2Full))
+	headerFull := fmt.Sprintf(`Digest username="%s", realm="%s", nonce="%s", uri="%s", response="%s", qop=%s, nc=%s, cnonce="%s"`,
+		user, realm, nonce, fullURL, respFull, qop, nc, cnonce)
+	status1, reason1 := ValidateDigestAuthWithReason(method, path, headerFull, user, pass, realm, mgr)
+	assert.Equal(t, AuthStatusSuccess, status1)
+	assert.Empty(t, reason1)
+
+	// Case 2: Client sends full URL in uri="..." but hashes ONLY the path in HA2 (common in certain NVR implementations like Synology)
+	ha2PathOnly := md5Hex(fmt.Sprintf("%s:%s", method, path))
+	respPathOnly := md5Hex(fmt.Sprintf("%s:%s:%s:%s:%s:%s", ha1, nonce, nc, cnonce, qop, ha2PathOnly))
+	headerPathOnly := fmt.Sprintf(`Digest username="%s", realm="%s", nonce="%s", uri="%s", response="%s", qop=%s, nc=%s, cnonce="%s"`,
+		user, realm, nonce, fullURL, respPathOnly, qop, nc, cnonce)
+	status2, reason2 := ValidateDigestAuthWithReason(method, path, headerPathOnly, user, pass, realm, mgr)
+	assert.Equal(t, AuthStatusSuccess, status2)
+	assert.Empty(t, reason2)
+}
+
+func TestValidateDigestAuthWithReason_Diagnostics(t *testing.T) {
+	mgr := NewNonceManager(5 * time.Minute)
+	nonce := mgr.Generate()
+	user := "admin"
+	pass := "secret"
+	realm := ONVIFAuthRealm
+
+	// 1. Username mismatch
+	hdrWrongUser := fmt.Sprintf(`Digest username="other", realm="%s", nonce="%s", uri="/onvif/device_service", response="1234"`, realm, nonce)
+	status, reason := ValidateDigestAuthWithReason("POST", "/onvif/device_service", hdrWrongUser, user, pass, realm, mgr)
+	assert.Equal(t, AuthStatusFailed, status)
+	assert.Contains(t, reason, "username mismatch")
+
+	// 2. Realm mismatch
+	hdrWrongRealm := fmt.Sprintf(`Digest username="%s", realm="WrongRealm", nonce="%s", uri="/onvif/device_service", response="1234"`, user, nonce)
+	status, reason = ValidateDigestAuthWithReason("POST", "/onvif/device_service", hdrWrongRealm, user, pass, realm, mgr)
+	assert.Equal(t, AuthStatusFailed, status)
+	assert.Contains(t, reason, "realm mismatch")
+
+	// 3. Invalid nonce
+	hdrWrongNonce := fmt.Sprintf(`Digest username="%s", realm="%s", nonce="bad-nonce-1234", uri="/onvif/device_service", response="1234"`, user, realm)
+	status, reason = ValidateDigestAuthWithReason("POST", "/onvif/device_service", hdrWrongNonce, user, pass, realm, mgr)
+	assert.Equal(t, AuthStatusFailed, status)
+	assert.Contains(t, reason, "nonce is invalid")
+
+	// 4. URI mismatch
+	hdrWrongURI := fmt.Sprintf(`Digest username="%s", realm="%s", nonce="%s", uri="/onvif/media_service", response="1234"`, user, realm, nonce)
+	status, reason = ValidateDigestAuthWithReason("POST", "/onvif/device_service", hdrWrongURI, user, pass, realm, mgr)
+	assert.Equal(t, AuthStatusFailed, status)
+	assert.Contains(t, reason, "uri mismatch")
+
+	// 5. Response hash mismatch
+	hdrWrongHash := fmt.Sprintf(`Digest username="%s", realm="%s", nonce="%s", uri="/onvif/device_service", response="00000000000000000000000000000000"`, user, realm, nonce)
+	status, reason = ValidateDigestAuthWithReason("POST", "/onvif/device_service", hdrWrongHash, user, pass, realm, mgr)
+	assert.Equal(t, AuthStatusFailed, status)
+	assert.Contains(t, reason, "response hash mismatch")
+}
+
+func TestServer_PRE_AUTH_Exemptions(t *testing.T) {
+	srv := NewServer(
+		8000, 8554, "live", "aac", "de-test", "pr-test", "syno", "naspass123",
+		nil, nil, nil, nil, nil, nil,
+	)
+
+	preAuthMethods := []struct {
+		name string
+		body string
+	}{
+		{"GetSystemDateAndTime", `<GetSystemDateAndTime xmlns="http://www.onvif.org/ver10/device/wsdl"/>`},
+		{"GetCapabilities", `<GetCapabilities xmlns="http://www.onvif.org/ver10/device/wsdl"/>`},
+		{"GetServices", `<GetServices xmlns="http://www.onvif.org/ver10/device/wsdl"><IncludeCapability>false</IncludeCapability></GetServices>`},
+		{"GetServices_WithCaps", `<GetServices xmlns="http://www.onvif.org/ver10/device/wsdl"><IncludeCapability>true</IncludeCapability></GetServices>`},
+		{"GetServiceCapabilities", `<GetServiceCapabilities xmlns="http://www.onvif.org/ver10/device/wsdl"/>`},
+		{"GetEndpointReference", `<GetEndpointReference xmlns="http://www.onvif.org/ver10/device/wsdl"/>`},
+		{"GetScopes", `<GetScopes xmlns="http://www.onvif.org/ver10/device/wsdl"/>`},
+		{"GetDiscoveryMode", `<GetDiscoveryMode xmlns="http://www.onvif.org/ver10/device/wsdl"/>`},
+		{"GetWsdlUrl", `<GetWsdlUrl xmlns="http://www.onvif.org/ver10/device/wsdl"/>`},
+	}
+
+	for _, tc := range preAuthMethods {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/onvif/device_service", strings.NewReader(tc.body))
+			w := httptest.NewRecorder()
+			srv.handleSOAP(w, req)
+
+			assert.Equal(t, http.StatusOK, w.Code, "PRE_AUTH method %s must succeed without credentials", tc.name)
+			assert.NotContains(t, w.Body.String(), "ter:NotAuthorized", "PRE_AUTH method %s must not return NotAuthorized fault", tc.name)
+		})
+	}
+
+	// Non-PRE_AUTH method MUST be challenged with 401
+	t.Run("ProtectedMethod_GetDeviceInformation", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/onvif/device_service", strings.NewReader(`<GetDeviceInformation xmlns="http://www.onvif.org/ver10/device/wsdl"/>`))
+		w := httptest.NewRecorder()
+		srv.handleSOAP(w, req)
+
+		assert.Equal(t, http.StatusUnauthorized, w.Code)
+		assert.Contains(t, w.Body.String(), "ter:NotAuthorized")
+	})
+}

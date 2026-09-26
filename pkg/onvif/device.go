@@ -41,7 +41,19 @@ func (h *DeviceHandler) Handle(action string, reqXML string, host string) (strin
 		return h.getCapabilities(host), nil
 	}
 	if strings.Contains(action, "GetServices") || strings.Contains(reqXML, "GetServices") {
-		return h.getServices(host), nil
+		return h.getServices(host, reqXML), nil
+	}
+	if strings.Contains(action, "GetServiceCapabilities") || strings.Contains(reqXML, "GetServiceCapabilities") {
+		return h.getServiceCapabilities(), nil
+	}
+	if strings.Contains(action, "GetEndpointReference") || strings.Contains(reqXML, "GetEndpointReference") {
+		return h.getEndpointReference(), nil
+	}
+	if strings.Contains(action, "GetWsdlUrl") || strings.Contains(reqXML, "GetWsdlUrl") {
+		return h.getWsdlUrl(), nil
+	}
+	if strings.Contains(action, "GetNetworkDefaultGateway") || strings.Contains(reqXML, "GetNetworkDefaultGateway") {
+		return h.getNetworkDefaultGateway(host), nil
 	}
 	if strings.Contains(action, "GetSystemDateAndTime") || strings.Contains(reqXML, "GetSystemDateAndTime") {
 		return h.getSystemDateAndTime(), nil
@@ -190,7 +202,7 @@ func (h *DeviceHandler) getCapabilities(host string) string {
 </tds:GetCapabilitiesResponse>`, NS_TDS, NS_TT, deviceURL, eventURL, mediaURL, searchURL, replayURL, recordingURL, deviceIOURL)
 }
 
-func (h *DeviceHandler) getServices(host string) string {
+func (h *DeviceHandler) getServices(host string, reqXML ...string) string {
 	ip := extractHostIP(host)
 	deviceURL := fmt.Sprintf("http://%s:%d/onvif/device_service", ip, h.onvifPort)
 	mediaURL := fmt.Sprintf("http://%s:%d/onvif/media_service", ip, h.onvifPort)
@@ -200,7 +212,16 @@ func (h *DeviceHandler) getServices(host string) string {
 	replayURL := fmt.Sprintf("http://%s:%d/onvif/replay_service", ip, h.onvifPort)
 	recordingURL := fmt.Sprintf("http://%s:%d/onvif/recording_service", ip, h.onvifPort)
 
-	return fmt.Sprintf(`<tds:GetServicesResponse xmlns:tds="%s" xmlns:tt="%s">
+	var rawXML string
+	if len(reqXML) > 0 {
+		rawXML = reqXML[0]
+	}
+
+	includeCap := strings.Contains(strings.ToLower(rawXML), "includecapability") &&
+		strings.Contains(strings.ToLower(rawXML), "true")
+
+	if !includeCap {
+		return fmt.Sprintf(`<tds:GetServicesResponse xmlns:tds="%s" xmlns:tt="%s">
   <tds:Service>
     <tds:Namespace>%s</tds:Namespace>
     <tds:XAddr>%s</tds:XAddr>
@@ -237,6 +258,71 @@ func (h *DeviceHandler) getServices(host string) string {
     <tds:Version><tt:Major>2</tt:Major><tt:Minor>0</tt:Minor></tds:Version>
   </tds:Service>
 </tds:GetServicesResponse>`, NS_TDS, NS_TT,
+			NS_TDS, deviceURL,
+			NS_TRT, mediaURL,
+			NS_TEV, eventURL,
+			NS_TIO, deviceIOURL,
+			NS_TSE, searchURL,
+			NS_TRP, replayURL,
+			NS_TRC, recordingURL)
+	}
+
+	return fmt.Sprintf(`<tds:GetServicesResponse xmlns:tds="%s" xmlns:tt="%s" xmlns:trt="%s" xmlns:tev="%s" xmlns:tmd="%s">
+  <tds:Service>
+    <tds:Namespace>%s</tds:Namespace>
+    <tds:XAddr>%s</tds:XAddr>
+    <tds:Capabilities>
+      <tds:Capabilities>
+        <tds:Network IPFilter="false" ZeroConfiguration="false" IPVersion6="true" DynDNS="false" Dot11Configuration="false" Dot1XConfigurations="0" HostnameFromDHCP="false" NTP="0" DHCPv6="false"/>
+        <tds:Security TLS1.0="false" TLS1.1="false" TLS1.2="false" OnboardKeyGeneration="false" AccessPolicyConfig="false" DefaultAccessPolicy="false" Dot1X="false" RemoteUserHandling="false" X.509Token="false" SAMLToken="false" KerberosToken="false" UsernameToken="true" HttpDigest="true" RELToken="false" MaxUsers="1" MaxUserNameLength="64" MaxPasswordLength="64"/>
+        <tds:System DiscoveryResolve="true" DiscoveryBye="true" RemoteDiscovery="true" SystemBackup="false" SystemLogging="false" FirmwareUpgrade="false" HttpFirmwareUpgrade="false" HttpSystemBackup="false" HttpSystemLogging="false" HttpSupportInformation="false" StorageConfiguration="false"/>
+      </tds:Capabilities>
+    </tds:Capabilities>
+    <tds:Version><tt:Major>2</tt:Major><tt:Minor>0</tt:Minor></tds:Version>
+  </tds:Service>
+  <tds:Service>
+    <tds:Namespace>%s</tds:Namespace>
+    <tds:XAddr>%s</tds:XAddr>
+    <tds:Capabilities>
+      <trt:Capabilities SnapshotUri="false">
+        <trt:ProfileCapabilities MaximumNumberOfProfiles="2"/>
+        <trt:StreamingCapabilities RTPMulticast="false" RTP_TCP="true" RTP_RTSP_TCP="true"/>
+      </trt:Capabilities>
+    </tds:Capabilities>
+    <tds:Version><tt:Major>2</tt:Major><tt:Minor>0</tt:Minor></tds:Version>
+  </tds:Service>
+  <tds:Service>
+    <tds:Namespace>%s</tds:Namespace>
+    <tds:XAddr>%s</tds:XAddr>
+    <tds:Capabilities>
+      <tev:Capabilities WSSubscriptionPolicySupport="true" WSPullPointSupport="true" WSPausableSubscriptionManagerInterfaceSupport="false"/>
+    </tds:Capabilities>
+    <tds:Version><tt:Major>2</tt:Major><tt:Minor>0</tt:Minor></tds:Version>
+  </tds:Service>
+  <tds:Service>
+    <tds:Namespace>%s</tds:Namespace>
+    <tds:XAddr>%s</tds:XAddr>
+    <tds:Capabilities>
+      <tmd:Capabilities VideoSources="1" VideoOutputs="0" AudioSources="1" AudioOutputs="1" RelayOutputs="1"/>
+    </tds:Capabilities>
+    <tds:Version><tt:Major>2</tt:Major><tt:Minor>0</tt:Minor></tds:Version>
+  </tds:Service>
+  <tds:Service>
+    <tds:Namespace>%s</tds:Namespace>
+    <tds:XAddr>%s</tds:XAddr>
+    <tds:Version><tt:Major>2</tt:Major><tt:Minor>0</tt:Minor></tds:Version>
+  </tds:Service>
+  <tds:Service>
+    <tds:Namespace>%s</tds:Namespace>
+    <tds:XAddr>%s</tds:XAddr>
+    <tds:Version><tt:Major>2</tt:Major><tt:Minor>0</tt:Minor></tds:Version>
+  </tds:Service>
+  <tds:Service>
+    <tds:Namespace>%s</tds:Namespace>
+    <tds:XAddr>%s</tds:XAddr>
+    <tds:Version><tt:Major>2</tt:Major><tt:Minor>0</tt:Minor></tds:Version>
+  </tds:Service>
+</tds:GetServicesResponse>`, NS_TDS, NS_TT, NS_TRT, NS_TEV, NS_TIO,
 		NS_TDS, deviceURL,
 		NS_TRT, mediaURL,
 		NS_TEV, eventURL,
@@ -244,6 +330,41 @@ func (h *DeviceHandler) getServices(host string) string {
 		NS_TSE, searchURL,
 		NS_TRP, replayURL,
 		NS_TRC, recordingURL)
+}
+
+func (h *DeviceHandler) getServiceCapabilities() string {
+	return fmt.Sprintf(`<tds:GetServiceCapabilitiesResponse xmlns:tds="%s">
+  <tds:Capabilities>
+    <tds:Network IPFilter="false" ZeroConfiguration="false" IPVersion6="true" DynDNS="false" Dot11Configuration="false" Dot1XConfigurations="0" HostnameFromDHCP="false" NTP="0" DHCPv6="false"/>
+    <tds:Security TLS1.0="false" TLS1.1="false" TLS1.2="false" OnboardKeyGeneration="false" AccessPolicyConfig="false" DefaultAccessPolicy="false" Dot1X="false" RemoteUserHandling="false" X.509Token="false" SAMLToken="false" KerberosToken="false" UsernameToken="true" HttpDigest="true" RELToken="false" MaxUsers="1" MaxUserNameLength="64" MaxPasswordLength="64"/>
+    <tds:System DiscoveryResolve="true" DiscoveryBye="true" RemoteDiscovery="true" SystemBackup="false" SystemLogging="false" FirmwareUpgrade="false" HttpFirmwareUpgrade="false" HttpSystemBackup="false" HttpSystemLogging="false" HttpSupportInformation="false" StorageConfiguration="false" NetworkConfigNotSupported="true" UserConfigNotSupported="true"/>
+  </tds:Capabilities>
+</tds:GetServiceCapabilitiesResponse>`, NS_TDS)
+}
+
+func (h *DeviceHandler) getEndpointReference() string {
+	devID := h.deviceID
+	if devID == "" {
+		devID = "00000000-0000-0000-0000-000000000000"
+	}
+	return fmt.Sprintf(`<tds:GetEndpointReferenceResponse xmlns:tds="%s">
+  <tds:GUID>urn:uuid:%s</tds:GUID>
+</tds:GetEndpointReferenceResponse>`, NS_TDS, devID)
+}
+
+func (h *DeviceHandler) getWsdlUrl() string {
+	return fmt.Sprintf(`<tds:GetWsdlUrlResponse xmlns:tds="%s">
+  <tds:WsdlUrl>http://www.onvif.org/ver10/device/wsdl</tds:WsdlUrl>
+</tds:GetWsdlUrlResponse>`, NS_TDS)
+}
+
+func (h *DeviceHandler) getNetworkDefaultGateway(host string) string {
+	ip := extractHostIP(host)
+	return fmt.Sprintf(`<tds:GetNetworkDefaultGatewayResponse xmlns:tds="%s" xmlns:tt="%s">
+  <tds:NetworkGateway>
+    <tt:IPv4Address>%s</tt:IPv4Address>
+  </tds:NetworkGateway>
+</tds:GetNetworkDefaultGatewayResponse>`, NS_TDS, NS_TT, ip)
 }
 
 func (h *DeviceHandler) getSystemDateAndTime() string {

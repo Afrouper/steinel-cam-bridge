@@ -474,8 +474,17 @@ func (c *Client) RequestTracks() (uint16, error) {
 		return 0, fmt.Errorf("CoAP /webrtc/tracks failed: %w", err)
 	}
 
+	statusCode := uint16(resp.StatusCode())
 	logger.Debug("NabtoPure", "🎥 CoAP /webrtc/tracks response status: %s", resp.StatusString())
-	return uint16(resp.StatusCode()), nil
+
+	if statusCode == 401 || statusCode == 403 {
+		logger.Error("NabtoPure", "🚨 /webrtc/tracks returned %d Unauthorized: Camera rejected media stream!", statusCode)
+		logger.Error("NabtoPure", "💡 Camera IAM has not authorized the client key '%s'.", c.cfg.KeyPath)
+		logger.Error("NabtoPure", "👉 To fix: Delete '%s' (or set RESET_PAIRING=true), configure your camera QR code, and use the CGo driver ('USE_CGO_NABTO=true') for initial pairing.", c.cfg.KeyPath)
+		return statusCode, fmt.Errorf("camera unauthorized (status %d): client key not paired", statusCode)
+	}
+
+	return statusCode, nil
 }
 
 // OpenSignalingStream opens a virtual Nabto streaming channel over the DTLS connection.

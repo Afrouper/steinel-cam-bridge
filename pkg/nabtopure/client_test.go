@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -220,5 +221,64 @@ func TestClientCloseNonBlocking(t *testing.T) {
 		// success
 	case <-time.After(1 * time.Second):
 		t.Fatalf("client.Close() blocked for more than 1 second")
+	}
+}
+
+func TestClient_RequestTracks_NotConnected(t *testing.T) {
+	client, err := NewClient(&Config{CameraIP: "127.0.0.1"})
+	if err != nil {
+		t.Fatalf("NewClient failed: %v", err)
+	}
+	_, err = client.RequestTracks()
+	if err == nil {
+		t.Fatalf("expected error when client not connected")
+	}
+}
+
+func TestClient_RequestTracks_Unauthorized(t *testing.T) {
+	client, err := NewClient(&Config{CameraIP: "127.0.0.1", KeyPath: "/data/client.key"})
+	if err != nil {
+		t.Fatalf("NewClient failed: %v", err)
+	}
+
+	cliPipe, srvPipe := net.Pipe()
+	defer func() { _ = cliPipe.Close() }()
+	defer func() { _ = srvPipe.Close() }()
+
+	client.coapClient = NewCoAPClient(cliPipe)
+
+	// Mock server that reads CoAP POST /webrtc/tracks and feeds back 4.01 Unauthorized
+	go func() {
+		buf := make([]byte, 1024)
+		n, err := srvPipe.Read(buf)
+		if err != nil {
+			return
+		}
+		req, err := DecodeCoAPMessage(buf[:n])
+		if err != nil {
+			return
+		}
+		resp := &CoAPMessage{
+			Type:      TypeACK,
+			Code:      129, // 4.01 Unauthorized = (4 << 5) | 1 = 129
+			MessageID: req.MessageID,
+			Token:     req.Token,
+		}
+		raw, err := resp.Encode()
+		if err != nil {
+			return
+		}
+		client.coapClient.HandleIncomingPacket(raw)
+	}()
+
+	statusCode, err := client.RequestTracks()
+	if err == nil {
+		t.Fatalf("expected error on 401 Unauthorized, got nil")
+	}
+	if statusCode != 401 {
+		t.Fatalf("expected status code 401, got %d", statusCode)
+	}
+	if !strings.Contains(err.Error(), "401") {
+		t.Fatalf("expected error message to mention 401, got: %v", err)
 	}
 }
