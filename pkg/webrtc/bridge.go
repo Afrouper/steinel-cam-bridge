@@ -84,6 +84,15 @@ func (b *Bridge) Run(ctx context.Context) error {
 	sessCtx, sessCancel := context.WithCancel(ctx)
 	defer sessCancel()
 
+	// Register control-plane health monitor to reset session if SD card queries hang
+	if b.sdcardManager != nil {
+		b.sdcardManager.SetUnresponsiveHandler(func() {
+			logger.Warn("Bridge", "⚠️ SDCard control plane unresponsive. Resetting session to trigger camera reconnect...")
+			sessCancel()
+		})
+		defer b.sdcardManager.SetUnresponsiveHandler(nil)
+	}
+
 	// Hook session cancellation to abort stream and close peer connection immediately
 	stopChan := make(chan struct{})
 	go func() {

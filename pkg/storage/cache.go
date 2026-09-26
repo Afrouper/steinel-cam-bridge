@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -24,6 +25,8 @@ type RecordingCache struct {
 
 	mu        sync.RWMutex
 	items     map[string]RecordingItem
+	failedIDs map[string]struct{}
+	attempts  map[string]int
 	sortedIDs []string // Sorted by StartTime descending (newest first)
 }
 
@@ -42,6 +45,8 @@ func NewRecordingCache(dir string, maxCount int, extractor FrameExtractor) *Reco
 		maxCount:  maxCount,
 		extractor: extractor,
 		items:     make(map[string]RecordingItem),
+		failedIDs: make(map[string]struct{}),
+		attempts:  make(map[string]int),
 		sortedIDs: make([]string, 0),
 	}
 
@@ -73,6 +78,7 @@ func (c *RecordingCache) LoadExisting() error {
 	}
 
 	c.items = make(map[string]RecordingItem)
+	c.failedIDs = make(map[string]struct{})
 	c.sortedIDs = make([]string, 0)
 
 	for _, entry := range entries {
@@ -81,6 +87,14 @@ func (c *RecordingCache) LoadExisting() error {
 		// Clean up leftover temporary files from aborted transfers or thumbnail extractions
 		if strings.HasSuffix(name, ".tmp") || strings.HasPrefix(name, ".tmp_") {
 			_ = os.Remove(filepath.Join(c.dir, name))
+			continue
+		}
+
+		// Index permanently failed markers so they are skipped and pruned via FIFO
+		if !entry.IsDir() && strings.HasSuffix(name, ".failed") {
+			id := strings.TrimSuffix(name, ".failed")
+			c.failedIDs[id] = struct{}{}
+			c.sortedIDs = append(c.sortedIDs, id)
 			continue
 		}
 
@@ -272,12 +286,101 @@ func (c *RecordingCache) Add(ctx context.Context, item RecordingItem, videoReade
 	return &item, nil
 }
 
-// Has returns true if the recording ID is present in the cache.
+// Has returns true if the recording ID is present in the cache (either successfully cached or marked failed).
 func (c *RecordingCache) Has(id string) bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	_, ok := c.items[id]
-	return ok
+	if _, ok := c.items[id]; ok {
+		return true
+	}
+	_, failed := c.failedIDs[id]
+	return failed
+}
+
+// HasFailed returns true if the recording ID is marked as permanently failed.
+func (c *RecordingCache) HasFailed(id string) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	_, failed := c.failedIDs[id]
+	return failed
+}
+
+// RecordFailure increments the failure count for a recording ID.
+// If the failure count reaches 2 (or more), it marks the recording as permanently failed (.failed file written).
+// Returns true if the recording has been permanently marked failed.
+func (c *RecordingCache) RecordFailure(id string, err error) bool {
+	c.mu.Lock()
+	c.attempts[id]++
+	count := c.attempts[id]
+	c.mu.Unlock()
+
+	if count >= 2 {
+		reason := "unknown error"
+		if err != nil {
+			reason = err.Error()
+		}
+		_ = c.MarkFailed(id, reason)
+		return true
+	}
+	return false
+}
+
+// MarkFailed marks a recording ID as permanently failed, persists a .failed marker file to disk,
+// and indexes it in the cache so future downloads for this ID are skipped.
+func (c *RecordingCache) MarkFailed(id string, reason string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.failedIDs[id] = struct{}{}
+
+	found := false
+	for _, existingID := range c.sortedIDs {
+		if existingID == id {
+			found = true
+			break
+		}
+	}
+	if !found {
+		c.sortedIDs = append(c.sortedIDs, id)
+	}
+
+	c.sortIDsLocked()
+	c.pruneLocked()
+
+	failedPath := filepath.Join(c.dir, id+".failed")
+	content := fmt.Sprintf("failed_at: %s\nreason: %s\n", time.Now().UTC().Format(time.RFC3339), reason)
+	return os.WriteFile(failedPath, []byte(content), 0644)
+}
+
+// Delete removes a recording (or failed marker) from cache and disk.
+func (c *RecordingCache) Delete(id string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	_, inItems := c.items[id]
+	_, inFailed := c.failedIDs[id]
+	if !inItems && !inFailed {
+		return false
+	}
+
+	delete(c.items, id)
+	delete(c.failedIDs, id)
+	delete(c.attempts, id)
+
+	for i, sid := range c.sortedIDs {
+		if sid == id {
+			c.sortedIDs = append(c.sortedIDs[:i], c.sortedIDs[i+1:]...)
+			break
+		}
+	}
+
+	_ = os.Remove(filepath.Join(c.dir, id+".mp4"))
+	_ = os.Remove(filepath.Join(c.dir, id+".jpg"))
+	_ = os.Remove(filepath.Join(c.dir, id+".json"))
+	_ = os.Remove(filepath.Join(c.dir, id+".failed"))
+	_ = os.Remove(filepath.Join(c.dir, id+".mp4.tmp"))
+
+	return true
 }
 
 // Get returns the cached recording metadata by ID.
@@ -455,19 +558,32 @@ func (c *RecordingCache) pruneLocked() {
 
 		c.sortedIDs = c.sortedIDs[:evictIdx]
 		delete(c.items, evictID)
+		delete(c.failedIDs, evictID)
+		delete(c.attempts, evictID)
 
 		// Delete disk files
 		_ = os.Remove(filepath.Join(c.dir, evictID+".mp4"))
 		_ = os.Remove(filepath.Join(c.dir, evictID+".jpg"))
 		_ = os.Remove(filepath.Join(c.dir, evictID+".json"))
+		_ = os.Remove(filepath.Join(c.dir, evictID+".failed"))
 		_ = os.Remove(filepath.Join(c.dir, evictID+".mp4.tmp"))
 
 		logger.Debug("Cache", "🧹 Housekeeping: Evicted oldest cached recording %s", evictID)
 	}
 }
 
+func (c *RecordingCache) idTimeLocked(id string) time.Time {
+	if item, ok := c.items[id]; ok && !item.StartTime.IsZero() {
+		return item.StartTime
+	}
+	if ts, err := strconv.ParseInt(id, 10, 64); err == nil {
+		return time.Unix(ts, 0).UTC()
+	}
+	return time.Time{}
+}
+
 func (c *RecordingCache) sortIDsLocked() {
 	sort.Slice(c.sortedIDs, func(i, j int) bool {
-		return c.items[c.sortedIDs[i]].StartTime.After(c.items[c.sortedIDs[j]].StartTime)
+		return c.idTimeLocked(c.sortedIDs[i]).After(c.idTimeLocked(c.sortedIDs[j]))
 	})
 }

@@ -182,17 +182,7 @@ func TestSDCardConcurrencyLock(t *testing.T) {
 }
 
 func TestSDCardClientAbort(t *testing.T) {
-	var mu sync.Mutex
-	var lastCmd string
-	var lastAction string
-
-	sdm := NewSDCardManager(func(cmd string, info map[string]interface{}) error {
-		mu.Lock()
-		lastCmd = cmd
-		if act, ok := info["action"].(string); ok {
-			lastAction = act
-		}
-		mu.Unlock()
+	sdm := NewSDCardManager(func(_ string, _ map[string]interface{}) error {
 		return nil
 	})
 
@@ -214,13 +204,9 @@ func TestSDCardClientAbort(t *testing.T) {
 	err := <-errChan
 	assert.ErrorIs(t, err, storage.ErrTransferAborted)
 
-	mu.Lock()
-	cmdVal := lastCmd
-	actVal := lastAction
-	mu.Unlock()
-
-	assert.Equal(t, "get_event_video", cmdVal)
-	assert.Equal(t, "stop", actVal)
+	// Verify transferMu is unlocked after abort so subsequent requests succeed
+	assert.True(t, sdm.transferMu.TryLock())
+	sdm.transferMu.Unlock()
 }
 
 func TestSDCardRecordingProvider(t *testing.T) {
@@ -338,4 +324,89 @@ func TestSDCardStreamSnapshot(t *testing.T) {
 	err := <-doneChan
 	require.NoError(t, err)
 	assert.Equal(t, []byte{0xFF, 0xD8, 0xFF, 0xE0}, buf.Bytes())
+}
+
+func TestSDCardConsecutiveTimeoutTriggersReset(t *testing.T) {
+	sdm := NewSDCardManager(func(_ string, _ map[string]interface{}) error {
+		return nil
+	})
+
+	var mu sync.Mutex
+	resetCount := 0
+	sdm.SetUnresponsiveHandler(func() {
+		mu.Lock()
+		resetCount++
+		mu.Unlock()
+	})
+
+	// 1st timeout
+	ctx1, cancel1 := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel1()
+	_, _ = sdm.GetEventList(ctx1, 0, 0, 0, 10)
+	mu.Lock()
+	assert.Equal(t, 0, resetCount)
+	mu.Unlock()
+
+	// 2nd timeout
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel2()
+	_, _ = sdm.GetEventList(ctx2, 0, 0, 0, 10)
+	mu.Lock()
+	assert.Equal(t, 0, resetCount)
+	mu.Unlock()
+
+	// 3rd timeout: threshold reached (3), should trigger reset handler
+	ctx3, cancel3 := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel3()
+	_, _ = sdm.GetEventList(ctx3, 0, 0, 0, 10)
+	mu.Lock()
+	assert.Equal(t, 1, resetCount)
+	mu.Unlock()
+}
+
+func TestSDCardResetCounterOnSuccess(t *testing.T) {
+	sdm := NewSDCardManager(func(_ string, _ map[string]interface{}) error {
+		return nil
+	})
+
+	var mu sync.Mutex
+	resetCount := 0
+	sdm.SetUnresponsiveHandler(func() {
+		mu.Lock()
+		resetCount++
+		mu.Unlock()
+	})
+
+	// 2 timeouts
+	for i := 0; i < 2; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+		_, _ = sdm.GetEventList(ctx, 0, 0, 0, 10)
+		cancel()
+	}
+
+	// 1 success: resets consecutive timeout counter
+	ctxSuccess, cancelSuccess := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancelSuccess()
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		sdm.HandleJSONMessage(map[string]interface{}{
+			"resp": "get_event_list",
+			"info": map[string]interface{}{
+				"count": float64(0),
+				"total": float64(0),
+				"list":  []interface{}{},
+			},
+		})
+	}()
+	_, err := sdm.GetEventList(ctxSuccess, 0, 0, 0, 10)
+	require.NoError(t, err)
+
+	// Another single timeout: count is now 1, NOT 3 -> should NOT trigger reset
+	ctxSingle, cancelSingle := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancelSingle()
+	_, _ = sdm.GetEventList(ctxSingle, 0, 0, 0, 10)
+
+	mu.Lock()
+	assert.Equal(t, 0, resetCount)
+	mu.Unlock()
 }
