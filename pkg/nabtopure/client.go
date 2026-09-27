@@ -1,6 +1,7 @@
 package nabtopure
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	crand "crypto/rand"
@@ -198,6 +199,14 @@ func (c *Client) Connect() error {
 	//nolint:staticcheck
 	conn, err := dtls.Client(nabtoUDP, rAddr, dtlsConfig)
 	if err != nil {
+		_ = rawUDP.Close()
+		return fmt.Errorf("DTLS handshake failed with %s: %w", targetAddr, err)
+	}
+
+	hsCtx, hsCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer hsCancel()
+	if err := conn.HandshakeContext(hsCtx); err != nil {
+		_ = conn.Close()
 		_ = rawUDP.Close()
 		return fmt.Errorf("DTLS handshake failed with %s: %w", targetAddr, err)
 	}
