@@ -2,6 +2,21 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.3.9-beta.4
+
+### 🛡️ Behebung des Supervisor-Stillstands & Non-Blocking Lifecycle im Pure-Go Treiber
+
+- **Socket-First Close im Pure-Go Nabto Treiber (`NabtoPure`)**:
+  - `Close()` schließt den physischen UDP-Socket nun unmittelbar als Erstes (`udp.Close()` & `udp.SetDeadline(time.Now())`).
+  - Blockierte Kernel-Sockets im `ReadFrom` brechen sofort ab; Pion DTLS Worker hängen nicht mehr dauerhaft bei Verbindungsabbrüchen oder Neustarts der Kamera.
+  - Das Schließen der DTLS-Sitzung (`conn.Close()`) erfolgt geschützt in einer Hintergrund-Routine mit Deadline, wodurch `Client.Close()` garantiert in < 1 ms zurückkehrt.
+- **Entkopplung des CoAP Write-Locks & Einbindung in DTLS Write-Mutex**:
+  - `c.mu` wird in `coap.Execute` nicht mehr während des Netzwerk-Writes gehalten, sodass `coap.Close()` ausstehende Anfragen unverzüglich abbrechen kann.
+  - Einbindung des gemeinsamen Write-Mutex serialisiert CoAP-Pakete mit KeepAlive und Stream-Paketen sauber ohne Race Conditions.
+- **Supervisor Watchdog-Barriere (`safeCloseDriver`)**:
+  - Alle Schließvorgänge des Treibers in `pkg/driver/l625.go` sind nun durch ein 3-Sekunden-Hard-Timeout geschützt.
+  - Sollte ein Treiber beim Verbindungsabbruch blockieren, bricht der Supervisor nach 3s ab, meldet den Zustand, aktiviert das Backoff-Intervall und startet den nächsten Verbindungsversuch zuverlässig.
+
 ## 1.3.9-beta.3
 
 ### 🛡️ Nabto Verbindungs-Robustheit, Deadlock-Beseitigung & 401 Track Diagnostics (Issue #25)
