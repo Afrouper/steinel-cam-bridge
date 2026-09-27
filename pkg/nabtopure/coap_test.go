@@ -127,6 +127,36 @@ func TestCoAPClientClose(t *testing.T) {
 	}
 }
 
+func TestCoAPClient_Close_During_Blocked_Write(t *testing.T) {
+	serverConn, clientConn := net.Pipe()
+	defer func() { _ = serverConn.Close() }()
+
+	coapClient := NewCoAPClient(clientConn)
+
+	errChan := make(chan error, 1)
+	go func() {
+		req := NewRequest(CodeGET, "/p2p/webrtc-info", 0, nil)
+		_, err := coapClient.Execute(req, 2*time.Second)
+		errChan <- err
+	}()
+
+	// Give Execute a moment to attempt Write (which blocks on net.Pipe because serverConn is not reading)
+	time.Sleep(30 * time.Millisecond)
+
+	// Closing clientConn and coapClient must immediately unblock Execute
+	_ = clientConn.Close()
+	coapClient.Close()
+
+	select {
+	case err := <-errChan:
+		if err == nil {
+			t.Fatalf("expected error from Execute after Close, got nil")
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("Execute did not unblock within 500ms after Close during blocked Write")
+	}
+}
+
 func TestCoAPOptionsSorted(t *testing.T) {
 	msg := &CoAPMessage{
 		Type: TypeCON,

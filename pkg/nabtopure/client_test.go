@@ -224,6 +224,38 @@ func TestClientCloseNonBlocking(t *testing.T) {
 	}
 }
 
+func TestClient_Close_During_Blocked_DTLS(t *testing.T) {
+	client, err := NewClient(&Config{CameraIP: "127.0.0.1", CameraPort: 5592})
+	if err != nil {
+		t.Fatalf("NewClient failed: %v", err)
+	}
+
+	rawUDP, err := net.ListenUDP("udp", nil)
+	if err != nil {
+		t.Fatalf("failed to open local UDP socket: %v", err)
+	}
+	client.udpConn = rawUDP
+
+	cliPipe, srvPipe := net.Pipe()
+	defer func() { _ = srvPipe.Close() }()
+	client.dtlsConn = cliPipe
+	client.coapClient = NewCoAPClient(cliPipe)
+	client.coapClient.SetWriteMutex(&client.writeMu)
+
+	done := make(chan struct{})
+	go func() {
+		client.Close()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// success
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("client.Close() took more than 500ms when network I/O was pending")
+	}
+}
+
 func TestClient_RequestTracks_NotConnected(t *testing.T) {
 	client, err := NewClient(&Config{CameraIP: "127.0.0.1"})
 	if err != nil {

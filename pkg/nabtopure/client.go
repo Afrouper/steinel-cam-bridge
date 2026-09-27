@@ -31,7 +31,7 @@ type Config = nabto.Config
 type Client struct {
 	cfg           *Config
 	privateKey    *ecdsa.PrivateKey
-	dtlsConn      *dtls.Conn
+	dtlsConn      net.Conn
 	udpConn       net.PacketConn
 	coapClient    *CoAPClient
 	currentStream *Stream
@@ -205,6 +205,7 @@ func (c *Client) Connect() error {
 	logger.Info("NabtoPure", "✅ DTLS 1.2 handshake established successfully with %s", targetAddr)
 	c.dtlsConn = conn
 	c.coapClient = NewCoAPClient(conn)
+	c.coapClient.SetWriteMutex(&c.writeMu)
 	c.readerClose = make(chan struct{})
 	go c.packetReaderLoop()
 	go c.keepAliveLoop()
@@ -382,26 +383,28 @@ func (c *Client) Close() {
 		c.udpConn = nil
 		c.mu.Unlock()
 
-		// 2. Abort active stream
+		// 2. Immediately close underlying UDP socket to unblock any pending network reads/writes
+		if udp != nil {
+			_ = udp.SetDeadline(time.Now())
+			_ = udp.Close()
+		}
+
+		// 3. Abort active stream
 		if stream != nil {
 			stream.Close()
 		}
 
-		// 3. Abort pending CoAP calls
+		// 4. Abort pending CoAP calls
 		if coap != nil {
 			coap.Close()
 		}
 
-		// 4. Cleanly terminate DTLS connection if open (send close_notify with 500ms deadline)
+		// 5. Cleanly terminate DTLS connection in background so it never blocks Close()
 		if conn != nil {
-			_ = conn.SetDeadline(time.Now().Add(500 * time.Millisecond))
-			_ = conn.Close()
-		}
-
-		// 5. Unblock any pending socket reads immediately by setting past deadline, then close UDP
-		if udp != nil {
-			_ = udp.SetDeadline(time.Now())
-			_ = udp.Close()
+			go func(cn net.Conn) {
+				_ = cn.SetDeadline(time.Now().Add(200 * time.Millisecond))
+				_ = cn.Close()
+			}(conn)
 		}
 	})
 }
