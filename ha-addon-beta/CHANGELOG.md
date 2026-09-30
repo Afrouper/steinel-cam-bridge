@@ -2,6 +2,18 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.3.9-beta.5
+
+### 🛡️ Behebung des CGo-Lifecycle Deadlocks & SIGSEGV-Container-Crashes (Issue #25)
+
+- **Sofortiger Abbruch über `nabto_client_stop` im CGo Nabto-Treiber**:
+  - In `pkg/nabto/client.go:Close()` wird `nabto_client_stop(ctx)` nun unmittelbar als Erstes aufgerufen.
+  - Laufende Verbindungsaufbauten (`connection_connect`), CoAP-Anfragen und virtuelle Streams brechen dadurch innerhalb von `< 1 ms` mit `NABTO_CLIENT_EC_STOPPED` ab, statt auf unvollständige Netzwerk-Timeouts zu warten.
+- **Beseitigung von Race Conditions & Double-Free / SIGSEGV (Code 139)**:
+  - Verhindert das Überleben von CGo-Hintergrund-Goroutinen über die 3-Sekunden-Watchdog-Barriere des Supervisors hinweg.
+  - Das Freigeben von `conn` und `ctx` erfolgt erst, nachdem alle Worker-Routinen garantiert beendet sind.
+  - Eliminiert den Container-Absturz und unkontrollierten Neustart bei nicht erreichbarer Kamera-IP.
+
 ## 1.3.9-beta.4
 
 ### 🛡️ Behebung des Supervisor-Stillstands & Non-Blocking Lifecycle im Pure-Go Treiber

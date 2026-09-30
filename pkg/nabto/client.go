@@ -140,25 +140,18 @@ func (c *Client) Close() {
 	c.conn = nil
 	c.mu.Unlock()
 
-	// If there is an active or in-flight connection, close it to cancel pending operations/futures
-	if conn != nil && ctx != nil {
-		fut := C.nabto_client_future_new(ctx)
-		if fut != nil {
-			C.nabto_client_connection_close(conn, fut)
-			C.nabto_client_future_wait(fut)
-			C.nabto_client_future_free(fut)
-		}
-	}
-
-	// Stop context to cancel any remaining background callbacks
+	// 1. Stop context immediately.
+	// Per Nabto Client C-SDK specification, nabto_client_stop immediately cancels all pending
+	// futures (including in-flight connection_connect, streams, and CoAP requests) with
+	// NABTO_CLIENT_EC_STOPPED without blocking on network roundtrips.
 	if ctx != nil {
 		C.nabto_client_stop(ctx)
 	}
 
-	// Wait for in-flight operations (Connect, CoAP, Stream open) to complete
+	// 2. Wait for all in-flight worker goroutines (Connect, CoAP, Stream) to exit cleanly
 	c.wg.Wait()
 
-	// Free the connection object after all workers have finished
+	// 3. Safely free C connection and context handles now that all worker routines have terminated
 	if conn != nil {
 		C.nabto_client_connection_free(conn)
 	}
@@ -243,7 +236,10 @@ func (c *Client) Connect() error {
 
 	// Force direct local connection and set 20s connection attempt timeout
 	cOpts := C.CString("{\"Remote\":false,\"ConnectTimeout\":20000}")
-	_ = C.nabto_client_connection_set_options(conn, cOpts)
+	optErr := C.nabto_client_connection_set_options(conn, cOpts)
+	if optErr != C.NABTO_CLIENT_EC_OK {
+		logger.Warn("Nabto", "⚠️ Failed to set connection options: %d", int(optErr))
+	}
 	C.free(unsafe.Pointer(cOpts))
 
 	c.mu.Lock()

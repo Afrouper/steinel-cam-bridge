@@ -28,8 +28,8 @@ func TestClient_CloseDuringConnect(t *testing.T) {
 		connectErrCh <- client.Connect()
 	}()
 
-	// Give connect a brief moment to start and register c.conn
-	time.Sleep(50 * time.Millisecond)
+	// Give connect enough time to generate key and register c.conn
+	time.Sleep(600 * time.Millisecond)
 
 	closeDone := make(chan struct{})
 	go func() {
