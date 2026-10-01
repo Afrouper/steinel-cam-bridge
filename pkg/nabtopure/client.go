@@ -164,8 +164,8 @@ func (c *Client) Connect() error {
 		return fmt.Errorf("failed to resolve camera address: %w", err)
 	}
 
-	// Wake up camera via mDNS ping
-	c.sendMDNSWAKEUP(targetAddr)
+	// Wake up camera via dynamic mDNS ping
+	nabto.SendWakeup(c.cfg.CameraIP, c.cfg.CameraPort, c.cfg.ProductID, c.cfg.DeviceID)
 
 	logger.Info("NabtoPure", "🚀 Connecting to %s via Pure-Go DTLS 1.2...", targetAddr)
 
@@ -354,24 +354,7 @@ func (c *Client) packetReaderLoop() {
 	}
 }
 
-func (c *Client) sendMDNSWAKEUP(target string) {
-	conn, err := net.Dial("udp", target)
-	if err != nil {
-		return
-	}
-	defer func() { _ = conn.Close() }()
 
-	mdnsQuery := []byte{
-		0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-		0x17, 0x70, 0x72, 0x2d, 0x71, 0x74, 0x61, 0x74, 0x62, 0x74, 0x62, 0x69,
-		0x2d, 0x64, 0x65, 0x2d, 0x6d, 0x34, 0x79, 0x66, 0x6f, 0x77, 0x62, 0x72,
-		0x05, 0x6c, 0x6f, 0x63, 0x61, 0x6c, 0x00, 0x00, 0xff, 0x00, 0x01,
-	}
-	for i := 0; i < 3; i++ {
-		_, _ = conn.Write(mdnsQuery)
-		time.Sleep(30 * time.Millisecond)
-	}
-}
 
 // Close closes the underlying DTLS and network connections cleanly.
 func (c *Client) Close() {

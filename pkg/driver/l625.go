@@ -87,8 +87,8 @@ func safeCloseDriver(c nabto.Driver) {
 	}()
 	select {
 	case <-done:
-	case <-time.After(3 * time.Second):
-		logger.Warn("Supervisor", "⚠️ Warning: driver %s Close() did not finish within 3s", c.DriverName())
+	case <-time.After(6 * time.Second):
+		logger.Warn("Supervisor", "⚠️ Warning: driver %s Close() did not finish within 6s", c.DriverName())
 	}
 }
 
@@ -132,8 +132,8 @@ connectionLoop:
 			safeCloseDriver(client)
 			select {
 			case <-connectDone:
-			case <-time.After(3 * time.Second):
-				logger.Warn("Supervisor", "⚠️ Warning: connect goroutine did not exit within 3s after Close")
+			case <-time.After(6 * time.Second):
+				logger.Warn("Supervisor", "⚠️ Warning: connect goroutine did not exit within 6s after Close")
 			}
 		case err := <-connectDone:
 			connectErr = err
@@ -192,8 +192,8 @@ connectionLoop:
 			safeCloseDriver(client)
 			select {
 			case <-portCh:
-			case <-time.After(3 * time.Second):
-				logger.Warn("Supervisor", "⚠️ Warning: port query goroutine did not exit within 3s after Close")
+			case <-time.After(6 * time.Second):
+				logger.Warn("Supervisor", "⚠️ Warning: port query goroutine did not exit within 6s after Close")
 			}
 		case res := <-portCh:
 			port = res.port
@@ -248,8 +248,8 @@ connectionLoop:
 			safeCloseDriver(client)
 			select {
 			case <-streamCh:
-			case <-time.After(3 * time.Second):
-				logger.Warn("Supervisor", "⚠️ Warning: stream open goroutine did not exit within 3s after Close")
+			case <-time.After(6 * time.Second):
+				logger.Warn("Supervisor", "⚠️ Warning: stream open goroutine did not exit within 6s after Close")
 			}
 		case res := <-streamCh:
 			stream = res.stream

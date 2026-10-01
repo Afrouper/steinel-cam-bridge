@@ -1,6 +1,7 @@
 package nabto
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -61,3 +62,30 @@ func TestClient_CloseBeforeConnect(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "closed")
 }
+
+func TestClient_KeyPersistence(t *testing.T) {
+	tmpDir := t.TempDir()
+	keyPath := filepath.Join(tmpDir, "test_persist.key")
+
+	cfg := &Config{
+		CameraIP:   "127.0.0.1",
+		CameraPort: 54321,
+		KeyPath:    keyPath,
+	}
+
+	client, err := NewClient(cfg)
+	require.NoError(t, err)
+
+	go func() {
+		_ = client.Connect()
+	}()
+
+	// Verify key file is written immediately on generation
+	assert.Eventually(t, func() bool {
+		data, err := os.ReadFile(keyPath)
+		return err == nil && len(data) > 0
+	}, 2*time.Second, 50*time.Millisecond, "Private key must be saved to disk immediately upon generation")
+
+	client.Close()
+}
+
