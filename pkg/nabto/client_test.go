@@ -88,4 +88,3 @@ func TestClient_KeyPersistence(t *testing.T) {
 
 	client.Close()
 }
-

@@ -354,8 +354,6 @@ func (c *Client) packetReaderLoop() {
 	}
 }
 
-
-
 // Close closes the underlying DTLS and network connections cleanly.
 func (c *Client) Close() {
 	c.closeOnce.Do(func() {
