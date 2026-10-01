@@ -2,6 +2,17 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.3.9-beta.8
+
+### 🌐 Netzwerk-Health-Check, Wi-Fi Wake-up & Klare Reconnect-Diagnose
+
+- **Automatischer Netzwerk-Health-Check bei Reconnects (`pkg/netprobe`)**:
+  - Vor jedem erneuten Verbindungsversuch (bei Fehlversuchen im Supervisor-Backoff) sendet die Bridge nun gezielte Netzwerk-Probes (ICMP / System-Ping / Port-Probe) an die Kamera-IP.
+  - **Wi-Fi Power-Save Wake-up**: Weckt das Funkmodul der Kamera aus dem Schlafzustand (IEEE 802.11 DTIM) und frischt den ARP-Cache im gesamten lokalen Netzwerk auf, bevor der eigentliche Nabto/WebRTC-Handshake beginnt.
+- **Transparente Fehlerdiagnose & Handlungsanweisungen**:
+  - *Kamera antwortet auf Ping*: Gibt die Latenz (RTT) aus und bestätigt, dass die IP-Verbindung steht und lediglich der interne Nabto-Daemon der Kamera noch initialisiert.
+  - *Kamera antwortet NICHT*: Gibt eine deutliche Warnung inklusive einer 3-Punkte-Handlungsanleitung im Log aus (Stromversorgung/Wandschalter prüfen, WLAN-Signalstärke prüfen, DHCP-IP-Zuweisung im Router kontrollieren).
+
 ## 1.3.9-beta.7
 
 ### 🔐 Full-URL Digest-Kandidaten & Erweiterte Authentifizierungs-Diagnose (Issue #19)

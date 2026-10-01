@@ -14,6 +14,7 @@ import (
 	"github.com/Afrouper/steinel-cam-bridge/pkg/mcu"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/nabto"
 	_ "github.com/Afrouper/steinel-cam-bridge/pkg/nabtopure"
+	"github.com/Afrouper/steinel-cam-bridge/pkg/netprobe"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/rtsp"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/storage"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/webrtc"
@@ -92,6 +93,34 @@ func safeCloseDriver(c nabto.Driver) {
 	}
 }
 
+// ProbeNetworkHealth checks if the camera IP responds on the network and logs clear diagnostics.
+// It also serves to wake up the camera Wi-Fi radio from power-save sleep and refresh ARP tables.
+func ProbeNetworkHealth(ctx context.Context, ip string) {
+	if ip == "" {
+		return
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+
+	res, err := netprobe.Ping(probeCtx, ip, 1500*time.Millisecond)
+	if res.Reachable {
+		rtt := res.RTT.Round(time.Millisecond)
+		if rtt == 0 {
+			rtt = time.Millisecond
+		}
+		logger.Info("Supervisor", "🌐 Camera %s is reachable on network (Ping RTT: %v). Camera IP stack is alive.", ip, rtt)
+	} else {
+		logger.Warn("Supervisor", "🔌 Camera %s does NOT respond to network ping (Host unreachable)!", ip)
+		logger.Warn("Supervisor", "👉 Action required:")
+		logger.Warn("Supervisor", "   1. Check if camera power/wall switch is turned ON.")
+		logger.Warn("Supervisor", "   2. Verify Wi-Fi signal strength at camera location.")
+		logger.Warn("Supervisor", "   3. Check your router to confirm camera IP address is still %s.", ip)
+		if err != nil {
+			logger.Debug("Supervisor", "Ping probe error details: %v", err)
+		}
+	}
+}
+
 // Run manages the Nabto Edge handshakes, WebRTC signaling and automatic reconnection loop.
 func (d *L625Driver) Run(ctx context.Context) error {
 	cfg := d.cfg.NabtoConfig
@@ -108,6 +137,11 @@ connectionLoop:
 			case <-time.After(5 * time.Second):
 			}
 			continue
+		}
+
+		// On retry, probe network health and wake up Wi-Fi radio before attempting Nabto connect
+		if consecutiveFailures > 0 {
+			ProbeNetworkHealth(ctx, cfg.CameraIP)
 		}
 
 		// Connect with driver-appropriate timeout protection
