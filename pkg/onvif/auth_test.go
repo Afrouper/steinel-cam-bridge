@@ -348,7 +348,7 @@ func TestValidateDigestAuth_DualHA2PathAndAbsoluteURI(t *testing.T) {
 	respFull := md5Hex(fmt.Sprintf("%s:%s:%s:%s:%s:%s", ha1, nonce, nc, cnonce, qop, ha2Full))
 	headerFull := fmt.Sprintf(`Digest username="%s", realm="%s", nonce="%s", uri="%s", response="%s", qop=%s, nc=%s, cnonce="%s"`,
 		user, realm, nonce, fullURL, respFull, qop, nc, cnonce)
-	status1, reason1 := ValidateDigestAuthWithReason(method, path, headerFull, user, pass, realm, mgr)
+	status1, reason1 := ValidateDigestAuthWithReason(method, path, "192.168.88.88:8000", headerFull, user, pass, realm, mgr)
 	assert.Equal(t, AuthStatusSuccess, status1)
 	assert.Empty(t, reason1)
 
@@ -357,9 +357,27 @@ func TestValidateDigestAuth_DualHA2PathAndAbsoluteURI(t *testing.T) {
 	respPathOnly := md5Hex(fmt.Sprintf("%s:%s:%s:%s:%s:%s", ha1, nonce, nc, cnonce, qop, ha2PathOnly))
 	headerPathOnly := fmt.Sprintf(`Digest username="%s", realm="%s", nonce="%s", uri="%s", response="%s", qop=%s, nc=%s, cnonce="%s"`,
 		user, realm, nonce, fullURL, respPathOnly, qop, nc, cnonce)
-	status2, reason2 := ValidateDigestAuthWithReason(method, path, headerPathOnly, user, pass, realm, mgr)
+	status2, reason2 := ValidateDigestAuthWithReason(method, path, "192.168.88.88:8000", headerPathOnly, user, pass, realm, mgr)
 	assert.Equal(t, AuthStatusSuccess, status2)
 	assert.Empty(t, reason2)
+
+	// Case 3: Client sends relative path in uri="..." (uri="/onvif/device_service"),
+	// but computes HA2 over the full target URL (with host:port) (Synology Surveillance Station behavior)
+	headerPathWithFullHA2 := fmt.Sprintf(`Digest username="%s", realm="%s", nonce="%s", uri="%s", response="%s", qop=%s, nc=%s, cnonce="%s"`,
+		user, realm, nonce, path, respFull, qop, nc, cnonce)
+	status3, reason3 := ValidateDigestAuthWithReason(method, path, "192.168.88.88:8000", headerPathWithFullHA2, user, pass, realm, mgr)
+	assert.Equal(t, AuthStatusSuccess, status3)
+	assert.Empty(t, reason3)
+
+	// Case 4: Client sends relative path in uri="..." but computes HA2 over full URL WITHOUT port
+	fullURLNoPort := "http://192.168.88.88/onvif/device_service"
+	ha2NoPort := md5Hex(fmt.Sprintf("%s:%s", method, fullURLNoPort))
+	respNoPort := md5Hex(fmt.Sprintf("%s:%s:%s:%s:%s:%s", ha1, nonce, nc, cnonce, qop, ha2NoPort))
+	headerPathWithNoPortHA2 := fmt.Sprintf(`Digest username="%s", realm="%s", nonce="%s", uri="%s", response="%s", qop=%s, nc=%s, cnonce="%s"`,
+		user, realm, nonce, path, respNoPort, qop, nc, cnonce)
+	status4, reason4 := ValidateDigestAuthWithReason(method, path, "192.168.88.88:8000", headerPathWithNoPortHA2, user, pass, realm, mgr)
+	assert.Equal(t, AuthStatusSuccess, status4)
+	assert.Empty(t, reason4)
 }
 
 func TestValidateDigestAuthWithReason_Diagnostics(t *testing.T) {
@@ -371,33 +389,38 @@ func TestValidateDigestAuthWithReason_Diagnostics(t *testing.T) {
 
 	// 1. Username mismatch
 	hdrWrongUser := fmt.Sprintf(`Digest username="other", realm="%s", nonce="%s", uri="/onvif/device_service", response="1234"`, realm, nonce)
-	status, reason := ValidateDigestAuthWithReason("POST", "/onvif/device_service", hdrWrongUser, user, pass, realm, mgr)
+	status, reason := ValidateDigestAuthWithReason("POST", "/onvif/device_service", "", hdrWrongUser, user, pass, realm, mgr)
 	assert.Equal(t, AuthStatusFailed, status)
 	assert.Contains(t, reason, "username mismatch")
 
 	// 2. Realm mismatch
 	hdrWrongRealm := fmt.Sprintf(`Digest username="%s", realm="WrongRealm", nonce="%s", uri="/onvif/device_service", response="1234"`, user, nonce)
-	status, reason = ValidateDigestAuthWithReason("POST", "/onvif/device_service", hdrWrongRealm, user, pass, realm, mgr)
+	status, reason = ValidateDigestAuthWithReason("POST", "/onvif/device_service", "", hdrWrongRealm, user, pass, realm, mgr)
 	assert.Equal(t, AuthStatusFailed, status)
 	assert.Contains(t, reason, "realm mismatch")
 
 	// 3. Invalid nonce
 	hdrWrongNonce := fmt.Sprintf(`Digest username="%s", realm="%s", nonce="bad-nonce-1234", uri="/onvif/device_service", response="1234"`, user, realm)
-	status, reason = ValidateDigestAuthWithReason("POST", "/onvif/device_service", hdrWrongNonce, user, pass, realm, mgr)
+	status, reason = ValidateDigestAuthWithReason("POST", "/onvif/device_service", "", hdrWrongNonce, user, pass, realm, mgr)
 	assert.Equal(t, AuthStatusFailed, status)
 	assert.Contains(t, reason, "nonce is invalid")
 
 	// 4. URI mismatch
 	hdrWrongURI := fmt.Sprintf(`Digest username="%s", realm="%s", nonce="%s", uri="/onvif/media_service", response="1234"`, user, realm, nonce)
-	status, reason = ValidateDigestAuthWithReason("POST", "/onvif/device_service", hdrWrongURI, user, pass, realm, mgr)
+	status, reason = ValidateDigestAuthWithReason("POST", "/onvif/device_service", "", hdrWrongURI, user, pass, realm, mgr)
 	assert.Equal(t, AuthStatusFailed, status)
 	assert.Contains(t, reason, "uri mismatch")
 
-	// 5. Response hash mismatch
-	hdrWrongHash := fmt.Sprintf(`Digest username="%s", realm="%s", nonce="%s", uri="/onvif/device_service", response="00000000000000000000000000000000"`, user, realm, nonce)
-	status, reason = ValidateDigestAuthWithReason("POST", "/onvif/device_service", hdrWrongHash, user, pass, realm, mgr)
+	// 5. Response hash mismatch with extended multi-line diagnostics
+	hdrWrongHash := fmt.Sprintf(`Digest username="%s", realm="%s", nonce="%s", uri="/onvif/device_service", response="00000000000000000000000000000000", qop=auth, nc=00000001, cnonce="testclient"`, user, realm, nonce)
+	status, reason = ValidateDigestAuthWithReason("POST", "/onvif/device_service", "192.168.88.88:8000", hdrWrongHash, user, pass, realm, mgr)
 	assert.Equal(t, AuthStatusFailed, status)
 	assert.Contains(t, reason, "response hash mismatch")
+	assert.Contains(t, reason, `User: "admin"`)
+	assert.Contains(t, reason, `Realm: "Steinel ONVIF Bridge"`)
+	assert.Contains(t, reason, "Server HA1:")
+	assert.Contains(t, reason, "Tested Candidates:")
+	assert.Contains(t, reason, `POST:http://192.168.88.88:8000/onvif/device_service`)
 }
 
 func TestServer_PRE_AUTH_Exemptions(t *testing.T) {

@@ -174,7 +174,7 @@ func (s *Server) authenticateSOAP(w http.ResponseWriter, r *http.Request, action
 
 	// 1. Try HTTP Digest Auth Header (RFC 2617, mandated by ONVIF Core Spec 5.1.2)
 	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(authHeader)), "digest ") {
-		status, reason := ValidateDigestAuthWithReason(r.Method, r.URL.Path, authHeader, s.authUser, s.authPass, ONVIFAuthRealm, s.nonceManager)
+		status, reason := ValidateDigestAuthWithReason(r.Method, r.URL.Path, r.Host, authHeader, s.authUser, s.authPass, ONVIFAuthRealm, s.nonceManager)
 		if status == AuthStatusSuccess {
 			return true
 		}
@@ -199,7 +199,7 @@ func (s *Server) authenticateSOAP(w http.ResponseWriter, r *http.Request, action
 	}
 
 	if digestFailReason != "" {
-		logger.Debug("ONVIF", "🔒 Digest Auth rejected: %s (Client: %s)", digestFailReason, r.RemoteAddr)
+		logger.Debug("ONVIF", "🔒 Digest Auth rejected:\n%s\n  - Source: %s", digestFailReason, r.RemoteAddr)
 	}
 	logger.Warn("ONVIF", "🔒 Authentication failure from %s for action '%s' on %s (Auth: %s)",
 		r.RemoteAddr, action, r.URL.Path, RedactAuthHeader(authHeader))
