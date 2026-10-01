@@ -340,14 +340,14 @@ func ValidateDigestAuthWithReason(
 
 	// Extended diagnostic reason when all candidate calculations fail
 	var diag strings.Builder
-	diag.WriteString(fmt.Sprintf("response hash mismatch (client response %q does not match computed response)\n", clientResp))
-	diag.WriteString(fmt.Sprintf("  - User: %q, Realm: %q\n", expectedUser, realmToUse))
-	diag.WriteString(fmt.Sprintf("  - Nonce: %q, NC: %q, Cnonce: %q, QOP: %q\n", nonce, nc, cnonce, qop))
-	diag.WriteString(fmt.Sprintf("  - Client URI: %q, Req URI: %q, Host: %q\n", clientURI, reqURI, host))
-	diag.WriteString(fmt.Sprintf("  - Server HA1: %s\n", ha1))
+	fmt.Fprintf(&diag, "response hash mismatch (client response %q does not match computed response)\n", clientResp)
+	fmt.Fprintf(&diag, "  - User: %q, Realm: %q\n", expectedUser, realmToUse)
+	fmt.Fprintf(&diag, "  - Nonce: %q, NC: %q, Cnonce: %q, QOP: %q\n", nonce, nc, cnonce, qop)
+	fmt.Fprintf(&diag, "  - Client URI: %q, Req URI: %q, Host: %q\n", clientURI, reqURI, host)
+	fmt.Fprintf(&diag, "  - Server HA1: %s\n", ha1)
 	diag.WriteString("  - Tested Candidates:")
 	for i, cand := range testedCandidates {
-		diag.WriteString(fmt.Sprintf("\n    [%d] %q (HA2: %s) -> Expected: %s", i+1, cand.raw, cand.hash, cand.expectedResp))
+		fmt.Fprintf(&diag, "\n    [%d] %q (HA2: %s) -> Expected: %s", i+1, cand.raw, cand.hash, cand.expectedResp)
 	}
 
 	return AuthStatusFailed, diag.String()
