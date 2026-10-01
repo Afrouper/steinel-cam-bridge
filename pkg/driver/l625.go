@@ -75,6 +75,23 @@ func CalculateBackoff(consecutiveFailures int) time.Duration {
 	return delay
 }
 
+// safeCloseDriver ensures that closing a Nabto driver never blocks the supervisor indefinitely.
+func safeCloseDriver(c nabto.Driver) {
+	if c == nil {
+		return
+	}
+	done := make(chan struct{})
+	go func() {
+		c.Close()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(6 * time.Second):
+		logger.Warn("Supervisor", "⚠️ Warning: driver %s Close() did not finish within 6s", c.DriverName())
+	}
+}
+
 // Run manages the Nabto Edge handshakes, WebRTC signaling and automatic reconnection loop.
 func (d *L625Driver) Run(ctx context.Context) error {
 	cfg := d.cfg.NabtoConfig
@@ -104,7 +121,7 @@ connectionLoop:
 		var connectErr error
 		select {
 		case <-ctx.Done():
-			client.Close()
+			safeCloseDriver(client)
 			select {
 			case <-connectDone:
 			case <-time.After(2 * time.Second):
@@ -112,11 +129,11 @@ connectionLoop:
 			break connectionLoop
 		case <-time.After(connectTimeout):
 			connectErr = fmt.Errorf("connection timeout (%v) reached", connectTimeout)
-			client.Close()
+			safeCloseDriver(client)
 			select {
 			case <-connectDone:
-			case <-time.After(3 * time.Second):
-				logger.Warn("Supervisor", "⚠️ Warning: connect goroutine did not exit within 3s after Close")
+			case <-time.After(6 * time.Second):
+				logger.Warn("Supervisor", "⚠️ Warning: connect goroutine did not exit within 6s after Close")
 			}
 		case err := <-connectDone:
 			connectErr = err
@@ -127,7 +144,7 @@ connectionLoop:
 			backoffDelay := CalculateBackoff(consecutiveFailures)
 			logger.Error("Supervisor", "❌ Connect failed (%v)", connectErr)
 			logger.Info("Supervisor", "🧹 Cleaning up camera connection state...")
-			client.Close()
+			safeCloseDriver(client)
 			if ctx.Err() != nil {
 				break connectionLoop
 			}
@@ -164,7 +181,7 @@ connectionLoop:
 		var portErr error
 		select {
 		case <-ctx.Done():
-			client.Close()
+			safeCloseDriver(client)
 			select {
 			case <-portCh:
 			case <-time.After(2 * time.Second):
@@ -172,11 +189,11 @@ connectionLoop:
 			break connectionLoop
 		case <-time.After(15 * time.Second):
 			portErr = fmt.Errorf("timeout (15s) while querying signaling port")
-			client.Close()
+			safeCloseDriver(client)
 			select {
 			case <-portCh:
-			case <-time.After(3 * time.Second):
-				logger.Warn("Supervisor", "⚠️ Warning: port query goroutine did not exit within 3s after Close")
+			case <-time.After(6 * time.Second):
+				logger.Warn("Supervisor", "⚠️ Warning: port query goroutine did not exit within 6s after Close")
 			}
 		case res := <-portCh:
 			port = res.port
@@ -188,7 +205,7 @@ connectionLoop:
 			backoffDelay := CalculateBackoff(consecutiveFailures)
 			logger.Error("Supervisor", "❌ GetSignalingPort failed (%v)", portErr)
 			logger.Info("Supervisor", "🧹 Cleaning up camera connection state...")
-			client.Close()
+			safeCloseDriver(client)
 			if ctx.Err() != nil {
 				break connectionLoop
 			}
@@ -220,7 +237,7 @@ connectionLoop:
 		var streamErr error
 		select {
 		case <-ctx.Done():
-			client.Close()
+			safeCloseDriver(client)
 			select {
 			case <-streamCh:
 			case <-time.After(2 * time.Second):
@@ -228,11 +245,11 @@ connectionLoop:
 			break connectionLoop
 		case <-time.After(15 * time.Second):
 			streamErr = fmt.Errorf("timeout (15s) while opening signaling stream on port %d", port)
-			client.Close()
+			safeCloseDriver(client)
 			select {
 			case <-streamCh:
-			case <-time.After(3 * time.Second):
-				logger.Warn("Supervisor", "⚠️ Warning: stream open goroutine did not exit within 3s after Close")
+			case <-time.After(6 * time.Second):
+				logger.Warn("Supervisor", "⚠️ Warning: stream open goroutine did not exit within 6s after Close")
 			}
 		case res := <-streamCh:
 			stream = res.stream
@@ -244,7 +261,7 @@ connectionLoop:
 			backoffDelay := CalculateBackoff(consecutiveFailures)
 			logger.Error("Supervisor", "❌ OpenSignalingStream failed (%v)", streamErr)
 			logger.Info("Supervisor", "🧹 Cleaning up camera connection state...")
-			client.Close()
+			safeCloseDriver(client)
 			if ctx.Err() != nil {
 				break connectionLoop
 			}
@@ -274,7 +291,7 @@ connectionLoop:
 		d.setBridge(nil)
 		stream.Close()
 		logger.Info("Supervisor", "🧹 Closing camera session and releasing connection...")
-		client.Close()
+		safeCloseDriver(client)
 
 		if ctx.Err() == nil {
 			if time.Since(sessionStart) > 60*time.Second {

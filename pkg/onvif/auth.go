@@ -13,6 +13,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -151,6 +152,207 @@ func isURIMatch(clientURI, reqPath string) bool {
 	return false
 }
 
+// ha2Candidate records a tested HA2 permutation along with its computed expected response for diagnostics.
+type ha2Candidate struct {
+	raw          string
+	hash         string
+	expectedResp string
+}
+
+// getURICandidates generates all plausible URI representations for HA2 calculation:
+// 1. Raw clientURI from the Authorization header
+// 2. Relative path/request-uri if clientURI is an absolute URL
+// 3. Server's internal request path (reqURI)
+// 4. Absolute URLs reconstructed with http/https schemes and the provided host (with and without port)
+func getURICandidates(clientURI, reqURI, host string) []string {
+	var uris []string
+	addURI := func(u string) {
+		u = strings.TrimSpace(u)
+		if u == "" {
+			return
+		}
+		for _, existing := range uris {
+			if existing == u {
+				return
+			}
+		}
+		uris = append(uris, u)
+	}
+
+	// 1. Exactly as provided in the Digest Authorization header
+	addURI(clientURI)
+
+	// 2. Parsed clientURI components (if it was an absolute URL)
+	if u, err := url.Parse(clientURI); err == nil && u.Path != "" {
+		addURI(u.Path)
+		if u.RawQuery != "" {
+			addURI(u.RequestURI())
+		}
+	}
+
+	// 3. Server's local request path
+	addURI(reqURI)
+
+	// 4. Synthesized absolute URLs with host (crucial for clients like Synology Surveillance Station)
+	trimmedHost := strings.TrimSpace(host)
+	if trimmedHost != "" {
+		hostOnly := trimmedHost
+		if h, _, err := net.SplitHostPort(trimmedHost); err == nil && h != "" {
+			hostOnly = h
+		}
+
+		targetPaths := []string{reqURI}
+		if clientURI != "" && clientURI != reqURI && strings.HasPrefix(clientURI, "/") {
+			targetPaths = append(targetPaths, clientURI)
+		}
+
+		for _, p := range targetPaths {
+			if p == "" {
+				continue
+			}
+			// Full URL with provided host (e.g. "http://192.168.88.88:8000/onvif/device_service")
+			addURI(fmt.Sprintf("http://%s%s", trimmedHost, p))
+			addURI(fmt.Sprintf("https://%s%s", trimmedHost, p))
+
+			// Full URL without port if host had a port
+			if hostOnly != trimmedHost {
+				addURI(fmt.Sprintf("http://%s%s", hostOnly, p))
+				addURI(fmt.Sprintf("https://%s%s", hostOnly, p))
+			} else {
+				// If host had no port, try standard ONVIF port 8000 and 80
+				addURI(fmt.Sprintf("http://%s:8000%s", hostOnly, p))
+				addURI(fmt.Sprintf("http://%s:80%s", hostOnly, p))
+			}
+		}
+	}
+
+	return uris
+}
+
+// ValidateDigestAuthWithReason validates an HTTP Digest Authorization header and returns AuthStatus along with a diagnostic reason string.
+func ValidateDigestAuthWithReason(
+	method string,
+	reqURI string,
+	host string,
+	authHeader string,
+	expectedUser string,
+	expectedPass string,
+	expectedRealm string,
+	nonceMgr *NonceManager,
+) (AuthStatus, string) {
+	if expectedUser == "" {
+		return AuthStatusSuccess, ""
+	}
+
+	params := ParseDigestAuthorization(authHeader)
+	if params == nil {
+		return AuthStatusFailed, "malformed or unparseable Digest header"
+	}
+
+	// 1. Verify username
+	username := strings.Trim(params["username"], `"`)
+	if subtle.ConstantTimeCompare([]byte(username), []byte(expectedUser)) != 1 {
+		return AuthStatusFailed, fmt.Sprintf("username mismatch (got %q, expected %q)", username, expectedUser)
+	}
+
+	// 2. Verify realm (if present in params, must match expectedRealm)
+	if realm, ok := params["realm"]; ok && realm != "" {
+		realm = strings.Trim(realm, `"`)
+		if subtle.ConstantTimeCompare([]byte(realm), []byte(expectedRealm)) != 1 {
+			return AuthStatusFailed, fmt.Sprintf("realm mismatch (got %q, expected %q)", realm, expectedRealm)
+		}
+	}
+
+	// 3. Verify algorithm (empty, MD5 or md5 supported)
+	if alg, ok := params["algorithm"]; ok && alg != "" {
+		alg = strings.Trim(alg, `"`)
+		if !strings.EqualFold(alg, "MD5") {
+			return AuthStatusFailed, fmt.Sprintf("unsupported algorithm %q", alg)
+		}
+	}
+
+	// 4. Verify nonce
+	nonce := strings.Trim(params["nonce"], `"`)
+	if nonceMgr != nil {
+		status := nonceMgr.Validate(nonce)
+		if status != AuthStatusSuccess {
+			if status == AuthStatusStale {
+				return AuthStatusStale, "nonce is stale/expired"
+			}
+			return AuthStatusFailed, "nonce is invalid or unauthenticated"
+		}
+	}
+
+	// 5. Verify URI
+	clientURI := strings.Trim(params["uri"], `"`)
+	if clientURI == "" || !isURIMatch(clientURI, reqURI) {
+		return AuthStatusFailed, fmt.Sprintf("uri mismatch (got %q, expected %q)", clientURI, reqURI)
+	}
+
+	// 6. Compute HA1 = MD5(username:realm:password)
+	realmToUse := expectedRealm
+	if r, ok := params["realm"]; ok && r != "" {
+		realmToUse = strings.Trim(r, `"`)
+	}
+	ha1 := md5Hex(fmt.Sprintf("%s:%s:%s", expectedUser, realmToUse, expectedPass))
+
+	// 7. Compute HA2 candidates across all URI variations
+	uriCandidates := getURICandidates(clientURI, reqURI, host)
+	qop := strings.ToLower(strings.Trim(params["qop"], `"`))
+	clientResp := strings.ToLower(strings.Trim(params["response"], `"`))
+	nc := strings.Trim(params["nc"], `"`)
+	cnonce := strings.Trim(params["cnonce"], `"`)
+
+	var testedCandidates []ha2Candidate
+
+	for _, u := range uriCandidates {
+		rawHA2 := fmt.Sprintf("%s:%s", method, u)
+		ha2 := md5Hex(rawHA2)
+
+		var expectedResp string
+		switch qop {
+		case "auth", "auth-int":
+			expectedResp = md5Hex(fmt.Sprintf("%s:%s:%s:%s:%s:%s", ha1, nonce, nc, cnonce, qop, ha2))
+		case "":
+			expectedResp = md5Hex(fmt.Sprintf("%s:%s:%s", ha1, nonce, ha2))
+		default:
+			return AuthStatusFailed, fmt.Sprintf("unsupported qop %q", qop)
+		}
+
+		if subtle.ConstantTimeCompare([]byte(clientResp), []byte(expectedResp)) == 1 {
+			return AuthStatusSuccess, ""
+		}
+
+		testedCandidates = append(testedCandidates, ha2Candidate{
+			raw:          rawHA2,
+			hash:         ha2,
+			expectedResp: expectedResp,
+		})
+
+		// Also check legacy RFC 2069 fallback if qop was provided but client computed without qop
+		if qop != "" {
+			legacyResp := md5Hex(fmt.Sprintf("%s:%s:%s", ha1, nonce, ha2))
+			if subtle.ConstantTimeCompare([]byte(clientResp), []byte(legacyResp)) == 1 {
+				return AuthStatusSuccess, ""
+			}
+		}
+	}
+
+	// Extended diagnostic reason when all candidate calculations fail
+	var diag strings.Builder
+	fmt.Fprintf(&diag, "response hash mismatch (client response %q does not match computed response)\n", clientResp)
+	fmt.Fprintf(&diag, "  - User: %q, Realm: %q\n", expectedUser, realmToUse)
+	fmt.Fprintf(&diag, "  - Nonce: %q, NC: %q, Cnonce: %q, QOP: %q\n", nonce, nc, cnonce, qop)
+	fmt.Fprintf(&diag, "  - Client URI: %q, Req URI: %q, Host: %q\n", clientURI, reqURI, host)
+	fmt.Fprintf(&diag, "  - Server HA1: %s\n", ha1)
+	diag.WriteString("  - Tested Candidates:")
+	for i, cand := range testedCandidates {
+		fmt.Fprintf(&diag, "\n    [%d] %q (HA2: %s) -> Expected: %s", i+1, cand.raw, cand.hash, cand.expectedResp)
+	}
+
+	return AuthStatusFailed, diag.String()
+}
+
 // ValidateDigestAuth validates an HTTP Digest Authorization header against expected credentials.
 func ValidateDigestAuth(
 	method string,
@@ -161,80 +363,23 @@ func ValidateDigestAuth(
 	expectedRealm string,
 	nonceMgr *NonceManager,
 ) AuthStatus {
-	if expectedUser == "" {
-		return AuthStatusSuccess
-	}
+	status, _ := ValidateDigestAuthWithReason(method, reqURI, "", authHeader, expectedUser, expectedPass, expectedRealm, nonceMgr)
+	return status
+}
 
-	params := ParseDigestAuthorization(authHeader)
-	if params == nil {
-		return AuthStatusFailed
-	}
-
-	// 1. Verify username
-	username := params["username"]
-	if subtle.ConstantTimeCompare([]byte(username), []byte(expectedUser)) != 1 {
-		return AuthStatusFailed
-	}
-
-	// 2. Verify realm (if present in params, must match expectedRealm)
-	if realm, ok := params["realm"]; ok && realm != "" {
-		if subtle.ConstantTimeCompare([]byte(realm), []byte(expectedRealm)) != 1 {
-			return AuthStatusFailed
-		}
-	}
-
-	// 3. Verify algorithm (empty, MD5 or md5 supported)
-	if alg, ok := params["algorithm"]; ok && alg != "" {
-		if !strings.EqualFold(alg, "MD5") {
-			return AuthStatusFailed
-		}
-	}
-
-	// 4. Verify nonce
-	nonce := params["nonce"]
-	if nonceMgr != nil {
-		status := nonceMgr.Validate(nonce)
-		if status != AuthStatusSuccess {
-			return status
-		}
-	}
-
-	// 5. Verify URI
-	clientURI := params["uri"]
-	if clientURI == "" || !isURIMatch(clientURI, reqURI) {
-		return AuthStatusFailed
-	}
-
-	// 6. Compute HA1 = MD5(username:realm:password)
-	realmToUse := expectedRealm
-	if r, ok := params["realm"]; ok && r != "" {
-		realmToUse = r
-	}
-	ha1 := md5Hex(fmt.Sprintf("%s:%s:%s", expectedUser, realmToUse, expectedPass))
-
-	// 7. Compute HA2 = MD5(method:digestURI)
-	ha2 := md5Hex(fmt.Sprintf("%s:%s", method, clientURI))
-
-	// 8. Compute Expected Response
-	qop := strings.ToLower(params["qop"])
-	var expectedResp string
-	switch qop {
-	case "auth", "auth-int":
-		nc := params["nc"]
-		cnonce := params["cnonce"]
-		expectedResp = md5Hex(fmt.Sprintf("%s:%s:%s:%s:%s:%s", ha1, nonce, nc, cnonce, qop, ha2))
-	case "":
-		expectedResp = md5Hex(fmt.Sprintf("%s:%s:%s", ha1, nonce, ha2))
-	default:
-		return AuthStatusFailed
-	}
-
-	clientResp := strings.ToLower(params["response"])
-	if subtle.ConstantTimeCompare([]byte(clientResp), []byte(expectedResp)) != 1 {
-		return AuthStatusFailed
-	}
-
-	return AuthStatusSuccess
+// ValidateDigestAuthWithHost validates an HTTP Digest Authorization header against expected credentials with explicit host context.
+func ValidateDigestAuthWithHost(
+	method string,
+	reqURI string,
+	host string,
+	authHeader string,
+	expectedUser string,
+	expectedPass string,
+	expectedRealm string,
+	nonceMgr *NonceManager,
+) AuthStatus {
+	status, _ := ValidateDigestAuthWithReason(method, reqURI, host, authHeader, expectedUser, expectedPass, expectedRealm, nonceMgr)
+	return status
 }
 
 func md5Hex(s string) string {

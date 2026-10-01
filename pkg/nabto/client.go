@@ -12,48 +12,7 @@ package nabto
 
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
-#include <arpa/inet.h>
-#include <sys/socket.h>
 #include "nabto/nabto_client.h"
-
-static void send_mdns_wakeup_c(const char* camera_ip, int port) {
-    int s = socket(AF_INET, SOCK_DGRAM, 0);
-    if (s < 0) return;
-
-    struct sockaddr_in addr_unicast, addr_mcast, addr_nabto;
-
-    memset(&addr_unicast, 0, sizeof(addr_unicast));
-    addr_unicast.sin_family = AF_INET;
-    addr_unicast.sin_port = htons(5353);
-    inet_pton(AF_INET, camera_ip, &addr_unicast.sin_addr);
-
-    memset(&addr_mcast, 0, sizeof(addr_mcast));
-    addr_mcast.sin_family = AF_INET;
-    addr_mcast.sin_port = htons(5353);
-    inet_pton(AF_INET, "224.0.0.251", &addr_mcast.sin_addr);
-
-    memset(&addr_nabto, 0, sizeof(addr_nabto));
-    addr_nabto.sin_family = AF_INET;
-    addr_nabto.sin_port = htons(port);
-    inet_pton(AF_INET, camera_ip, &addr_nabto.sin_addr);
-
-    unsigned char mdns_query[] = {
-        0x00,0x00,0x00,0x00,0x00,0x01,0x00,0x00,0x00,0x00,0x00,0x00,
-        0x17,0x70,0x72,0x2d,0x71,0x74,0x61,0x74,0x62,0x74,0x62,0x69,
-        0x2d,0x64,0x65,0x2d,0x6d,0x34,0x79,0x66,0x6f,0x77,0x62,0x72,
-        0x05,0x6c,0x6f,0x63,0x61,0x6c,0x00,0x00,0xff,0x00,0x01
-    };
-
-    for (int i = 0; i < 4; i++) {
-        sendto(s, mdns_query, sizeof(mdns_query), 0, (struct sockaddr*)&addr_unicast, sizeof(addr_unicast));
-        sendto(s, mdns_query, sizeof(mdns_query), 0, (struct sockaddr*)&addr_mcast, sizeof(addr_mcast));
-        sendto(s, mdns_query, sizeof(mdns_query), 0, (struct sockaddr*)&addr_nabto, sizeof(addr_nabto));
-        usleep(40000);
-    }
-    close(s);
-    usleep(250000);
-}
 */
 import "C"
 import (
@@ -140,21 +99,19 @@ func (c *Client) Close() {
 	c.conn = nil
 	c.mu.Unlock()
 
-	// Stop context first to immediately cancel any in-flight futures/connects without blocking
+	// 1. Stop context immediately.
+	// Per Nabto Client C-SDK specification, nabto_client_stop immediately cancels all pending
+	// futures (including in-flight connection_connect, streams, and CoAP requests) with
+	// NABTO_CLIENT_EC_STOPPED without blocking on network roundtrips.
 	if ctx != nil {
 		C.nabto_client_stop(ctx)
 	}
 
-	// Wait for in-flight operations (Connect, CoAP, Stream open) to complete
+	// 2. Wait for all in-flight worker goroutines (Connect, CoAP, Stream) to exit cleanly
 	c.wg.Wait()
 
-	if conn != nil && ctx != nil {
-		fut := C.nabto_client_future_new(ctx)
-		if fut != nil {
-			C.nabto_client_connection_close(conn, fut)
-			C.nabto_client_future_wait(fut)
-			C.nabto_client_future_free(fut)
-		}
+	// 3. Safely free C connection and context handles now that all worker routines have terminated
+	if conn != nil {
 		C.nabto_client_connection_free(conn)
 	}
 
@@ -195,6 +152,13 @@ func (c *Client) Connect() error {
 		privKey = C.GoString(cKey)
 		C.nabto_client_string_free(cKey)
 		isNewKey = true
+
+		// Write key to disk immediately so subsequent reconnect attempts load the same key
+		if err := os.WriteFile(c.cfg.KeyPath, []byte(privKey), 0600); err != nil {
+			logger.Warn("Nabto", "⚠️ Could not save new key to %s: %v", c.cfg.KeyPath, err)
+		} else {
+			logger.Info("Nabto", "🔑 Generated and saved client key to: %s", c.cfg.KeyPath)
+		}
 	} else {
 		privKey = string(keyBytes)
 	}
@@ -206,8 +170,8 @@ func (c *Client) Connect() error {
 	cIP := C.CString(c.cfg.CameraIP)
 	defer C.free(unsafe.Pointer(cIP))
 
-	logger.Debug("Nabto", "Sending mDNS wake-up to %s...", c.cfg.CameraIP)
-	C.send_mdns_wakeup_c(cIP, C.int(c.cfg.CameraPort))
+	logger.Debug("Nabto", "Sending dynamic mDNS wake-up to %s (Target: %s-%s)...", c.cfg.CameraIP, c.cfg.ProductID, c.cfg.DeviceID)
+	SendWakeup(c.cfg.CameraIP, c.cfg.CameraPort, c.cfg.ProductID, c.cfg.DeviceID)
 
 	conn := C.nabto_client_connection_new(ctx)
 	if conn == nil {
@@ -236,9 +200,18 @@ func (c *Client) Connect() error {
 	C.nabto_client_connection_add_direct_candidate(conn, cIP, C.uint16_t(c.cfg.CameraPort))
 	C.nabto_client_connection_end_of_direct_candidates(conn)
 
-	// Set connection attempt timeout to 25s (instead of C-SDK default 120s) so unreachable camera fails fast
-	cOpts := C.CString("{\"ConnectTimeout\":25000}")
-	_ = C.nabto_client_connection_set_options(conn, cOpts)
+	// Direct candidates are always enabled and prioritized for low-latency local P2P streaming.
+	// Allow Cloud Rendezvous fallback unless explicitly disabled via NABTO_REMOTE=false.
+	remoteOpt := ""
+	if os.Getenv("NABTO_REMOTE") == "false" || os.Getenv("REMOTE") == "false" {
+		remoteOpt = ",\"Remote\":false"
+	}
+	cOpts := C.CString(fmt.Sprintf("{\"ConnectTimeout\":20000%s}", remoteOpt))
+	optErr := C.nabto_client_connection_set_options(conn, cOpts)
+	if optErr != C.NABTO_CLIENT_EC_OK && optErr != C.NABTO_CLIENT_EC_STOPPED {
+		errMsg := C.GoString(C.nabto_client_error_get_message(optErr))
+		logger.Warn("Nabto", "⚠️ Failed to set connection options: %s (code %d)", errMsg, int(optErr))
+	}
 	C.free(unsafe.Pointer(cOpts))
 
 	c.mu.Lock()
@@ -247,6 +220,7 @@ func (c *Client) Connect() error {
 		C.nabto_client_connection_free(conn)
 		return fmt.Errorf("client closed before connect")
 	}
+	c.conn = conn
 	c.mu.Unlock()
 
 	logger.Info("Nabto", "Connecting to camera %s:%d...", c.cfg.CameraIP, c.cfg.CameraPort)
@@ -259,37 +233,37 @@ func (c *Client) Connect() error {
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
-		C.nabto_client_connection_free(conn)
+		// Connection will be closed and freed by Close()
 		return fmt.Errorf("connection aborted: client closed")
 	}
-	if errCode == C.NABTO_CLIENT_EC_OK {
-		logger.Info("Nabto", "✅ Connected successfully!")
-		c.conn = conn
+	if errCode != C.NABTO_CLIENT_EC_OK {
+		c.conn = nil
 		c.mu.Unlock()
-
-		if isNewKey {
-			if c.cfg.PairPwd == "" || c.cfg.PairPwd == "xxxx" {
-				logger.Warn("IAM", "⚠️ Warning: New client key generated, but no QR code ('qr_code') is configured. Initial pairing requires a valid QR code!")
-			} else {
-				logger.Info("IAM", "Performing initial pairing for new client key...")
-				if err := c.pairPassword(c.cfg.PairPwd); err != nil {
-					logger.Error("IAM", "❌ Initial pairing failed: %v", err)
-					return fmt.Errorf("initial pairing failed: %w", err)
-				}
-				if err := os.WriteFile(c.cfg.KeyPath, []byte(c.privateKey), 0600); err != nil {
-					logger.Warn("Nabto", "⚠️ Could not save key to %s: %v", c.cfg.KeyPath, err)
-				} else {
-					logger.Info("IAM", "✅ Saved paired key to: %s", c.cfg.KeyPath)
-				}
-			}
-		}
-		return nil
+		errMsg := C.GoString(C.nabto_client_error_get_message(errCode))
+		C.nabto_client_connection_free(conn)
+		return fmt.Errorf("connect error: %s (code %d)", errMsg, int(errCode))
 	}
+
+	logger.Info("Nabto", "✅ Connected successfully!")
 	c.mu.Unlock()
 
-	errMsg := C.GoString(C.nabto_client_error_get_message(errCode))
-	C.nabto_client_connection_free(conn)
-	return fmt.Errorf("connect error: %s (code %d)", errMsg, int(errCode))
+	if isNewKey {
+		if c.cfg.PairPwd == "" || c.cfg.PairPwd == "xxxx" {
+			logger.Warn("IAM", "⚠️ Warning: New client key generated, but no QR code ('qr_code') is configured. Initial pairing requires a valid QR code!")
+		} else {
+			logger.Info("IAM", "Performing initial pairing for new client key...")
+			if err := c.pairPassword(c.cfg.PairPwd); err != nil {
+				logger.Error("IAM", "❌ Initial pairing failed: %v", err)
+				return fmt.Errorf("initial pairing failed: %w", err)
+			}
+			if err := os.WriteFile(c.cfg.KeyPath, []byte(c.privateKey), 0600); err != nil {
+				logger.Warn("Nabto", "⚠️ Could not save key to %s: %v", c.cfg.KeyPath, err)
+			} else {
+				logger.Info("IAM", "✅ Saved paired key to: %s", c.cfg.KeyPath)
+			}
+		}
+	}
+	return nil
 }
 
 func encodeUsernameCBOR(username string) []byte {
