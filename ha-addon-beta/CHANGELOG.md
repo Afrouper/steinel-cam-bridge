@@ -2,6 +2,23 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.3.9-beta.6
+
+### 📡 Dynamisches mDNS Wake-up, Key-Persistenz & Cloud-Rendezvous Fallback (Issue #25)
+
+- **Dynamisches mDNS Wake-up für alle Kameramodelle & Device-IDs**:
+  - Ersatz der bisher statisch auf die Entwicklerkamera verdrahteten mDNS-Aufweckpakete durch einen dynamischen Generator (`pkg/nabto/mdns.go`).
+  - Sendet gerätespezifische Wake-up-Queries für `<ProductID>-<DeviceID>.local` sowie standardisierte `_nabto._udp.local`-PTR-Service-Scans via Unicast und Multicast.
+  - Ermöglicht es beliebigen Kameras im Wi-Fi-Standby (wie `de-caxhbtmk` in Issue #25), das Aufweckpaket zu verarbeiten und den lokalen Nabto-UDP-Port 5592 zuverlässig zu öffnen.
+- **Sofortige Key-Persistenz im CGo-Treiber**:
+  - Im CGo-Treiber wird ein neu generierter EC-Private-Key nun sofort bei der Erzeugung auf die Festplatte (`/data/client.key`) geschrieben (analog zum Pure-Go-Treiber).
+  - Verhindert das fortwährende Neuerzeugen von Keys bei vorübergehenden Verbindungsfehlern.
+- **Freigabe des Nabto Cloud-Rendezvous Fallbacks**:
+  - Die Direktverbindung zum lokalen Kamera-Port wird weiterhin mit höchster Priorität (0 ms Delay) aufgebaut.
+  - Wenn lokales UDP im Netzwerk (z. B. durch 5GHz-WLAN, AP-Isolation oder Docker-NAT) nicht antwortet, kann das Nabto-SDK nun nahtlos via Cloud-Rendezvous über die Nabto-Basestation verbinden (analog zur offiziellen Steinel-App). Lokales-Only-Verhalten kann optional via `NABTO_REMOTE=false` erzwungen werden.
+- **Verlängerung der Supervisor-Watchdog-Frist**:
+  - Erhöhung des Shutdown-Watchdogs in `safeCloseDriver` von 3s auf 6s zur Vermeidung von Fehlalarmen auf langsameren Einplatinencomputern (Raspberry Pi).
+
 ## 1.3.9-beta.5
 
 ### 🛡️ Behebung des CGo-Lifecycle Deadlocks & SIGSEGV-Container-Crashes (Issue #25)
