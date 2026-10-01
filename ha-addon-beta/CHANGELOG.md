@@ -2,6 +2,17 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.3.9-beta.7
+
+### 🔐 Full-URL Digest-Kandidaten & Erweiterte Authentifizierungs-Diagnose (Issue #19)
+
+- **Synthetisierung von Full-URL HA2-Kandidaten für NVRs (Synology Surveillance Station)**:
+  - Bei HTTP Digest Authentication berechnen einige Clients (wie Synology Surveillance Station) den Hash \(HA2 = \text{MD5}(\text{method}:\text{digestURI})\) über die vollständige Ziel-URL (z. B. `http://<host>:<port>/onvif/device_service` oder `http://<host>/onvif/device_service`), deklarieren im Header jedoch nur die relative URI (`/onvif/device_service`).
+  - Die Bridge synthetisiert nun automatisch alle Permutationen (relativer Pfad, Full-URL mit Host:Port, Full-URL ohne Port, HTTPS, Legacy RFC 2069 Fallback), um eine nahtlose Authentifizierung zu gewährleisten.
+- **Erweiterte Fehlerdiagnose im Debug-Log**:
+  - Sollte eine Authentifizierungsanfrage fehlschlagen (z. B. bei Passwort-Diskrepanzen), gibt die Bridge im Debug-Modus nun eine detaillierte Aufschlüsselung der eingehenden Digest-Parameter (User, Realm, Nonce, NC, Cnonce, QOP, Client URI, Host, Server HA1) sowie alle getesteten HA2-Kandidaten mit ihren erwarteten Response-Hashes aus.
+  - Das Klartext-Passwort wird aus Sicherheitsgründen weiterhin niemals ausgegeben.
+
 ## 1.3.9-beta.6
 
 ### 📡 Dynamisches mDNS Wake-up, Key-Persistenz & Cloud-Rendezvous Fallback (Issue #25)
