@@ -1,6 +1,7 @@
 package nabtopure
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	crand "crypto/rand"
@@ -31,7 +32,7 @@ type Config = nabto.Config
 type Client struct {
 	cfg           *Config
 	privateKey    *ecdsa.PrivateKey
-	dtlsConn      *dtls.Conn
+	dtlsConn      net.Conn
 	udpConn       net.PacketConn
 	coapClient    *CoAPClient
 	currentStream *Stream
@@ -163,8 +164,8 @@ func (c *Client) Connect() error {
 		return fmt.Errorf("failed to resolve camera address: %w", err)
 	}
 
-	// Wake up camera via mDNS ping
-	c.sendMDNSWAKEUP(targetAddr)
+	// Wake up camera via dynamic mDNS ping
+	nabto.SendWakeup(c.cfg.CameraIP, c.cfg.CameraPort, c.cfg.ProductID, c.cfg.DeviceID)
 
 	logger.Info("NabtoPure", "🚀 Connecting to %s via Pure-Go DTLS 1.2...", targetAddr)
 
@@ -202,9 +203,18 @@ func (c *Client) Connect() error {
 		return fmt.Errorf("DTLS handshake failed with %s: %w", targetAddr, err)
 	}
 
+	hsCtx, hsCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer hsCancel()
+	if err := conn.HandshakeContext(hsCtx); err != nil {
+		_ = conn.Close()
+		_ = rawUDP.Close()
+		return fmt.Errorf("DTLS handshake failed with %s: %w", targetAddr, err)
+	}
+
 	logger.Info("NabtoPure", "✅ DTLS 1.2 handshake established successfully with %s", targetAddr)
 	c.dtlsConn = conn
 	c.coapClient = NewCoAPClient(conn)
+	c.coapClient.SetWriteMutex(&c.writeMu)
 	c.readerClose = make(chan struct{})
 	go c.packetReaderLoop()
 	go c.keepAliveLoop()
@@ -344,25 +354,6 @@ func (c *Client) packetReaderLoop() {
 	}
 }
 
-func (c *Client) sendMDNSWAKEUP(target string) {
-	conn, err := net.Dial("udp", target)
-	if err != nil {
-		return
-	}
-	defer func() { _ = conn.Close() }()
-
-	mdnsQuery := []byte{
-		0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-		0x17, 0x70, 0x72, 0x2d, 0x71, 0x74, 0x61, 0x74, 0x62, 0x74, 0x62, 0x69,
-		0x2d, 0x64, 0x65, 0x2d, 0x6d, 0x34, 0x79, 0x66, 0x6f, 0x77, 0x62, 0x72,
-		0x05, 0x6c, 0x6f, 0x63, 0x61, 0x6c, 0x00, 0x00, 0xff, 0x00, 0x01,
-	}
-	for i := 0; i < 3; i++ {
-		_, _ = conn.Write(mdnsQuery)
-		time.Sleep(30 * time.Millisecond)
-	}
-}
-
 // Close closes the underlying DTLS and network connections cleanly.
 func (c *Client) Close() {
 	c.closeOnce.Do(func() {
@@ -382,26 +373,28 @@ func (c *Client) Close() {
 		c.udpConn = nil
 		c.mu.Unlock()
 
-		// 2. Abort active stream
+		// 2. Immediately close underlying UDP socket to unblock any pending network reads/writes
+		if udp != nil {
+			_ = udp.SetDeadline(time.Now())
+			_ = udp.Close()
+		}
+
+		// 3. Abort active stream
 		if stream != nil {
 			stream.Close()
 		}
 
-		// 3. Abort pending CoAP calls
+		// 4. Abort pending CoAP calls
 		if coap != nil {
 			coap.Close()
 		}
 
-		// 4. Cleanly terminate DTLS connection if open (send close_notify with 500ms deadline)
+		// 5. Cleanly terminate DTLS connection in background so it never blocks Close()
 		if conn != nil {
-			_ = conn.SetDeadline(time.Now().Add(500 * time.Millisecond))
-			_ = conn.Close()
-		}
-
-		// 5. Unblock any pending socket reads immediately by setting past deadline, then close UDP
-		if udp != nil {
-			_ = udp.SetDeadline(time.Now())
-			_ = udp.Close()
+			go func(cn net.Conn) {
+				_ = cn.SetDeadline(time.Now().Add(200 * time.Millisecond))
+				_ = cn.Close()
+			}(conn)
 		}
 	})
 }
@@ -474,8 +467,17 @@ func (c *Client) RequestTracks() (uint16, error) {
 		return 0, fmt.Errorf("CoAP /webrtc/tracks failed: %w", err)
 	}
 
+	statusCode := uint16(resp.StatusCode())
 	logger.Debug("NabtoPure", "🎥 CoAP /webrtc/tracks response status: %s", resp.StatusString())
-	return uint16(resp.StatusCode()), nil
+
+	if statusCode == 401 || statusCode == 403 {
+		logger.Error("NabtoPure", "🚨 /webrtc/tracks returned %d Unauthorized: Camera rejected media stream!", statusCode)
+		logger.Error("NabtoPure", "💡 Camera IAM has not authorized the client key '%s'.", c.cfg.KeyPath)
+		logger.Error("NabtoPure", "👉 To fix: Delete '%s' (or set RESET_PAIRING=true), configure your camera QR code, and use the CGo driver ('USE_CGO_NABTO=true') for initial pairing.", c.cfg.KeyPath)
+		return statusCode, fmt.Errorf("camera unauthorized (status %d): client key not paired", statusCode)
+	}
+
+	return statusCode, nil
 }
 
 // OpenSignalingStream opens a virtual Nabto streaming channel over the DTLS connection.

@@ -267,6 +267,7 @@ func DecodeCoAPMessage(data []byte) (*CoAPMessage, error) {
 // CoAPClient manages sending requests and matching responses over an underlying net.Conn (DTLS).
 type CoAPClient struct {
 	conn      net.Conn
+	writeMu   *sync.Mutex
 	msgIDSeq  atomic.Uint32
 	tokenSeq  atomic.Uint32
 	mu        sync.Mutex
@@ -283,6 +284,13 @@ func NewCoAPClient(conn net.Conn) *CoAPClient {
 	c.msgIDSeq.Store(100)
 	c.tokenSeq.Store(1)
 	return c
+}
+
+// SetWriteMutex attaches a shared write mutex for serializing packet writes on a shared DTLS connection.
+func (c *CoAPClient) SetWriteMutex(mu *sync.Mutex) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.writeMu = mu
 }
 
 // NewRequest builds a CoAP request for a specific path and method
@@ -325,11 +333,12 @@ func NewRequest(method uint8, path string, contentFormat uint16, payload []byte)
 // Close terminates all pending CoAP requests and marks the client as closed.
 func (c *CoAPClient) Close() {
 	c.pendingMu.Lock()
-	defer c.pendingMu.Unlock()
 	for k, ch := range c.pending {
 		close(ch)
 		delete(c.pending, k)
 	}
+	c.pendingMu.Unlock()
+
 	c.mu.Lock()
 	c.conn = nil
 	c.mu.Unlock()
@@ -339,6 +348,7 @@ func (c *CoAPClient) Close() {
 func (c *CoAPClient) Execute(req *CoAPMessage, timeout time.Duration) (*CoAPMessage, error) {
 	c.mu.Lock()
 	conn := c.conn
+	writeMu := c.writeMu
 	c.mu.Unlock()
 	if conn == nil {
 		return nil, fmt.Errorf("coap client: connection is closed")
@@ -369,14 +379,14 @@ func (c *CoAPClient) Execute(req *CoAPMessage, timeout time.Duration) (*CoAPMess
 
 	logger.Trace("CoAP", "-> CoAP MsgID: %d, Code: %s, Token: %x", req.MessageID, req.StatusString(), req.Token)
 
-	c.mu.Lock()
-	if c.conn == nil {
-		c.mu.Unlock()
-		return nil, fmt.Errorf("coap client: connection closed during write")
+	if writeMu != nil {
+		writeMu.Lock()
 	}
-	_ = c.conn.SetWriteDeadline(time.Now().Add(timeout))
-	_, err = c.conn.Write(raw)
-	c.mu.Unlock()
+	_ = conn.SetWriteDeadline(time.Now().Add(timeout))
+	_, err = conn.Write(raw)
+	if writeMu != nil {
+		writeMu.Unlock()
+	}
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to send CoAP packet: %w", err)

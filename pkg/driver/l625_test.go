@@ -30,3 +30,14 @@ func TestCalculateBackoff(t *testing.T) {
 		assert.Equal(t, tt.expected, actual, "CalculateBackoff(%d)", tt.failures)
 	}
 }
+
+func TestProbeNetworkHealth(t *testing.T) {
+	// 1. Empty IP should safely no-op
+	driver.ProbeNetworkHealth(t.Context(), "")
+
+	// 2. Loopback IP should succeed
+	driver.ProbeNetworkHealth(t.Context(), "127.0.0.1")
+
+	// 3. Unreachable IP should log warning without panicking
+	driver.ProbeNetworkHealth(t.Context(), "192.0.2.1")
+}

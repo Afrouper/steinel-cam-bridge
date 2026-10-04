@@ -195,3 +195,72 @@ func TestDiscoveryProbe(t *testing.T) {
 
 	_ = disc.Start(ctx)
 }
+
+func TestDeviceHandler_NewActions(t *testing.T) {
+	dh := NewDeviceHandler("device-uuid-test", "product-id-test", 8000, 8554, "admin", nil, events.NewBus())
+
+	// 1. GetServiceCapabilities
+	resp, err := dh.Handle("GetServiceCapabilities", "", "192.168.1.50:8000")
+	if err != nil {
+		t.Fatalf("GetServiceCapabilities failed: %v", err)
+	}
+	if !strings.Contains(resp, "GetServiceCapabilitiesResponse") ||
+		!strings.Contains(resp, `UsernameToken="true"`) ||
+		!strings.Contains(resp, `HttpDigest="true"`) {
+		t.Errorf("Unexpected GetServiceCapabilities response: %s", resp)
+	}
+
+	// 2. GetEndpointReference
+	resp, err = dh.Handle("GetEndpointReference", "", "192.168.1.50:8000")
+	if err != nil {
+		t.Fatalf("GetEndpointReference failed: %v", err)
+	}
+	if !strings.Contains(resp, "GetEndpointReferenceResponse") ||
+		!strings.Contains(resp, "urn:uuid:device-uuid-test") {
+		t.Errorf("Unexpected GetEndpointReference response: %s", resp)
+	}
+
+	// 3. GetWsdlUrl
+	resp, err = dh.Handle("GetWsdlUrl", "", "192.168.1.50:8000")
+	if err != nil {
+		t.Fatalf("GetWsdlUrl failed: %v", err)
+	}
+	if !strings.Contains(resp, "GetWsdlUrlResponse") ||
+		!strings.Contains(resp, "http://www.onvif.org/ver10/device/wsdl") {
+		t.Errorf("Unexpected GetWsdlUrl response: %s", resp)
+	}
+
+	// 4. GetNetworkDefaultGateway
+	resp, err = dh.Handle("GetNetworkDefaultGateway", "", "192.168.1.50:8000")
+	if err != nil {
+		t.Fatalf("GetNetworkDefaultGateway failed: %v", err)
+	}
+	if !strings.Contains(resp, "GetNetworkDefaultGatewayResponse") ||
+		!strings.Contains(resp, "192.168.1.50") {
+		t.Errorf("Unexpected GetNetworkDefaultGateway response: %s", resp)
+	}
+}
+
+func TestDeviceHandler_GetServicesCapabilities(t *testing.T) {
+	dh := NewDeviceHandler("device-uuid-test", "product-id-test", 8000, 8554, "admin", nil, events.NewBus())
+
+	// Without IncludeCapability
+	respNoCap, err := dh.Handle("GetServices", `<GetServices xmlns="http://www.onvif.org/ver10/device/wsdl"/>`, "192.168.1.50:8000")
+	if err != nil {
+		t.Fatalf("GetServices without caps failed: %v", err)
+	}
+	if strings.Contains(respNoCap, "trt:Capabilities") || strings.Contains(respNoCap, "tev:Capabilities") {
+		t.Errorf("GetServices without IncludeCapability should not include embedded capabilities: %s", respNoCap)
+	}
+
+	// With IncludeCapability = true
+	respWithCap, err := dh.Handle("GetServices", `<GetServices xmlns="http://www.onvif.org/ver10/device/wsdl"><IncludeCapability>true</IncludeCapability></GetServices>`, "192.168.1.50:8000")
+	if err != nil {
+		t.Fatalf("GetServices with caps failed: %v", err)
+	}
+	if !strings.Contains(respWithCap, "trt:Capabilities") ||
+		!strings.Contains(respWithCap, "tev:Capabilities") ||
+		!strings.Contains(respWithCap, "tmd:Capabilities") {
+		t.Errorf("GetServices with IncludeCapability=true missing service capabilities: %s", respWithCap)
+	}
+}
