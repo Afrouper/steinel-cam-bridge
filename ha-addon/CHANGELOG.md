@@ -2,6 +2,38 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge** Add-on werden hier dokumentiert.
 
+## 1.3.9
+
+### 🚀 Synology ONVIF-Kompatibilität, Nabto-Resilienz, Netzwerk-Prober & SD-Stall-Recovery
+
+- **Vollständige Synology Surveillance Station Kompatibilität (Issue #19)**:
+  - **ONVIF PRE_AUTH Spezifikationskonformität**: Erlaubt unauthentifizierte Dienst- und Fähigkeitsabfragen (`GetServices`, `GetServiceCapabilities`, `GetEndpointReference`, `GetScopes`, `GetDiscoveryMode`, `GetWsdlUrl`, `GetSystemDateAndTime`), sodass Synology-Kamera-Einrichtungsassistenten vor der Passworteingabe nicht mehr abbrechen.
+  - **Erweiterte Device-Service-Methoden**: Implementierung von `GetServiceCapabilities`, `GetEndpointReference`, `GetWsdlUrl`, `GetNetworkDefaultGateway` sowie dynamischer Einbettung von Capabilities in `GetServices`.
+  - **Full-URL & Relative HA2-Digest-Kandidaten**: Die Bridge synthetisiert bei HTTP Digest Authentication automatisch alle URL-Permutationen (relativer Pfad, Full-URL mit Host:Port, Full-URL ohne Port, HTTPS, RFC 2069 Fallback).
+  - **Detaillierte Mismatch-Diagnose**: Erweiterte Protokollierung im Debug-Modus zur transparenten Identifikation abweichender Digest-Komponenten ohne Offenlegung von Klartext-Passwörtern.
+- **Nabto Verbindungs-Robustheit & Crash-Beseitigung (Issue #25)**:
+  - **Sofortiger Abbruch über `nabto_client_stop` (CGo-Treiber)**: Verhindert Thread-Deadlocks und eliminiert SIGSEGV-Containerabstürze (Exit Code 139) bei Verbindungs-Timeouts oder nicht erreichbaren Kameras.
+  - **Socket-First Close (Pure-Go-Treiber)**: Sofortiges Schließen des physischen UDP-Sockets beendet blockierte Kernel-Reads in `< 1 ms`; DTLS-Schluss erfolgt geschützt mit Timeout in Hintergrund-Routinen.
+  - **Entkopplung der CoAP Write-Locks & Unified Mutex**: Serialisierung von CoAP-, KeepAlive- und Media-Streams verhindert Deadlocks bei Reconnects.
+  - **Supervisor Watchdog-Barriere (`safeCloseDriver`)**: Treiber-Schließvorgänge sind durch ein Hard-Timeout geschützt – der Supervisor-Loop friert auch bei transienten Netzwerkabbrüchen niemals ein.
+  - **Präzise 401/403-Fehlerdiagnose**: Detaillierte Warnungen mit konkreten Handlungsanweisungen, falls die Kamera Zugriffsrechte für Medien-Tracks verweigert.
+- **Netzwerk-Health-Check & Wi-Fi Wake-up (`pkg/netprobe`)**:
+  - **Multi-Strategie-Netzwerkprober**: Vor jedem Verbindungsversuch im Supervisor-Backoff wird die Kamera gezielt via ICMP/Ping und Port-Probe geprüft.
+  - **Wi-Fi Power-Save Wake-up**: Weckt das Funkmodul der Kamera aus dem IEEE 802.11 DTIM-Schlaf und frischt ARP-Caches im lokalen Netzwerk auf.
+  - **Transparente Handlungsanweisungen**: Informative RTT-Logs bei Erreichbarkeit bzw. 3-Punkte-Checkliste im Log bei Nichterreichbarkeit der IP.
+- **Dynamisches mDNS Wake-up & Key-Persistenz**:
+  - **Dynamischer RFC 6762 mDNS Generator**: Generiert Queries für `<ProductID>-<DeviceID>.local` und `_nabto._udp.local` über Unicast und Multicast für beliebige Kameramodelle.
+  - **Sofortige Key-Persistenz**: Neu generierte EC-Schlüssel (`/data/client.key`) werden im CGo-Treiber unmittelbar persistent gespeichert.
+  - **Freigabe des Nabto Cloud-Rendezvous Fallbacks**: Bei restriktiven Netzwerken (Docker-NAT, AP-Isolation) verbindet die Bridge nahtlos über die Nabto-Basestation, standardmäßig mit priorisierter lokaler Direktverbindung.
+- **SD-Karten Stall Recovery & Poison-Pill Schutz (Issue #39)**:
+  - **Persistenter `.failed`-Marker**: Defekte Aufnahmen werden nach 2 Fehlversuchen dauerhaft markiert und in Folgezyklen übersprungen.
+  - **Control-Plane Health Watchdog**: 3 aufeinanderfolgende Timeouts bei `get_event_list` lösen autonomen WebRTC-Session-Reset aus, um Kamera-Firmware-Deadlocks zu lösen.
+  - **Adaptiver Chunk-Watchdog**: Karenzzeit für den ersten Video-Chunk auf 25s erhöht (10s für Folge-Chunks).
+- **Pion WebRTC & DTLS Aktualisierungen**:
+  - Aktualisierung auf `github.com/pion/webrtc/v4` v4.2.22 (4 MB TCP-Mux-Buffer, optimiertes SDP-Parsing, Browser-Interoperabilität, Leak-Fixes).
+  - Aktualisierung auf `github.com/pion/dtls/v3` v3.1.10 (Handshake- und Zertifikatstyp-Fixes).
+  - Aktualisierung auf `github.com/pion/rtcp` v1.2.18.
+
 ## 1.3.8
 
 ### 🎬 Lokaler Aufnahme-Cache, Snapshot-Generierung & Pure-Go Stabilität
