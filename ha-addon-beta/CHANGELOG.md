@@ -2,12 +2,6 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
-## 1.3.10
-
-### 🚀 Synchronisation mit v1.3.10 (Release)
-- Übernahme des stabilen Release-Stands **v1.3.10** (4m Watchdog-Backoff & bereinigtes mDNS Wake-up).
-- Synchronisation mit dem offiziellen Haupt-Add-on bis zum Beginn des nächsten Beta-Zyklus (v1.3.11-beta.1).
-
 ## 1.3.9
 
 ### 🚀 Abschluss des Beta-Zyklus (Finales Release)
