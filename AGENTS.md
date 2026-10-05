@@ -91,7 +91,7 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
 
 - **`pkg/driver/`** *(Neu in Milestone 3)*:
   - `driver.go`: Einheitliches polymorphes `CameraDriver`-Interface (`Run`, `Close`, `GetStatus`, `SetLight`, `TriggerAlarm`, etc.).
-  - `l625.go`: Kapselt den autonomen Nabto Edge P2P Lifecycle (mDNS, CoAP, WebRTC-Ingest, MCU-Telemetrie und Watchdog-Handling). Enthält adaptiven exponentiellen Reconnect-Backoff (`CalculateBackoff`: 15s -> 30s -> 60s -> 120s max), um Reconnect-Stürme nach Kamera-Reboots zu verhindern.
+  - `l625.go`: Kapselt den autonomen Nabto Edge P2P Lifecycle (mDNS, CoAP, WebRTC-Ingest, MCU-Telemetrie und Watchdog-Handling). Enthält adaptiven exponentiellen Reconnect-Backoff (`CalculateBackoff`: 15s -> 30s -> 60s -> 120s -> 240s max), um Reconnect-Stürme nach Kamera-Reboots zu verhindern.
   - `l620.go`: Kapselt Sofia DVRIP TCP-Ingest, RTSP-Relay, MCU-Statusabfrage und Keepalive-Worker.
   - `factory.go`: Dynamische Treiber-Instanziierung über `driver.New(...)` ohne globale Zustände.
 

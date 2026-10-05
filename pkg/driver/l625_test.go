@@ -20,9 +20,10 @@ func TestCalculateBackoff(t *testing.T) {
 		{failures: 2, expected: 30 * time.Second},
 		{failures: 3, expected: 60 * time.Second},
 		{failures: 4, expected: 120 * time.Second},
-		{failures: 5, expected: 120 * time.Second},
-		{failures: 10, expected: 120 * time.Second},
-		{failures: 100, expected: 120 * time.Second},
+		{failures: 5, expected: 240 * time.Second},
+		{failures: 6, expected: 240 * time.Second},
+		{failures: 10, expected: 240 * time.Second},
+		{failures: 100, expected: 240 * time.Second},
 	}
 
 	for _, tt := range tests {

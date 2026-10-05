@@ -81,18 +81,14 @@ func SendWakeup(cameraIP string, cameraPort int, productID, deviceID string) {
 	if cameraIP == "" {
 		return
 	}
-	if cameraPort <= 0 {
-		cameraPort = 5592
-	}
 
 	devQuery := BuildDeviceMDNSQuery(productID, deviceID)
 	srvQuery := BuildServiceMDNSQuery()
 	queries := [][]byte{devQuery, srvQuery}
 
 	targets := []string{
-		fmt.Sprintf("%s:5353", cameraIP),           // Unicast mDNS directly to camera IP
-		"224.0.0.251:5353",                         // Multicast mDNS in local LAN
-		fmt.Sprintf("%s:%d", cameraIP, cameraPort), // Direct packet to camera Nabto port
+		fmt.Sprintf("%s:5353", cameraIP), // Unicast mDNS directly to camera IP
+		"224.0.0.251:5353",               // Multicast mDNS in local LAN
 	}
 
 	for _, target := range targets {

@@ -57,16 +57,16 @@ func (d *L625Driver) setBridge(b *webrtc.Bridge) {
 const (
 	reconnectCooldown  = 60 * time.Second
 	baseReconnectDelay = 15 * time.Second
-	maxReconnectDelay  = 120 * time.Second
+	maxReconnectDelay  = 240 * time.Second
 )
 
 // CalculateBackoff returns the exponential backoff duration based on consecutive failure count.
-// Progression: 15s -> 30s -> 60s -> 120s (max 2 minutes).
+// Progression: 15s -> 30s -> 60s -> 120s -> 240s (max 4 minutes).
 func CalculateBackoff(consecutiveFailures int) time.Duration {
 	if consecutiveFailures <= 1 {
 		return baseReconnectDelay
 	}
-	if consecutiveFailures > 5 {
+	if consecutiveFailures >= 5 {
 		return maxReconnectDelay
 	}
 	delay := baseReconnectDelay * time.Duration(1<<(consecutiveFailures-1))
