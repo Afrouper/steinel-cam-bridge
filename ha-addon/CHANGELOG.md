@@ -2,6 +2,18 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge** Add-on werden hier dokumentiert.
 
+## 1.3.10
+
+### 🛡️ Autonomer Watchdog-Backoff & mDNS Wake-up Bereinigung
+
+- **Autonomer Watchdog-Reboot Backoff (`pkg/driver/l625.go`)**:
+  - `maxReconnectDelay` von 120s (2m) auf 240s (4m) erhöht (`CalculateBackoff`: 15s -> 30s -> 60s -> 120s -> 240s max).
+  - Gibt der Kamera bei eingefrorenem Nabto/DTLS-Stack das notwendige 4-Minuten-Ruhefenster, damit der interne Firmware-Watchdog die Kamera selbstständig neu startet (ca. 3m55s), ohne dass ein manuelles Trennen vom Stromnetz erforderlich ist.
+- **mDNS Wake-up Protokoll-Bereinigung (`pkg/nabto/mdns.go`)**:
+  - Entfernung von Port 5592 aus den mDNS-Query-Zielen in `SendWakeup`.
+  - Verhindert das Senden von rohen DNS-Abfragepaketen an den DTLS-1.2-Port der Kamera, wodurch fehlerhafte Socket-Zustände im Nabto-Daemon der Kamera vermieden werden.
+  - Wake-up-Pakete werden ausschließlich spezifikationskonform über Unicast und Multicast an Port 5353 gesendet.
+
 ## 1.3.9
 
 ### 🚀 Synology ONVIF-Kompatibilität, Nabto-Resilienz, Netzwerk-Prober & SD-Stall-Recovery
