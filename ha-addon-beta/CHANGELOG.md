@@ -2,6 +2,24 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.3.11-beta.1
+
+### 🔑 Erweiterte Login-Kandidaten & Firmware-Kompatibilität für L 620 CAM (Issue #45)
+
+- **Erweiterte Login-Fallback-Matrix für Xiongmai Sofia Protokoll**:
+  - **Authentifizierung ohne `LoginType`**: Direkte DVRIP-LAN-Authentifizierung auf Port 34567 für Standard-Firmwares.
+  - **Standard 32-Zeichen Hex-MD5**: Unterstützung für neuere Xiongmai/JFTech-Firmwares (ab V4.03.R12) in Klein- und Großschreibung.
+  - **Double-MD5**: Unterstützung für das Xiongmai Cloud-/Web-Format (`md5(md5(pass))`).
+  - **Leere Passwörter**: Zusätzliche Varianten ohne `LoginType` für unkonfigurierte Werkskameras.
+  - **Klarschrift-Passwörter**: Fallback-Kandidaten für Kameras, die Passwörter unverschlüsselt erwarten.
+  - **RTSP-Stream-Ingest**: Fallback-Passwörter werden bei der Authentifizierung nun auch automatisch an den RTSP-Ingest übergeben.
+- **Detaillierte Fehlercode-Diagnose**:
+  - Benutzerfreundliche Aufschlüsselung der Xiongmai-Rückgabecodes (Code 100: Erfolg, 106: Ungültiges Passwort, 124: Nicht unterstützter Verschlüsselungsalgorithmus, 125: Benutzer existiert nicht, 126: Konto gesperrt, 127: Maximale Verbindungen erreicht, 128: Zugriff verweigert, 129: Passwort-Formatfehler).
+- **Erweitertes Trace-Logging (CWE-312 konform)**:
+  - Tiefgehende `logger.Trace`-Ausgaben für Client, Driver, RTSP-Ingest, Talk und Discovery zur schnellen Fehlerdiagnose vor Ort. Passwörter bleiben ausnahmslos maskiert.
+- **Streaming MD5 Implementation**:
+  - Umstellung auf Streaming-Verarbeitung via `hash.Hash` (`md5.New()` / `h.Write()`) zur CodeQL- und Standard-Konformität.
+
 ## 1.3.10
 
 ### 🚀 Synchronisation mit v1.3.10 (Release)
