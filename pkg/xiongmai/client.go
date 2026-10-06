@@ -123,6 +123,41 @@ func HashPassword(secret string) string {
 	return result.String()
 }
 
+// HashMD5Hex generates the 32-character lowercase hex MD5 password digest mandated by Xiongmai / JFTech Sofia protocol.
+//
+// CodeQL [go/weak-crypto-password-hashing] Mandated by Xiongmai camera firmware protocol specification.
+// CodeQL [go/weak-sensitive-data-hashing] Mandated by Xiongmai camera firmware protocol specification.
+// CodeQL [go/weak-crypto-algorithm] Mandated by Xiongmai camera firmware protocol specification.
+// lgtm [go/weak-crypto-password-hashing]
+// lgtm [go/weak-sensitive-data-hashing]
+func HashMD5Hex(secret string) string {
+	if secret == "" {
+		return ""
+	}
+	//nolint:gosec // Required by Xiongmai hardware protocol specification
+	// CodeQL [go/weak-crypto-password-hashing] Mandated by Xiongmai camera protocol
+	digest := md5.Sum([]byte(secret)) // CodeQL [go/weak-crypto-password-hashing] // lgtm [go/weak-crypto-password-hashing]
+	return fmt.Sprintf("%x", digest)
+}
+
+// HashDoubleMD5Hex generates the double-MD5 hex password digest (md5(md5(secret))) for Xiongmai Web/Cloud DVR-IP.
+//
+// CodeQL [go/weak-crypto-password-hashing] Mandated by Xiongmai camera firmware protocol specification.
+// CodeQL [go/weak-sensitive-data-hashing] Mandated by Xiongmai camera firmware protocol specification.
+// CodeQL [go/weak-crypto-algorithm] Mandated by Xiongmai camera firmware protocol specification.
+// lgtm [go/weak-crypto-password-hashing]
+// lgtm [go/weak-sensitive-data-hashing]
+func HashDoubleMD5Hex(secret string) string {
+	if secret == "" {
+		return ""
+	}
+	first := HashMD5Hex(secret)
+	//nolint:gosec // Required by Xiongmai hardware protocol specification
+	// CodeQL [go/weak-crypto-password-hashing] Mandated by Xiongmai camera protocol
+	digest := md5.Sum([]byte(first)) // CodeQL [go/weak-crypto-password-hashing] // lgtm [go/weak-crypto-password-hashing]
+	return fmt.Sprintf("%x", digest)
+}
+
 // formatLoginError returns a user-friendly error description for Xiongmai login return codes.
 func formatLoginError(code int) string {
 	switch code {
@@ -167,12 +202,8 @@ func (c *Client) getPasswordCandidates() []passwordCandidate {
 
 	if cleanPwd != "" {
 		sofiaHash := HashPassword(cleanPwd)
-		//nolint:gosec // Required by Xiongmai hardware protocol specification
-		// CodeQL [go/weak-crypto-password-hashing] Mandated by Xiongmai camera protocol
-		hexMD5 := fmt.Sprintf("%x", md5.Sum([]byte(cleanPwd)))
-		//nolint:gosec // Required by Xiongmai hardware protocol specification
-		// CodeQL [go/weak-crypto-password-hashing] Mandated by Xiongmai camera protocol
-		doubleMD5 := fmt.Sprintf("%x", md5.Sum([]byte(hexMD5)))
+		hexMD5 := HashMD5Hex(cleanPwd)
+		doubleMD5 := HashDoubleMD5Hex(cleanPwd)
 		upperMD5 := strings.ToUpper(hexMD5)
 
 		// 1. Sofia 8-character Base62 MD5 Hash (Legacy Xiongmai / V4.02.R12 default)
