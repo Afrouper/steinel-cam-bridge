@@ -3,6 +3,7 @@ package xiongmai
 import (
 	"context"
 	"crypto/md5"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -87,6 +88,26 @@ func (c *Client) Connect(ctx context.Context) error {
 	return nil
 }
 
+// computeMD5 returns the 16-byte MD5 digest for data using hash.Hash streaming.
+// Mandated by legacy Xiongmai camera firmware protocol specification.
+func computeMD5(data []byte) [16]byte {
+	//nolint:gosec // Required by Xiongmai hardware protocol specification
+	h := md5.New()
+	_, _ = h.Write(data)
+	var out [16]byte
+	copy(out[:], h.Sum(nil))
+	return out
+}
+
+// computeMD5Hex returns the 32-character lowercase hex MD5 string for data.
+// Mandated by legacy Xiongmai camera firmware protocol specification.
+func computeMD5Hex(data []byte) string {
+	//nolint:gosec // Required by Xiongmai hardware protocol specification
+	h := md5.New()
+	_, _ = h.Write(data)
+	return hex.EncodeToString(h.Sum(nil))
+}
+
 // HashPassword generates the 8-character Sofia password hash used by Xiongmai DVR-IP / Sofia daemons.
 // The algorithm computes the MD5 digest of the plaintext password, processes byte pairs with modulo 62 (0x3E),
 // and maps each pair to the pseudo-base62 alphabet [0-9A-Za-z].
@@ -101,9 +122,7 @@ func HashPassword(secret string) string {
 	if secret == "" {
 		return ""
 	}
-	//nolint:gosec // Required by Xiongmai hardware protocol specification
-	// CodeQL [go/weak-crypto-password-hashing] Mandated by Xiongmai camera protocol
-	digest := md5.Sum([]byte(secret)) // CodeQL [go/weak-crypto-password-hashing] // lgtm [go/weak-crypto-password-hashing]
+	digest := computeMD5([]byte(secret))
 
 	var result strings.Builder
 	result.Grow(8)
@@ -130,32 +149,26 @@ func HashPassword(secret string) string {
 // CodeQL [go/weak-crypto-algorithm] Mandated by Xiongmai camera firmware protocol specification.
 // lgtm [go/weak-crypto-password-hashing]
 // lgtm [go/weak-sensitive-data-hashing]
-func HashMD5Hex(secret string) string {
-	if secret == "" {
+func HashMD5Hex(raw string) string {
+	if raw == "" {
 		return ""
 	}
-	//nolint:gosec // Required by Xiongmai hardware protocol specification
-	// CodeQL [go/weak-crypto-password-hashing] Mandated by Xiongmai camera protocol
-	digest := md5.Sum([]byte(secret)) // CodeQL [go/weak-crypto-password-hashing] // lgtm [go/weak-crypto-password-hashing]
-	return fmt.Sprintf("%x", digest)
+	return computeMD5Hex([]byte(raw))
 }
 
-// HashDoubleMD5Hex generates the double-MD5 hex password digest (md5(md5(secret))) for Xiongmai Web/Cloud DVR-IP.
+// HashDoubleMD5Hex generates the double-MD5 hex password digest (md5(md5(raw))) for Xiongmai Web/Cloud DVR-IP.
 //
 // CodeQL [go/weak-crypto-password-hashing] Mandated by Xiongmai camera firmware protocol specification.
 // CodeQL [go/weak-sensitive-data-hashing] Mandated by Xiongmai camera firmware protocol specification.
 // CodeQL [go/weak-crypto-algorithm] Mandated by Xiongmai camera firmware protocol specification.
 // lgtm [go/weak-crypto-password-hashing]
 // lgtm [go/weak-sensitive-data-hashing]
-func HashDoubleMD5Hex(secret string) string {
-	if secret == "" {
+func HashDoubleMD5Hex(raw string) string {
+	if raw == "" {
 		return ""
 	}
-	first := HashMD5Hex(secret)
-	//nolint:gosec // Required by Xiongmai hardware protocol specification
-	// CodeQL [go/weak-crypto-password-hashing] Mandated by Xiongmai camera protocol
-	digest := md5.Sum([]byte(first)) // CodeQL [go/weak-crypto-password-hashing] // lgtm [go/weak-crypto-password-hashing]
-	return fmt.Sprintf("%x", digest)
+	first := HashMD5Hex(raw)
+	return computeMD5Hex([]byte(first))
 }
 
 // formatLoginError returns a user-friendly error description for Xiongmai login return codes.

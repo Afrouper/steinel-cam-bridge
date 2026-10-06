@@ -62,6 +62,25 @@ func TestHashPassword(t *testing.T) {
 	}
 }
 
+func TestHashMD5HexAndDoubleMD5(t *testing.T) {
+	if got := HashMD5Hex(""); got != "" {
+		t.Errorf("empty input should return empty string, got %q", got)
+	}
+	if got := HashDoubleMD5Hex(""); got != "" {
+		t.Errorf("empty input should return empty string, got %q", got)
+	}
+
+	// Standard lowercase 32-char hex MD5: md5("admin") = "21232f297a57a5a743894a0e4a801fc3"
+	if got := HashMD5Hex("admin"); got != "21232f297a57a5a743894a0e4a801fc3" {
+		t.Errorf("expected '21232f297a57a5a743894a0e4a801fc3', got %q", got)
+	}
+
+	// Double MD5: md5(md5("admin")) = md5("21232f297a57a5a743894a0e4a801fc3") = "c3284d0f94606de1fd2af172aba15bf3"
+	if got := HashDoubleMD5Hex("admin"); got != "c3284d0f94606de1fd2af172aba15bf3" {
+		t.Errorf("expected 'c3284d0f94606de1fd2af172aba15bf3', got %q", got)
+	}
+}
+
 func TestParseMCUString(t *testing.T) {
 	// Standard default string from Steinel Android App (XMDetectSettingPresenter.java)
 	raw := "BubzbzfzazOU"
