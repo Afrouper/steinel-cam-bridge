@@ -113,7 +113,9 @@ func (d *Driver) Start(ctx context.Context) error {
 	if d.resolution == "360p" {
 		streamSubtype = 1
 	}
-	d.ingest = NewRTSPIngest(d.cameraIP, RTSPPort, d.user, effectivePwd, streamSubtype, d.rtspServer)
+	logger.Trace("Xiongmai Driver", "Starting RTSP Ingest: IP=%s, Port=%d, User=%s, PwdMasked=%s, FallbackPwdMasked=%s",
+		d.cameraIP, RTSPPort, d.user, MaskPassword(effectivePwd), MaskPassword(d.password))
+	d.ingest = NewRTSPIngest(d.cameraIP, RTSPPort, d.user, effectivePwd, streamSubtype, d.rtspServer, d.password)
 	if err := d.ingest.Start(ctx); err != nil {
 		logger.Warn("Xiongmai Driver", "⚠️ Failed to start RTSP Ingest: %v", err)
 	}
@@ -128,6 +130,7 @@ func (d *Driver) syncInitialState() {
 		return
 	}
 
+	logger.Trace("Xiongmai Driver", "Synchronizing initial camera state via Sofia port %d...", DefaultPort)
 	st := d.eventBus.GetStatus()
 	st.Resolution = d.resolution
 	st.FirmwareVer = "Xiongmai-Sofia"
@@ -217,6 +220,7 @@ func (d *Driver) GetMQTTCallbacks() mqtt.Callbacks {
 
 // SetLamp turns the main light on or off.
 func (d *Driver) SetLamp(on bool) error {
+	logger.Trace("Xiongmai Driver", "SetLamp: on=%v", on)
 	err := d.client.SetLightState(on)
 	if err == nil && d.eventBus != nil {
 		st := d.eventBus.GetStatus()
@@ -232,6 +236,7 @@ func (d *Driver) SetLamp(on bool) error {
 
 // SetDim sets the main light dimming level (10-100%).
 func (d *Driver) SetDim(val int) error {
+	logger.Trace("Xiongmai Driver", "SetDim: val=%d%%", val)
 	err := d.client.SetHighlight(val)
 	if err == nil && d.eventBus != nil {
 		st := d.eventBus.GetStatus()
@@ -243,6 +248,7 @@ func (d *Driver) SetDim(val int) error {
 
 // SetTwilight sets the twilight sensor threshold (2-1000 Lux).
 func (d *Driver) SetTwilight(val int) error {
+	logger.Trace("Xiongmai Driver", "SetTwilight: lux=%d", val)
 	err := d.client.SetLux(val)
 	if err == nil && d.eventBus != nil {
 		st := d.eventBus.GetStatus()
@@ -254,6 +260,7 @@ func (d *Driver) SetTwilight(val int) error {
 
 // SetDistance sets the PIR detection distance (1-10 meters).
 func (d *Driver) SetDistance(val int) error {
+	logger.Trace("Xiongmai Driver", "SetDistance: distance=%dm", val)
 	err := d.client.SetDistance(val)
 	if err == nil && d.eventBus != nil {
 		st := d.eventBus.GetStatus()
@@ -265,6 +272,7 @@ func (d *Driver) SetDistance(val int) error {
 
 // SetDuration sets the main light on-time in seconds.
 func (d *Driver) SetDuration(val int) error {
+	logger.Trace("Xiongmai Driver", "SetDuration: seconds=%ds", val)
 	err := d.client.SetHighlightDelay(val)
 	if err == nil && d.eventBus != nil {
 		st := d.eventBus.GetStatus()
@@ -276,6 +284,7 @@ func (d *Driver) SetDuration(val int) error {
 
 // SetNightlight sets the nightlight brightness (0-50%).
 func (d *Driver) SetNightlight(val int) error {
+	logger.Trace("Xiongmai Driver", "SetNightlight: val=%d%%", val)
 	err := d.client.SetLowlight(val)
 	if err == nil && d.eventBus != nil {
 		st := d.eventBus.GetStatus()
@@ -287,6 +296,7 @@ func (d *Driver) SetNightlight(val int) error {
 
 // SetNightlightDuration sets the nightlight duration mode ("all_night", "4h", "off").
 func (d *Driver) SetNightlightDuration(val string) error {
+	logger.Trace("Xiongmai Driver", "SetNightlightDuration: mode=%q", val)
 	var durInt int
 	valLower := strings.ToLower(strings.TrimSpace(val))
 	switch {

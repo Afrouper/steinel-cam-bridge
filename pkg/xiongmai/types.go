@@ -110,17 +110,23 @@ func DecodeHeader(data []byte) (*Header, error) {
 
 // Login JSON Request (DVRIP / Sofia standard flat structure on MsgID 1000)
 type LoginReq struct {
-	EncryptType string `json:"EncryptType"`
-	LoginType   string `json:"LoginType,omitempty"`
-	PassWord    string `json:"PassWord"`
-	UserName    string `json:"UserName"`
+	EncryptType    string `json:"EncryptType"`
+	LoginType      string `json:"LoginType,omitempty"`
+	PassWord       string `json:"PassWord"`
+	UserName       string `json:"UserName"`
+	CommunicateKey string `json:"CommunicateKey,omitempty"`
 }
 
 // Login JSON Response
 type LoginResp struct {
-	Name      string `json:"Name"`
-	Ret       int    `json:"Ret"`
-	SessionID string `json:"SessionID"`
+	Name          string `json:"Name"`
+	Ret           int    `json:"Ret"`
+	SessionID     string `json:"SessionID"`
+	Token         string `json:"Token,omitempty"`
+	PublicKey     string `json:"PublicKey,omitempty"`
+	Bits          int    `json:"Bits,omitempty"`
+	EncryptAlgo   string `json:"EncryptAlgo,omitempty"`
+	AliveInterval int    `json:"AliveInterval,omitempty"`
 }
 
 // RTSP Config JSON for automatic enablement

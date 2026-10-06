@@ -1,6 +1,7 @@
 package xiongmai
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -451,6 +452,183 @@ func TestMaskPassword(t *testing.T) {
 		got := MaskPassword(tc.input)
 		if got != tc.expected {
 			t.Errorf("MaskPassword(%q) = %q, want %q", tc.input, got, tc.expected)
+		}
+	}
+}
+
+func TestGetPasswordCandidates(t *testing.T) {
+	client := NewClient("192.168.1.100", 34567, "admin", "testPass123")
+	candidates := client.getPasswordCandidates()
+
+	if len(candidates) == 0 {
+		t.Fatal("expected non-empty candidates list")
+	}
+
+	foundSofia := false
+	foundHexMD5NoLoginType := false
+	foundDoubleMD5 := false
+	foundPlaintext := false
+	foundEmpty := false
+
+	for _, cand := range candidates {
+		if strings.Contains(cand.label, "Sofia 8-char hash") {
+			foundSofia = true
+		}
+		if cand.label == "Standard 32-char Hex MD5 (no LoginType)" {
+			foundHexMD5NoLoginType = true
+			if cand.loginType != "" {
+				t.Errorf("expected empty loginType for candidate %s, got %q", cand.label, cand.loginType)
+			}
+			if len(cand.password) != 32 {
+				t.Errorf("expected 32-char hex MD5, got length %d", len(cand.password))
+			}
+		}
+		if strings.Contains(cand.label, "Double-MD5") {
+			foundDoubleMD5 = true
+		}
+		if strings.Contains(cand.label, "Plaintext") {
+			foundPlaintext = true
+		}
+		if strings.Contains(cand.label, "Empty password") {
+			foundEmpty = true
+		}
+	}
+
+	if !foundSofia {
+		t.Error("expected Sofia hash candidate")
+	}
+	if !foundHexMD5NoLoginType {
+		t.Error("expected Standard 32-char Hex MD5 (no LoginType) candidate")
+	}
+	if !foundDoubleMD5 {
+		t.Error("expected Double-MD5 candidate")
+	}
+	if !foundPlaintext {
+		t.Error("expected Plaintext candidate")
+	}
+	if !foundEmpty {
+		t.Error("expected Empty password candidate")
+	}
+
+	// Verify unconfigured client generates empty password variants
+	emptyClient := NewClient("192.168.1.100", 34567, "admin", "")
+	emptyCandidates := emptyClient.getPasswordCandidates()
+	for _, cand := range emptyCandidates {
+		if cand.password != "" {
+			t.Errorf("expected empty password for unconfigured client, got %q", cand.password)
+		}
+	}
+}
+
+func TestLoginWithStandardHexMD5(t *testing.T) {
+	// Simulates a Xiongmai V4.03.R12 firmware camera that rejects Sofia 8-character hash with Ret: 124,
+	// but accepts Standard 32-char Hex MD5 without LoginType.
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start listener: %v", err)
+	}
+	defer func() { _ = listener.Close() }()
+
+	port := listener.Addr().(*net.TCPAddr).Port
+
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+
+		for {
+			hdrBuf := make([]byte, HeaderLength)
+			if _, err := io.ReadFull(conn, hdrBuf); err != nil {
+				return
+			}
+			hdr, err := DecodeHeader(hdrBuf)
+			if err != nil {
+				return
+			}
+			payload := make([]byte, hdr.DataLength)
+			if _, err := io.ReadFull(conn, payload); err != nil {
+				return
+			}
+
+			if hdr.MsgID == MsgLoginReq {
+				var req LoginReq
+				cleanPayload := bytes.TrimRight(payload, "\x00\r\n ")
+				_ = json.Unmarshal(cleanPayload, &req)
+
+				var respPayload []byte
+				// Accept only 32-char Hex MD5 when LoginType is omitted (or empty)
+				if req.EncryptType == "MD5" && len(req.PassWord) == 32 && req.LoginType == "" {
+					resp := LoginResp{
+						Name:      "OPUserLogin",
+						Ret:       100,
+						SessionID: "0x00000099",
+					}
+					respPayload, _ = json.Marshal(resp)
+				} else {
+					// Simulate V4.03.R12 rejecting unsupported EncryptType/LoginType combinations with Ret: 124
+					resp := LoginResp{
+						Name:      "OPUserLogin",
+						Ret:       124,
+						SessionID: "0x00000000",
+					}
+					respPayload, _ = json.Marshal(resp)
+				}
+
+				respPayloadWithTerm := append(respPayload, 0x0A, 0x00)
+				respHdr := &Header{
+					Magic:      HeaderMagic,
+					Channel:    0,
+					SessionID:  0,
+					Sequence:   hdr.Sequence,
+					TotalPkt:   1,
+					CurPkt:     0,
+					MsgID:      MsgLoginResp,
+					DataLength: uint32(len(respPayloadWithTerm)),
+				}
+				_, _ = conn.Write(append(respHdr.Encode(), respPayloadWithTerm...))
+			}
+		}
+	}()
+
+	client := NewClient("127.0.0.1", port, "admin", "mySecretPassword")
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	if err := client.Connect(ctx); err != nil {
+		t.Fatalf("expected successful login with 32-char hex MD5, got error: %v", err)
+	}
+	defer func() { _ = client.Close() }()
+
+	if !client.IsLoggedIn() {
+		t.Fatal("expected client to be fully logged in")
+	}
+	if client.sessionID != 0x99 {
+		t.Fatalf("expected session ID 0x99, got 0x%08X", client.sessionID)
+	}
+}
+
+func TestFormatLoginError(t *testing.T) {
+	tests := []struct {
+		code     int
+		contains string
+	}{
+		{100, "success"},
+		{106, "check 'camera_password'"},
+		{124, "LOGIN_ENC_PWD_NOT_SUP"},
+		{125, "user does not exist"},
+		{126, "locked"},
+		{127, "concurrent"},
+		{128, "permission denied"},
+		{129, "format error"},
+		{999, "rejected by camera with code 999"},
+	}
+
+	for _, tc := range tests {
+		msg := formatLoginError(tc.code)
+		if !strings.Contains(msg, tc.contains) {
+			t.Errorf("formatLoginError(%d) = %q, want it to contain %q", tc.code, msg, tc.contains)
 		}
 	}
 }

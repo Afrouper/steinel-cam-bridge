@@ -61,6 +61,7 @@ func (c *Client) Connect(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	logger.Trace("Xiongmai", "🔌 Dialing camera TCP control port on %s...", c.addr)
 	var d net.Dialer
 	conn, err := d.DialContext(ctx, "tcp", c.addr)
 	if err != nil {
@@ -68,6 +69,7 @@ func (c *Client) Connect(ctx context.Context) error {
 	}
 	c.conn = conn
 	c.closed.Store(false)
+	logger.Trace("Xiongmai", "🔌 TCP socket connected to %s, starting login handshake", c.addr)
 
 	// Step 1: Login
 	if err := c.loginLocked(); err != nil {
@@ -124,8 +126,12 @@ func HashPassword(secret string) string {
 // formatLoginError returns a user-friendly error description for Xiongmai login return codes.
 func formatLoginError(code int) string {
 	switch code {
+	case 100:
+		return "success (code 100)"
+	case 106:
+		return fmt.Sprintf("invalid password (code %d: check 'camera_password')", code)
 	case 124:
-		return fmt.Sprintf("invalid username or password (code %d: check 'camera_user' and 'camera_password')", code)
+		return fmt.Sprintf("password encryption algorithm not supported (code %d: EE_ACCOUNT_PWD_ENCRYPT_ERROR / LOGIN_ENC_PWD_NOT_SUP)", code)
 	case 125:
 		return fmt.Sprintf("user does not exist (code %d: check 'camera_user')", code)
 	case 126:
@@ -135,7 +141,7 @@ func formatLoginError(code int) string {
 	case 128:
 		return fmt.Sprintf("permission denied (code %d)", code)
 	case 129:
-		return fmt.Sprintf("password format error (code %d)", code)
+		return fmt.Sprintf("password format error (code %d: EE_ACCOUNT_PWD_FORMAT_ERROR)", code)
 	default:
 		return fmt.Sprintf("login rejected by camera with code %d", code)
 	}
@@ -161,21 +167,56 @@ func (c *Client) getPasswordCandidates() []passwordCandidate {
 
 	if cleanPwd != "" {
 		sofiaHash := HashPassword(cleanPwd)
-		// 1. Sofia 8-char hash (standard DVRIP-Mobile & DVRIP-Web modes)
+		//nolint:gosec // Required by Xiongmai hardware protocol specification
+		// CodeQL [go/weak-crypto-password-hashing] Mandated by Xiongmai camera protocol
+		hexMD5 := fmt.Sprintf("%x", md5.Sum([]byte(cleanPwd)))
+		//nolint:gosec // Required by Xiongmai hardware protocol specification
+		// CodeQL [go/weak-crypto-password-hashing] Mandated by Xiongmai camera protocol
+		doubleMD5 := fmt.Sprintf("%x", md5.Sum([]byte(hexMD5)))
+		upperMD5 := strings.ToUpper(hexMD5)
+
+		// 1. Sofia 8-character Base62 MD5 Hash (Legacy Xiongmai / V4.02.R12 default)
 		candidates = append(candidates,
 			passwordCandidate{label: "Sofia 8-char hash (LoginType: DVRIP-Mobile)", user: cleanUser, password: sofiaHash, encryptType: "MD5", loginType: "DVRIP-Mobile"},
+			passwordCandidate{label: "Sofia 8-char hash (no LoginType)", user: cleanUser, password: sofiaHash, encryptType: "MD5", loginType: ""},
 			passwordCandidate{label: "Sofia 8-char hash (LoginType: DVRIP-Web)", user: cleanUser, password: sofiaHash, encryptType: "MD5", loginType: "DVRIP-Web"},
 			passwordCandidate{label: "Sofia 8-char hash (LoginType: Mobile)", user: cleanUser, password: sofiaHash, encryptType: "MD5", loginType: "Mobile"},
-			// 2. Plaintext password
+		)
+
+		// 2. Standard 32-character Lowercase Hex MD5 Hash (Xiongmai V4.03.R12 / JFTech Open Platform)
+		candidates = append(candidates,
+			passwordCandidate{label: "Standard 32-char Hex MD5 (no LoginType)", user: cleanUser, password: hexMD5, encryptType: "MD5", loginType: ""},
+			passwordCandidate{label: "Standard 32-char Hex MD5 (LoginType: DVRIP-Web)", user: cleanUser, password: hexMD5, encryptType: "MD5", loginType: "DVRIP-Web"},
+			passwordCandidate{label: "Standard 32-char Hex MD5 (LoginType: DVRIP-Mobile)", user: cleanUser, password: hexMD5, encryptType: "MD5", loginType: "DVRIP-Mobile"},
+		)
+
+		// 3. Standard 32-character Uppercase Hex MD5 Hash
+		candidates = append(candidates,
+			passwordCandidate{label: "Standard 32-char Uppercase Hex MD5 (no LoginType)", user: cleanUser, password: upperMD5, encryptType: "MD5", loginType: ""},
+			passwordCandidate{label: "Standard 32-char Uppercase Hex MD5 (LoginType: DVRIP-Web)", user: cleanUser, password: upperMD5, encryptType: "MD5", loginType: "DVRIP-Web"},
+		)
+
+		// 4. Double-MD5 Hex Hash (Xiongmai Cloud / XMeye Web DVR-IP)
+		candidates = append(candidates,
+			passwordCandidate{label: "Double-MD5 Hex hash (no LoginType)", user: cleanUser, password: doubleMD5, encryptType: "MD5", loginType: ""},
+			passwordCandidate{label: "Double-MD5 Hex hash (LoginType: DVRIP-Web)", user: cleanUser, password: doubleMD5, encryptType: "MD5", loginType: "DVRIP-Web"},
+			passwordCandidate{label: "Double-MD5 Hex hash (LoginType: DVRIP-Mobile)", user: cleanUser, password: doubleMD5, encryptType: "MD5", loginType: "DVRIP-Mobile"},
+		)
+
+		// 5. Plaintext Password
+		candidates = append(candidates,
+			passwordCandidate{label: "Plaintext password (no LoginType)", user: cleanUser, password: cleanPwd, encryptType: "NONE", loginType: ""},
 			passwordCandidate{label: "Plaintext password (LoginType: DVRIP-Mobile)", user: cleanUser, password: cleanPwd, encryptType: "NONE", loginType: "DVRIP-Mobile"},
 			passwordCandidate{label: "Plaintext password (LoginType: DVRIP-Web)", user: cleanUser, password: cleanPwd, encryptType: "NONE", loginType: "DVRIP-Web"},
 		)
 	}
 
-	// 3. Empty password (unconfigured / default factory cameras)
+	// 6. Empty Password (Unconfigured / Factory-default accounts)
 	candidates = append(candidates,
+		passwordCandidate{label: "Empty password (no LoginType)", user: cleanUser, password: "", encryptType: "NONE", loginType: ""},
 		passwordCandidate{label: "Empty password (LoginType: DVRIP-Mobile)", user: cleanUser, password: "", encryptType: "NONE", loginType: "DVRIP-Mobile"},
 		passwordCandidate{label: "Empty password (LoginType: DVRIP-Web)", user: cleanUser, password: "", encryptType: "NONE", loginType: "DVRIP-Web"},
+		passwordCandidate{label: "Empty password (MD5, no LoginType)", user: cleanUser, password: "", encryptType: "MD5", loginType: ""},
 	)
 
 	return candidates
@@ -218,7 +259,8 @@ func (c *Client) loginLocked() error {
 		}
 
 		// Send login packet via sendRawPacketLocked to prevent logging credentials in Trace mode (CodeQL: CWE-312)
-		logger.Trace("Xiongmai", "-> Sofia MsgID: %d (0x%04X), Seq: %d, Data: [LOGIN REQUEST MASKED]", MsgLoginReq, MsgLoginReq, c.sequence+1)
+		logger.Trace("Xiongmai", "-> Sofia MsgID: %d (0x%04X), Seq: %d [Candidate #%d/%d: %s (User: %s, EncryptType: %s, LoginType: %q, PwdLen: %d)]",
+			MsgLoginReq, MsgLoginReq, c.sequence+1, i+1, len(candidates), cand.label, cand.user, cand.encryptType, cand.loginType, len(cand.password))
 		respData, respHdr, err := c.sendRawPacketLocked(MsgLoginReq, payload)
 		if err != nil {
 			return err
@@ -252,10 +294,23 @@ func (c *Client) loginLocked() error {
 			return nil
 		}
 
-		logger.Debug("Xiongmai", "ℹ️ Candidate #%d [%s] rejected by camera (Ret: %d)", i+1, cand.label, resp.Ret)
+		logger.Debug("Xiongmai", "ℹ️ Candidate #%d [%s] rejected by camera (Ret: %d: %s)", i+1, cand.label, resp.Ret, formatLoginError(resp.Ret))
 		logger.Trace("Xiongmai", "🔍 Raw response payload: %s", string(respData))
+		if resp.EncryptAlgo != "" || resp.PublicKey != "" || resp.Token != "" || resp.Bits != 0 {
+			logger.Trace("Xiongmai", "🔐 Camera advertised security parameters: EncryptAlgo=%q Bits=%d Token=%q PublicKey=%s",
+				resp.EncryptAlgo, resp.Bits, resp.Token, resp.PublicKey)
+		}
+		var rawMap map[string]interface{}
+		if err := json.Unmarshal(respData, &rawMap); err == nil {
+			for k, v := range rawMap {
+				if k != "Name" && k != "Ret" && k != "SessionID" {
+					logger.Trace("Xiongmai", "🔍 Camera login response parameter: %s = %v", k, v)
+				}
+			}
+		}
+
 		lastErr = fmt.Errorf("camera login rejected: %s", formatLoginError(resp.Ret))
-		if resp.Ret != 124 {
+		if resp.Ret != 124 && resp.Ret != 129 {
 			return lastErr
 		}
 	}
@@ -311,6 +366,7 @@ func (c *Client) EnableRTSP() error {
 
 // SetLightState switches the main lamp on or off via FbExtraStateCtrl.
 func (c *Client) SetLightState(on bool) error {
+	logger.Trace("Xiongmai", "-> Setting light state: on=%v", on)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -332,6 +388,9 @@ func (c *Client) SetLightState(on bool) error {
 	}
 
 	_, err = c.sendPacketLocked(MsgConfigSetReq, payload)
+	if err == nil {
+		logger.Trace("Xiongmai", "<- Light state set successfully to on=%v", on)
+	}
 	return err
 }
 
@@ -355,11 +414,13 @@ func (c *Client) QueryLightState() (bool, error) {
 		return false, err
 	}
 
+	logger.Trace("Xiongmai", "<- QueryLightState result: ison=%d", resp.FbExtraStateCtrl.IsOn)
 	return resp.FbExtraStateCtrl.IsOn == 1, nil
 }
 
 // QueryMCUConfig queries the Steinel MCU configuration frame ("BFbU").
 func (c *Client) QueryMCUConfig() (*MCUConfig, error) {
+	logger.Trace("Xiongmai MCU", "-> Querying MCU configuration (BFbU)...")
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -384,10 +445,20 @@ func (c *Client) QueryMCUConfig() (*MCUConfig, error) {
 	var resp SerialPortsReq
 	if err := json.Unmarshal(respData, &resp); err != nil {
 		// Response might be raw string
-		return ParseMCUString(string(respData))
+		cfg, parseErr := ParseMCUString(string(respData))
+		if parseErr == nil && cfg != nil {
+			logger.Trace("Xiongmai MCU", "<- Parsed MCU config from raw string: Distance=%d, Highlight=%d%%, Delay=%ds, Lux=%d, Lowlight=%d%%",
+				cfg.Distance, cfg.Highlight, cfg.HighlightDelaySec, cfg.TwilightLux, cfg.Lowlight)
+		}
+		return cfg, parseErr
 	}
 
-	return ParseMCUString(resp.SerialPortsInfo.SerialPortsData)
+	cfg, parseErr := ParseMCUString(resp.SerialPortsInfo.SerialPortsData)
+	if parseErr == nil && cfg != nil {
+		logger.Trace("Xiongmai MCU", "<- Parsed MCU config: Distance=%d, Highlight=%d%%, Delay=%ds, Lux=%d, Lowlight=%d%%",
+			cfg.Distance, cfg.Highlight, cfg.HighlightDelaySec, cfg.TwilightLux, cfg.Lowlight)
+	}
+	return cfg, parseErr
 }
 
 // SendMCUCommand sends a raw MCU serial port command (e.g. "BXaU").
@@ -445,6 +516,7 @@ func (c *Client) SetLowlightDuration(dur int) error {
 
 // SendKeepAlive sends a heartbeat packet to prevent connection timeout.
 func (c *Client) SendKeepAlive() error {
+	logger.Trace("Xiongmai", "-> Sending KeepAlive ping (SessionID: 0x%08X)", c.sessionID)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -454,6 +526,9 @@ func (c *Client) SendKeepAlive() error {
 	}
 	payload, _ := json.Marshal(req)
 	_, err := c.sendPacketLocked(MsgKeepAliveReq, payload)
+	if err == nil {
+		logger.Trace("Xiongmai", "<- KeepAlive acknowledged")
+	}
 	return err
 }
 
@@ -477,6 +552,9 @@ func (c *Client) sendRawPacketLocked(msgID uint16, payload []byte) ([]byte, *Hea
 		DataLength: uint32(len(dataWithTerminator)),
 	}
 
+	logger.Trace("Xiongmai", "-> Sofia Raw Packet: MsgID=%d (0x%04X), Seq=%d, SessionID=0x%08X, Len=%d",
+		hdr.MsgID, hdr.MsgID, hdr.Sequence, hdr.SessionID, hdr.DataLength)
+
 	packet := append(hdr.Encode(), dataWithTerminator...)
 
 	_ = c.conn.SetDeadline(time.Now().Add(5 * time.Second))
@@ -494,6 +572,9 @@ func (c *Client) sendRawPacketLocked(msgID uint16, payload []byte) ([]byte, *Hea
 	if err != nil {
 		return nil, nil, err
 	}
+
+	logger.Trace("Xiongmai", "<- Sofia Raw Header: MsgID=%d (0x%04X), Seq=%d, SessionID=0x%08X, Len=%d",
+		respHdr.MsgID, respHdr.MsgID, respHdr.Sequence, respHdr.SessionID, respHdr.DataLength)
 
 	if respHdr.DataLength > 65535 {
 		return nil, nil, fmt.Errorf("response payload too large: %d bytes", respHdr.DataLength)
@@ -583,6 +664,8 @@ func DiscoverDevices(timeout time.Duration) ([]DiscoveredDevice, error) {
 		return nil, err
 	}
 
+	logger.Trace("Xiongmai Discovery", "📡 Sending UDP search broadcast to %s...", bcastAddr)
+
 	// 20-byte Sofia Header for MsgSearchDeviceReq (1530)
 	hdr := Header{
 		Magic:      HeaderMagic,
@@ -604,7 +687,7 @@ func DiscoverDevices(timeout time.Duration) ([]DiscoveredDevice, error) {
 	buf := make([]byte, 2048)
 
 	for {
-		n, _, err := conn.ReadFrom(buf)
+		n, remoteAddr, err := conn.ReadFrom(buf)
 		if err != nil {
 			break // Timeout or read error
 		}
@@ -617,6 +700,7 @@ func DiscoverDevices(timeout time.Duration) ([]DiscoveredDevice, error) {
 		}
 
 		payload := strings.TrimRight(string(buf[HeaderLength:n]), "\x00\r\n ")
+		logger.Trace("Xiongmai Discovery", "<- Discovered device response from %s (%d bytes): %s", remoteAddr, n, payload)
 		var respMap map[string]interface{}
 		if err := json.Unmarshal([]byte(payload), &respMap); err != nil {
 			continue

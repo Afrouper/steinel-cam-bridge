@@ -44,7 +44,7 @@ func buildAuthPrefix(user, password string) string {
 }
 
 // getCandidateURLs returns ordered candidate RTSP URLs for Steinel / Xiongmai cameras.
-func getCandidateURLs(cameraIP string, port int, user, password string, streamSubtype int) []string {
+func getCandidateURLs(cameraIP string, port int, user, password string, streamSubtype int, fallbackPasswords ...string) []string {
 	if port <= 0 {
 		port = RTSPPort
 	}
@@ -53,22 +53,32 @@ func getCandidateURLs(cameraIP string, port int, user, password string, streamSu
 	}
 
 	cleanUser := strings.TrimSpace(user)
-	cleanPwd := strings.TrimSpace(password)
-
-	return []string{
-		// 1. Steinel L 620 canonical path format with ?real_stream (Confirmed working in MotionEye)
-		fmt.Sprintf("rtsp://%s:%d/user=%s_password=%s_channel=1_stream=%d.sdp?real_stream",
-			cameraIP, port, cleanUser, cleanPwd, streamSubtype),
-		// 2. Steinel L 620 canonical path format without ?real_stream
-		fmt.Sprintf("rtsp://%s:%d/user=%s_password=%s_channel=1_stream=%d.sdp",
-			cameraIP, port, cleanUser, cleanPwd, streamSubtype),
-		// 3. Fallback standard Xiongmai path
-		fmt.Sprintf("rtsp://%s%s:%d/stream=%d",
-			buildAuthPrefix(cleanUser, cleanPwd), cameraIP, port, streamSubtype),
-		// 4. Fallback Generic style path
-		fmt.Sprintf("rtsp://%s%s:%d/h264/ch1/main/av_stream",
-			buildAuthPrefix(cleanUser, cleanPwd), cameraIP, port),
+	pwds := []string{strings.TrimSpace(password)}
+	for _, fp := range fallbackPasswords {
+		trimmed := strings.TrimSpace(fp)
+		if trimmed != "" && trimmed != pwds[0] {
+			pwds = append(pwds, trimmed)
+		}
 	}
+
+	var urls []string
+	for _, cleanPwd := range pwds {
+		urls = append(urls,
+			// 1. Steinel L 620 canonical path format with ?real_stream (Confirmed working in MotionEye)
+			fmt.Sprintf("rtsp://%s:%d/user=%s_password=%s_channel=1_stream=%d.sdp?real_stream",
+				cameraIP, port, cleanUser, cleanPwd, streamSubtype),
+			// 2. Steinel L 620 canonical path format without ?real_stream
+			fmt.Sprintf("rtsp://%s:%d/user=%s_password=%s_channel=1_stream=%d.sdp",
+				cameraIP, port, cleanUser, cleanPwd, streamSubtype),
+			// 3. Fallback standard Xiongmai path
+			fmt.Sprintf("rtsp://%s%s:%d/stream=%d",
+				buildAuthPrefix(cleanUser, cleanPwd), cameraIP, port, streamSubtype),
+			// 4. Fallback Generic style path
+			fmt.Sprintf("rtsp://%s%s:%d/h264/ch1/main/av_stream",
+				buildAuthPrefix(cleanUser, cleanPwd), cameraIP, port),
+		)
+	}
+	return urls
 }
 
 // RTSPIngest handles reading the live H.264/G.711 stream from the camera's internal RTSP server (port 554)
@@ -84,8 +94,8 @@ type RTSPIngest struct {
 }
 
 // NewRTSPIngest creates a new RTSP Ingest client with Steinel and Xiongmai streaming paths.
-func NewRTSPIngest(cameraIP string, port int, user, password string, streamSubtype int, rtspServer *rtsp.Server) *RTSPIngest {
-	candidateURLs := getCandidateURLs(cameraIP, port, user, password, streamSubtype)
+func NewRTSPIngest(cameraIP string, port int, user, password string, streamSubtype int, rtspServer *rtsp.Server, fallbackPasswords ...string) *RTSPIngest {
+	candidateURLs := getCandidateURLs(cameraIP, port, user, password, streamSubtype, fallbackPasswords...)
 
 	var transcoder *audio.Transcoder
 	if rtspServer != nil && rtspServer.GetAudioCodec() == "aac" {
@@ -149,6 +159,7 @@ func (ing *RTSPIngest) runSession(_ context.Context) error {
 	var lastErr error
 
 	for _, rawURL := range ing.candidateURLs {
+		logger.Trace("Xiongmai Ingest", "Attempting RTSP URL candidate: %s", SanitizeRTSPURL(rawURL))
 		u, err := base.ParseURL(rawURL)
 		if err != nil {
 			continue
