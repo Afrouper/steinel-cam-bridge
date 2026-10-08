@@ -2,6 +2,18 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.3.11-beta.2
+
+### 🔐 Adaptive RSA/AES-Verschlüsselung & Straffung des Logins für L 620 CAM (Issue #45)
+
+- **Adaptive Authentifizierungs-Aushandlung (JFTech / Xiongmai Sofia Protokoll)**:
+  - **Capability-Probe vor Login**: Sendet ein `OPMonitor Claim` (MsgID `1413`) an die Kamera, um die unterstützten Sicherheitsverfahren abzufragen.
+  - **Automatischer RSA-1024 + AES-128-CBC Handshake**: Antwortet die Kamera (wie bei Firmware `V4.03.R12`) mit `"RSA": true` und Public Key (MsgID `1414`), führt die Bridge **direkt im ersten Versuch** den geforderten verschlüsselten Handshake mit `LoginType: "DVRIP-FutureHome"` und `EncryptType: "MD5"` aus.
+  - **Krypto-Spezifikation**: `UserName`, `PassWord` (Sofia 8-Zeichen Hash) und `CommunicateKey` (zufälliger 16-Byte Session-Schlüssel) werden mit RSA PKCS#1 v1.5 verschlüsselt; die äußere Payload wird mit AES-128-CBC (Pre-Shared Key, Null-IV, PKCS#7 Padding) geschützt und Base64-kodiert an MsgID `1000` gesendet.
+- **Radikale Straffung der Login-Kandidaten**:
+  - Bisherige 19 spekulative Varianten (Double-MD5, DVRIP-Web, Uppercase-Hashes) entfallen zugunsten der 4 Kern-Legacy-Varianten (Sofia 8-Zeichen Hash mit `DVRIP-Mobile`, Sofia 8-Zeichen Hash ohne `LoginType`, Plaintext, leeres Passwort).
+  - Verhindert Reconnect-Verzögerungen und Fehlermeldungen (Ret 124) bei modernen Kameras vollständig.
+
 ## 1.3.11-beta.1
 
 ### 🔑 Erweiterte Login-Kandidaten & Firmware-Kompatibilität für L 620 CAM (Issue #45)
