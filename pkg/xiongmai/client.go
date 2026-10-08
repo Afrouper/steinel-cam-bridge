@@ -3,6 +3,8 @@ package xiongmai
 import (
 	"context"
 	"crypto/md5"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -24,6 +26,7 @@ type Client struct {
 	user              string
 	password          string
 	effectivePassword string
+	communicateKey    []byte
 	conn              net.Conn
 	sessionID         uint32
 	sequence          uint32
@@ -215,53 +218,23 @@ func (c *Client) getPasswordCandidates() []passwordCandidate {
 
 	if cleanPwd != "" {
 		sofiaHash := HashPassword(cleanPwd)
-		hexMD5 := HashMD5Hex(cleanPwd)
-		doubleMD5 := HashDoubleMD5Hex(cleanPwd)
-		upperMD5 := strings.ToUpper(hexMD5)
 
 		// 1. Sofia 8-character Base62 MD5 Hash (Legacy Xiongmai / V4.02.R12 default)
 		candidates = append(candidates,
 			passwordCandidate{label: "Sofia 8-char hash (LoginType: DVRIP-Mobile)", user: cleanUser, password: sofiaHash, encryptType: "MD5", loginType: "DVRIP-Mobile"},
 			passwordCandidate{label: "Sofia 8-char hash (no LoginType)", user: cleanUser, password: sofiaHash, encryptType: "MD5", loginType: ""},
-			passwordCandidate{label: "Sofia 8-char hash (LoginType: DVRIP-Web)", user: cleanUser, password: sofiaHash, encryptType: "MD5", loginType: "DVRIP-Web"},
-			passwordCandidate{label: "Sofia 8-char hash (LoginType: Mobile)", user: cleanUser, password: sofiaHash, encryptType: "MD5", loginType: "Mobile"},
 		)
 
-		// 2. Standard 32-character Lowercase Hex MD5 Hash (Xiongmai V4.03.R12 / JFTech Open Platform)
-		candidates = append(candidates,
-			passwordCandidate{label: "Standard 32-char Hex MD5 (no LoginType)", user: cleanUser, password: hexMD5, encryptType: "MD5", loginType: ""},
-			passwordCandidate{label: "Standard 32-char Hex MD5 (LoginType: DVRIP-Web)", user: cleanUser, password: hexMD5, encryptType: "MD5", loginType: "DVRIP-Web"},
-			passwordCandidate{label: "Standard 32-char Hex MD5 (LoginType: DVRIP-Mobile)", user: cleanUser, password: hexMD5, encryptType: "MD5", loginType: "DVRIP-Mobile"},
-		)
-
-		// 3. Standard 32-character Uppercase Hex MD5 Hash
-		candidates = append(candidates,
-			passwordCandidate{label: "Standard 32-char Uppercase Hex MD5 (no LoginType)", user: cleanUser, password: upperMD5, encryptType: "MD5", loginType: ""},
-			passwordCandidate{label: "Standard 32-char Uppercase Hex MD5 (LoginType: DVRIP-Web)", user: cleanUser, password: upperMD5, encryptType: "MD5", loginType: "DVRIP-Web"},
-		)
-
-		// 4. Double-MD5 Hex Hash (Xiongmai Cloud / XMeye Web DVR-IP)
-		candidates = append(candidates,
-			passwordCandidate{label: "Double-MD5 Hex hash (no LoginType)", user: cleanUser, password: doubleMD5, encryptType: "MD5", loginType: ""},
-			passwordCandidate{label: "Double-MD5 Hex hash (LoginType: DVRIP-Web)", user: cleanUser, password: doubleMD5, encryptType: "MD5", loginType: "DVRIP-Web"},
-			passwordCandidate{label: "Double-MD5 Hex hash (LoginType: DVRIP-Mobile)", user: cleanUser, password: doubleMD5, encryptType: "MD5", loginType: "DVRIP-Mobile"},
-		)
-
-		// 5. Plaintext Password
+		// 2. Plaintext Password
 		candidates = append(candidates,
 			passwordCandidate{label: "Plaintext password (no LoginType)", user: cleanUser, password: cleanPwd, encryptType: "NONE", loginType: ""},
-			passwordCandidate{label: "Plaintext password (LoginType: DVRIP-Mobile)", user: cleanUser, password: cleanPwd, encryptType: "NONE", loginType: "DVRIP-Mobile"},
-			passwordCandidate{label: "Plaintext password (LoginType: DVRIP-Web)", user: cleanUser, password: cleanPwd, encryptType: "NONE", loginType: "DVRIP-Web"},
+		)
+	} else {
+		// 3. Empty Password (Unconfigured / Factory-default accounts)
+		candidates = append(candidates,
+			passwordCandidate{label: "Empty password (no LoginType)", user: cleanUser, password: "", encryptType: "NONE", loginType: ""},
 		)
 	}
-
-	// 6. Empty Password (Unconfigured / Factory-default accounts)
-	candidates = append(candidates,
-		passwordCandidate{label: "Empty password (no LoginType)", user: cleanUser, password: "", encryptType: "NONE", loginType: ""},
-		passwordCandidate{label: "Empty password (LoginType: DVRIP-Mobile)", user: cleanUser, password: "", encryptType: "NONE", loginType: "DVRIP-Mobile"},
-		passwordCandidate{label: "Empty password (LoginType: DVRIP-Web)", user: cleanUser, password: "", encryptType: "NONE", loginType: "DVRIP-Web"},
-		passwordCandidate{label: "Empty password (MD5, no LoginType)", user: cleanUser, password: "", encryptType: "MD5", loginType: ""},
-	)
 
 	return candidates
 }
@@ -280,11 +253,219 @@ func MaskPassword(pwd string) string {
 	return string(runes[:3]) + strings.Repeat("*", len(runes)-3)
 }
 
-// loginLocked performs the OPUserLogin command with automated password format fallback.
+// queryClaimLocked queries camera encryption and authentication capabilities via OPMonitor Claim (MsgID 1413).
+func (c *Client) queryClaimLocked() (*MonitorClaimResp, error) {
+	claimReq := MonitorClaimReq{
+		Name: "OPMonitor",
+		OPMonitor: MonitorClaimParam{
+			Action: "Claim",
+			Parameter: MonitorClaimParamDetails{
+				Channel:    0,
+				CombinMode: "CONNECT_ALL",
+				StreamType: "Main",
+				TransMode:  "TCP",
+			},
+		},
+		SessionID: "0x000001869f",
+	}
+
+	payload, err := json.Marshal(claimReq)
+	if err != nil {
+		return nil, err
+	}
+
+	logger.Trace("Xiongmai", "-> Probing camera capabilities via OPMonitor Claim (MsgID 1413)")
+	respData, respHdr, err := c.sendRawPacketWithHeaderLocked(MsgMonitorClaimReq, 0x01, 0x00, 0x0001869F, payload)
+	if err != nil {
+		return nil, fmt.Errorf("OPMonitor Claim request failed: %w", err)
+	}
+	if respHdr == nil || respHdr.MsgID != MsgMonitorClaimResp {
+		return nil, fmt.Errorf("unexpected response MsgID %d (expected %d)", respHdr.MsgID, MsgMonitorClaimResp)
+	}
+
+	var claim MonitorClaimResp
+	rawStr := strings.TrimSpace(string(respData))
+	if strings.HasPrefix(rawStr, "{") {
+		if err := json.Unmarshal([]byte(rawStr), &claim); err != nil {
+			return nil, fmt.Errorf("failed to parse plain OPMonitor Claim response: %w", err)
+		}
+	} else {
+		cipherBytes, err := base64.StdEncoding.DecodeString(rawStr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to base64-decode OPMonitor Claim response: %w", err)
+		}
+		plainBytes, err := decryptAES128CBC([]byte(DefaultSofiaAESKey), cipherBytes)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decrypt OPMonitor Claim response: %w", err)
+		}
+		logger.Trace("Xiongmai", "🔐 Decrypted OPMonitor Claim response: %s", string(plainBytes))
+		if err := json.Unmarshal(plainBytes, &claim); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal decrypted OPMonitor Claim response: %w", err)
+		}
+	}
+
+	if claim.Ret != 100 && claim.Ret != 0 {
+		return nil, fmt.Errorf("OPMonitor Claim returned code %d", claim.Ret)
+	}
+
+	return &claim, nil
+}
+
+// loginRSALocked performs RSA PKCS#1 v1.5 and AES-128-CBC encrypted authentication (mandated by V4.03.R12).
+func (c *Client) loginRSALocked(claim *MonitorClaimResp) error {
+	pubKey, err := parseRSAPublicKey(claim.PublicKey)
+	if err != nil {
+		return fmt.Errorf("invalid RSA public key from camera (%q): %w", claim.PublicKey, err)
+	}
+
+	commKey := make([]byte, 16)
+	if _, err := rand.Read(commKey); err != nil {
+		return fmt.Errorf("failed to generate random communicate key: %w", err)
+	}
+	c.communicateKey = commKey
+
+	cleanUser := strings.TrimSpace(c.user)
+	if cleanUser == "" {
+		cleanUser = "admin"
+	}
+	cleanPwd := strings.TrimSpace(c.password)
+
+	encUserHex, err := encryptRSAPublicKey(pubKey, []byte(cleanUser))
+	if err != nil {
+		return fmt.Errorf("failed to encrypt username with RSA: %w", err)
+	}
+	encCommHex, err := encryptRSAPublicKey(pubKey, commKey)
+	if err != nil {
+		return fmt.Errorf("failed to encrypt communicate key with RSA: %w", err)
+	}
+
+	type rsaCand struct {
+		label string
+		val   string
+	}
+	var pwdCandidates []rsaCand
+	if cleanPwd != "" {
+		pwdCandidates = append(pwdCandidates,
+			rsaCand{label: "Sofia 8-char hash", val: HashPassword(cleanPwd)},
+			rsaCand{label: "Plaintext", val: cleanPwd},
+		)
+	} else {
+		pwdCandidates = append(pwdCandidates,
+			rsaCand{label: "Empty password", val: ""},
+		)
+	}
+
+	var lastErr error
+	for i, cand := range pwdCandidates {
+		encPassHex, err := encryptRSAPublicKey(pubKey, []byte(cand.val))
+		if err != nil {
+			return fmt.Errorf("failed to encrypt password with RSA: %w", err)
+		}
+
+		loginReq := LoginReq{
+			EncryptType:    "MD5",
+			LoginType:      "DVRIP-FutureHome",
+			UserName:       encUserHex,
+			PassWord:       encPassHex,
+			CommunicateKey: encCommHex,
+		}
+
+		innerJSON, err := json.Marshal(loginReq)
+		if err != nil {
+			return err
+		}
+
+		ciphertext, err := encryptAES128CBC([]byte(DefaultSofiaAESKey), innerJSON)
+		if err != nil {
+			return fmt.Errorf("failed to AES encrypt login payload: %w", err)
+		}
+
+		b64Payload := []byte(base64.StdEncoding.EncodeToString(ciphertext))
+
+		logger.Trace("Xiongmai", "-> Sofia MsgID: %d (0x%04X), Seq: %d [RSA Candidate #%d/%d: %s (User: %s, LoginType: DVRIP-FutureHome)]",
+			MsgLoginReq, MsgLoginReq, c.sequence+1, i+1, len(pwdCandidates), cand.label, cleanUser)
+
+		respData, respHdr, err := c.sendRawPacketWithHeaderLocked(MsgLoginReq, 0x01, 0x63, 0x00000000, b64Payload)
+		if err != nil {
+			return err
+		}
+		if respHdr != nil {
+			logger.Trace("Xiongmai", "<- Sofia MsgID: %d (0x%04X), Seq: %d, Data: %s", respHdr.MsgID, respHdr.MsgID, respHdr.Sequence, string(respData))
+		}
+
+		respStr := strings.TrimSpace(string(respData))
+		var resp LoginResp
+		if strings.HasPrefix(respStr, "{") {
+			if err := json.Unmarshal([]byte(respStr), &resp); err != nil {
+				return fmt.Errorf("failed to parse login response: %w (raw: %s)", err, respStr)
+			}
+		} else {
+			cipherBytes, decErr := base64.StdEncoding.DecodeString(respStr)
+			if decErr == nil {
+				plainBytes, decErr2 := decryptAES128CBC([]byte(DefaultSofiaAESKey), cipherBytes)
+				if decErr2 == nil {
+					_ = json.Unmarshal(plainBytes, &resp)
+				}
+			}
+			if resp.Ret == 0 && resp.SessionID == "" {
+				return fmt.Errorf("failed to parse encrypted login response: %s", respStr)
+			}
+		}
+
+		sessionStr := strings.TrimPrefix(resp.SessionID, "0x")
+		var parsedSessionID uint32
+		if sessionStr != "" {
+			if sID, err := strconv.ParseUint(sessionStr, 16, 32); err == nil {
+				parsedSessionID = uint32(sID)
+			}
+		}
+
+		if resp.Ret == 100 || resp.Ret == 0 {
+			c.sessionID = parsedSessionID
+			c.effectivePassword = cand.val
+			c.isLoggedIn = true
+			logger.Info("Xiongmai", "🔑 Authenticated successfully using RSA/AES (%s, User: %s, SessionID: 0x%08X)",
+				cand.label, cleanUser, c.sessionID)
+			return nil
+		}
+
+		logger.Debug("Xiongmai", "ℹ️ RSA Candidate #%d [%s] rejected by camera (Ret: %d: %s)", i+1, cand.label, resp.Ret, formatLoginError(resp.Ret))
+		lastErr = fmt.Errorf("camera RSA login rejected: %s", formatLoginError(resp.Ret))
+		if resp.Ret != 106 {
+			return lastErr
+		}
+	}
+
+	return lastErr
+}
+
+// loginLocked performs adaptive authentication negotiation:
+// 1. Probes camera encryption and authentication capabilities via OPMonitor Claim (MsgID 1413).
+// 2. If camera advertises RSA encryption (mandated by V4.03.R12), executes RSA-1024 + AES-128 handshake.
+// 3. If Claim is unsupported or camera specifies legacy auth, attempts streamlined legacy candidates.
 func (c *Client) loginLocked() error {
 	logger.Debug("Xiongmai", "🔍 Login check: user=%q (password configured: %v, length: %d chars)",
 		c.user, c.password != "", len(c.password))
 
+	// Step 1: Probe camera encryption and authentication capabilities via OPMonitor Claim
+	claim, err := c.queryClaimLocked()
+	if err != nil {
+		logger.Debug("Xiongmai", "ℹ️ OPMonitor Claim probe not supported or failed (%v), falling back to legacy login", err)
+	} else if claim != nil {
+		logger.Trace("Xiongmai", "🔐 Camera advertised security: EncryptAlgo=%q Bits=%d RSA=%v MD5=%v NONE=%v",
+			claim.EncryptAlgo, claim.Bits, claim.LoginEncryptionType.RSA, claim.LoginEncryptionType.MD5, claim.LoginEncryptionType.NONE)
+
+		if claim.LoginEncryptionType.RSA && claim.PublicKey != "" {
+			logger.Debug("Xiongmai", "🔐 Camera mandates RSA encrypted login (Bits: %d, Algo: %s)", claim.Bits, claim.EncryptAlgo)
+			if rsaErr := c.loginRSALocked(claim); rsaErr == nil {
+				return nil
+			} else {
+				logger.Warn("Xiongmai", "⚠️ RSA login attempt failed: %v", rsaErr)
+			}
+		}
+	}
+
+	// Step 2: Streamlined legacy authentication fallback
 	candidates := c.getPasswordCandidates()
 	var lastErr error
 	var fallbackSessionID uint32
@@ -576,9 +757,10 @@ func (c *Client) SendKeepAlive() error {
 	return err
 }
 
-// sendRawPacketLocked encodes the Sofia header, sends the packet and reads the response
-// without logging request payloads (essential to prevent sensitive credentials like PassWord from leaking).
-func (c *Client) sendRawPacketLocked(msgID uint16, payload []byte) ([]byte, *Header, error) {
+// sendRawPacketWithHeaderLocked encodes the Sofia header with custom channel, totalPkt and sessionID,
+// sends the packet and reads the response without logging request payloads (essential to prevent sensitive
+// credentials like PassWord from leaking - CWE-312).
+func (c *Client) sendRawPacketWithHeaderLocked(msgID uint16, channel byte, totalPkt byte, sessionID uint32, payload []byte) ([]byte, *Header, error) {
 	if c.conn == nil {
 		return nil, nil, errors.New("connection is closed")
 	}
@@ -589,15 +771,16 @@ func (c *Client) sendRawPacketLocked(msgID uint16, payload []byte) ([]byte, *Hea
 
 	hdr := Header{
 		Magic:      HeaderMagic,
-		Channel:    0,
-		SessionID:  c.sessionID,
+		Channel:    channel,
+		SessionID:  sessionID,
 		Sequence:   c.sequence,
+		TotalPkt:   totalPkt,
 		MsgID:      msgID,
 		DataLength: uint32(len(dataWithTerminator)),
 	}
 
-	logger.Trace("Xiongmai", "-> Sofia Raw Packet: MsgID=%d (0x%04X), Seq=%d, SessionID=0x%08X, Len=%d",
-		hdr.MsgID, hdr.MsgID, hdr.Sequence, hdr.SessionID, hdr.DataLength)
+	logger.Trace("Xiongmai", "-> Sofia Raw Packet: MsgID=%d (0x%04X), Seq=%d, Channel=0x%02X, TotalPkt=0x%02X, SessionID=0x%08X, Len=%d",
+		hdr.MsgID, hdr.MsgID, hdr.Sequence, hdr.Channel, hdr.TotalPkt, hdr.SessionID, hdr.DataLength)
 
 	packet := append(hdr.Encode(), dataWithTerminator...)
 
@@ -617,8 +800,8 @@ func (c *Client) sendRawPacketLocked(msgID uint16, payload []byte) ([]byte, *Hea
 		return nil, nil, err
 	}
 
-	logger.Trace("Xiongmai", "<- Sofia Raw Header: MsgID=%d (0x%04X), Seq=%d, SessionID=0x%08X, Len=%d",
-		respHdr.MsgID, respHdr.MsgID, respHdr.Sequence, respHdr.SessionID, respHdr.DataLength)
+	logger.Trace("Xiongmai", "<- Sofia Raw Header: MsgID=%d (0x%04X), Seq=%d, Channel=0x%02X, TotalPkt=0x%02X, SessionID=0x%08X, Len=%d",
+		respHdr.MsgID, respHdr.MsgID, respHdr.Sequence, respHdr.Channel, respHdr.TotalPkt, respHdr.SessionID, respHdr.DataLength)
 
 	if respHdr.DataLength > 65535 {
 		return nil, nil, fmt.Errorf("response payload too large: %d bytes", respHdr.DataLength)
@@ -632,6 +815,12 @@ func (c *Client) sendRawPacketLocked(msgID uint16, payload []byte) ([]byte, *Hea
 	// Trim trailing null/newlines
 	cleanPayload := strings.TrimRight(string(respPayload), "\x00\r\n ")
 	return []byte(cleanPayload), respHdr, nil
+}
+
+// sendRawPacketLocked encodes the default Sofia header, sends the packet and reads the response
+// without logging request payloads.
+func (c *Client) sendRawPacketLocked(msgID uint16, payload []byte) ([]byte, *Header, error) {
+	return c.sendRawPacketWithHeaderLocked(msgID, 0, 0, c.sessionID, payload)
 }
 
 // sendPacketLocked logs non-sensitive Sofia request/response payloads and delegates to sendRawPacketLocked.
