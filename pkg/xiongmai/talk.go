@@ -82,6 +82,7 @@ func (t *TalkClient) startTalkLocked() error {
 	}
 
 	logger.Debug("Xiongmai Talk", "🎙️ Claiming audio talk channel (MsgTalkClaimReq)...")
+	logger.Trace("Xiongmai Talk", "Claiming talk channel (SessionID: 0x%08X)...", t.client.sessionID)
 
 	// 1. Claim talk channel (MsgID 1434 / 1410)
 	claimReq := OPTalkReq{
@@ -126,6 +127,7 @@ func (t *TalkClient) StopTalk() error {
 		return nil
 	}
 
+	logger.Trace("Xiongmai Talk", "Stopping talk channel (SessionID: 0x%08X)...", t.client.sessionID)
 	req := OPTalkReq{
 		Name: "OPTalk",
 		OPTalk: OPTalkInfo{

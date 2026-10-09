@@ -38,6 +38,8 @@ const (
 	MsgTalkClaimReq      uint16 = 1410
 	MsgTalkClaimResp     uint16 = 1411
 	MsgTalkSendData      uint16 = 1412
+	MsgMonitorClaimReq   uint16 = 1413
+	MsgMonitorClaimResp  uint16 = 1414
 	MsgTalkControlReq    uint16 = 1430
 	MsgTalkControlResp   uint16 = 1431
 	MsgTalkAudioData     uint16 = 1432
@@ -110,17 +112,63 @@ func DecodeHeader(data []byte) (*Header, error) {
 
 // Login JSON Request (DVRIP / Sofia standard flat structure on MsgID 1000)
 type LoginReq struct {
-	EncryptType string `json:"EncryptType"`
-	LoginType   string `json:"LoginType,omitempty"`
-	PassWord    string `json:"PassWord"`
-	UserName    string `json:"UserName"`
+	EncryptType    string `json:"EncryptType"`
+	LoginType      string `json:"LoginType,omitempty"`
+	UserName       string `json:"UserName"`
+	PassWord       string `json:"PassWord"`
+	CommunicateKey string `json:"CommunicateKey,omitempty"`
 }
 
 // Login JSON Response
 type LoginResp struct {
-	Name      string `json:"Name"`
-	Ret       int    `json:"Ret"`
-	SessionID string `json:"SessionID"`
+	Name          string `json:"Name"`
+	Ret           int    `json:"Ret"`
+	SessionID     string `json:"SessionID"`
+	Token         string `json:"Token,omitempty"`
+	PublicKey     string `json:"PublicKey,omitempty"`
+	Bits          int    `json:"Bits,omitempty"`
+	EncryptAlgo   string `json:"EncryptAlgo,omitempty"`
+	AliveInterval int    `json:"AliveInterval,omitempty"`
+	ChannelNum    int    `json:"ChannelNum,omitempty"`
+	DataUseAES    bool   `json:"DataUseAES,omitempty"`
+	DeviceType    string `json:"DeviceType,omitempty"`
+}
+
+// MonitorClaimReq is sent prior to login to query camera encryption and authentication capabilities (MsgID 1413).
+type MonitorClaimReq struct {
+	Name      string            `json:"Name"`
+	OPMonitor MonitorClaimParam `json:"OPMonitor"`
+	SessionID string            `json:"SessionID"`
+}
+
+type MonitorClaimParam struct {
+	Action    string                   `json:"Action"` // "Claim"
+	Parameter MonitorClaimParamDetails `json:"Parameter"`
+}
+
+type MonitorClaimParamDetails struct {
+	Channel    int    `json:"Channel"`
+	CombinMode string `json:"CombinMode"` // "CONNECT_ALL"
+	StreamType string `json:"StreamType"` // "Main"
+	TransMode  string `json:"TransMode"`  // "TCP"
+}
+
+// MonitorClaimResp is returned by modern Xiongmai/Steinel firmware (e.g. V4.03.R12)
+// detailing supported login algorithms, public keys, and cipher suites (MsgID 1414).
+type MonitorClaimResp struct {
+	Ret                 int                 `json:"Ret"`
+	Bits                int                 `json:"Bits"`
+	EncryptAlgo         string              `json:"EncryptAlgo"` // "RSA_V1.5"
+	PublicKey           string              `json:"PublicKey"`   // "<MODULUS_HEX>,010001"
+	LoginEncryptionType LoginEncryptionType `json:"LoginEncryptionType"`
+	DataEncryptionType  map[string]bool     `json:"DataEncryptionType,omitempty"`
+	NotEncryptMsgID     []int               `json:"NotEncryptMsgID,omitempty"`
+}
+
+type LoginEncryptionType struct {
+	MD5  bool `json:"MD5"`
+	NONE bool `json:"NONE"`
+	RSA  bool `json:"RSA"`
 }
 
 // RTSP Config JSON for automatic enablement
