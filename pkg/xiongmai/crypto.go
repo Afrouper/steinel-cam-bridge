@@ -113,3 +113,19 @@ func encryptRSAPublicKey(pubKey *rsa.PublicKey, data []byte) (string, error) {
 	}
 	return strings.ToUpper(hex.EncodeToString(ciphertext)), nil
 }
+
+// generateCommunicateKey generates a random 16-character alphanumeric string [0-9A-Za-z]
+// as required by Xiongmai / JFTech NetIP protocol (CProtocolNetIP::NewLoginPTL).
+func generateCommunicateKey() (string, error) {
+	const charset = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+	randBytes := make([]byte, 16)
+	if _, err := rand.Read(randBytes); err != nil {
+		return "", fmt.Errorf("failed to generate random communicate key: %w", err)
+	}
+
+	result := make([]byte, 16)
+	for i := 0; i < 16; i++ {
+		result[i] = charset[int(randBytes[i])%len(charset)]
+	}
+	return string(result), nil
+}

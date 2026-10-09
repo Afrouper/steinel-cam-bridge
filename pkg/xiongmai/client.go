@@ -3,7 +3,6 @@ package xiongmai
 import (
 	"context"
 	"crypto/md5"
-	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -275,7 +274,7 @@ func (c *Client) queryClaimLocked() (*MonitorClaimResp, error) {
 	}
 
 	logger.Trace("Xiongmai", "-> Probing camera capabilities via OPMonitor Claim (MsgID 1413)")
-	respData, respHdr, err := c.sendRawPacketWithHeaderLocked(MsgMonitorClaimReq, 0x01, 0x00, 0x0001869F, payload)
+	respData, respHdr, err := c.sendRawPacketWithHeaderLocked(MsgMonitorClaimReq, 0x01, 0x63, 0x0001869F, payload)
 	if err != nil {
 		return nil, fmt.Errorf("OPMonitor Claim request failed: %w", err)
 	}
@@ -318,11 +317,11 @@ func (c *Client) loginRSALocked(claim *MonitorClaimResp) error {
 		return fmt.Errorf("invalid RSA public key from camera (%q): %w", claim.PublicKey, err)
 	}
 
-	commKey := make([]byte, 16)
-	if _, err := rand.Read(commKey); err != nil {
-		return fmt.Errorf("failed to generate random communicate key: %w", err)
+	commKeyStr, err := generateCommunicateKey()
+	if err != nil {
+		return fmt.Errorf("failed to generate communicate key: %w", err)
 	}
-	c.communicateKey = commKey
+	c.communicateKey = []byte(commKeyStr)
 
 	cleanUser := strings.TrimSpace(c.user)
 	if cleanUser == "" {
@@ -334,7 +333,7 @@ func (c *Client) loginRSALocked(claim *MonitorClaimResp) error {
 	if err != nil {
 		return fmt.Errorf("failed to encrypt username with RSA: %w", err)
 	}
-	encCommHex, err := encryptRSAPublicKey(pubKey, commKey)
+	encCommHex, err := encryptRSAPublicKey(pubKey, []byte(commKeyStr))
 	if err != nil {
 		return fmt.Errorf("failed to encrypt communicate key with RSA: %w", err)
 	}
@@ -348,6 +347,8 @@ func (c *Client) loginRSALocked(claim *MonitorClaimResp) error {
 		pwdCandidates = append(pwdCandidates,
 			rsaCand{label: "Sofia 8-char hash", val: HashPassword(cleanPwd)},
 			rsaCand{label: "Plaintext", val: cleanPwd},
+			rsaCand{label: "Standard 32-char Hex MD5 (lowercase)", val: HashMD5Hex(cleanPwd)},
+			rsaCand{label: "Standard 32-char Hex MD5 (uppercase)", val: strings.ToUpper(HashMD5Hex(cleanPwd))},
 		)
 	} else {
 		pwdCandidates = append(pwdCandidates,
@@ -431,7 +432,7 @@ func (c *Client) loginRSALocked(claim *MonitorClaimResp) error {
 
 		logger.Debug("Xiongmai", "ℹ️ RSA Candidate #%d [%s] rejected by camera (Ret: %d: %s)", i+1, cand.label, resp.Ret, formatLoginError(resp.Ret))
 		lastErr = fmt.Errorf("camera RSA login rejected: %s", formatLoginError(resp.Ret))
-		if resp.Ret != 106 {
+		if resp.Ret != 106 && resp.Ret != 124 && resp.Ret != 129 {
 			return lastErr
 		}
 	}
@@ -766,8 +767,15 @@ func (c *Client) sendRawPacketWithHeaderLocked(msgID uint16, channel byte, total
 	}
 
 	c.sequence++
-	// Sofia payloads typically end with a null terminator or newline
-	dataWithTerminator := append(payload, 0x0A, 0x00)
+	// Sofia payloads typically end with a null terminator or newline.
+	// NetIP protocol (Channel == 0x01) uses a single 0x00 terminator,
+	// while legacy DVRIP (Channel == 0x00) uses 0x0A, 0x00.
+	var dataWithTerminator []byte
+	if channel == 0x01 {
+		dataWithTerminator = append(payload, 0x00)
+	} else {
+		dataWithTerminator = append(payload, 0x0A, 0x00)
+	}
 
 	hdr := Header{
 		Magic:      HeaderMagic,

@@ -114,8 +114,8 @@ func DecodeHeader(data []byte) (*Header, error) {
 type LoginReq struct {
 	EncryptType    string `json:"EncryptType"`
 	LoginType      string `json:"LoginType,omitempty"`
-	PassWord       string `json:"PassWord"`
 	UserName       string `json:"UserName"`
+	PassWord       string `json:"PassWord"`
 	CommunicateKey string `json:"CommunicateKey,omitempty"`
 }
 

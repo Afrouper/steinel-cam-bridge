@@ -768,6 +768,185 @@ func TestAdaptiveRSALogin(t *testing.T) {
 	}
 }
 
+func TestGenerateCommunicateKey(t *testing.T) {
+	for i := 0; i < 20; i++ {
+		key, err := generateCommunicateKey()
+		if err != nil {
+			t.Fatalf("failed to generate communicate key: %v", err)
+		}
+		if len(key) != 16 {
+			t.Fatalf("expected length 16, got %d (key: %q)", len(key), key)
+		}
+		for _, ch := range key {
+			isAlphaNum := (ch >= '0' && ch <= '9') || (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z')
+			if !isAlphaNum {
+				t.Fatalf("invalid non-alphanumeric character %c in key %q", ch, key)
+			}
+		}
+	}
+}
+
+func TestAdaptiveRSALoginCandidatesFallback(t *testing.T) {
+	// Generates an RSA key to act as the camera
+	privKey, err := rsa.GenerateKey(rand.Reader, 1024)
+	if err != nil {
+		t.Fatalf("failed to generate test RSA key: %v", err)
+	}
+
+	modulusHex := strings.ToUpper(fmt.Sprintf("%X", privKey.N))
+	pubKeyStr := fmt.Sprintf("%s,010001", modulusHex)
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start listener: %v", err)
+	}
+	defer func() { _ = listener.Close() }()
+
+	port := listener.Addr().(*net.TCPAddr).Port
+
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+
+		for {
+			hdrBuf := make([]byte, HeaderLength)
+			if _, err := io.ReadFull(conn, hdrBuf); err != nil {
+				return
+			}
+			hdr, err := DecodeHeader(hdrBuf)
+			if err != nil {
+				return
+			}
+			payload := make([]byte, hdr.DataLength)
+			if _, err := io.ReadFull(conn, payload); err != nil {
+				return
+			}
+
+			switch hdr.MsgID {
+			case MsgMonitorClaimReq: // 1413
+				claimResp := MonitorClaimResp{
+					Ret:         100,
+					Bits:        1024,
+					EncryptAlgo: "RSA_V1.5",
+					PublicKey:   pubKeyStr,
+					LoginEncryptionType: LoginEncryptionType{
+						RSA:  true,
+						MD5:  false,
+						NONE: false,
+					},
+					NotEncryptMsgID: []int{1000, 1001, 1008, 1009},
+				}
+				claimBytes, _ := json.Marshal(claimResp)
+				encClaim, _ := encryptAES128CBC([]byte(DefaultSofiaAESKey), claimBytes)
+				b64Claim := base64.StdEncoding.EncodeToString(encClaim)
+
+				respPayloadWithTerm := append([]byte(b64Claim), 0x0A, 0x00)
+				respHdr := &Header{
+					Magic:      HeaderMagic,
+					Channel:    1,
+					SessionID:  hdr.SessionID,
+					Sequence:   hdr.Sequence,
+					MsgID:      MsgMonitorClaimResp, // 1414
+					DataLength: uint32(len(respPayloadWithTerm)),
+				}
+				_, _ = conn.Write(append(respHdr.Encode(), respPayloadWithTerm...))
+
+			case MsgLoginReq: // 1000
+				cleanB64 := strings.TrimRight(string(payload), "\x00\r\n ")
+				cipherBytes, decErr := base64.StdEncoding.DecodeString(cleanB64)
+				if decErr != nil {
+					return
+				}
+				plainJSON, decErr := decryptAES128CBC([]byte(DefaultSofiaAESKey), cipherBytes)
+				if decErr != nil {
+					return
+				}
+
+				var req LoginReq
+				if err := json.Unmarshal(plainJSON, &req); err != nil {
+					return
+				}
+
+				// Decrypt CommunicateKey and verify it is a 16-char alphanumeric string
+				commCipher, _ := hex.DecodeString(req.CommunicateKey)
+				//nolint:staticcheck // Mock server decrypting RSA_V1.5 in test
+				commPlain, _ := rsa.DecryptPKCS1v15(rand.Reader, privKey, commCipher)
+				if len(commPlain) != 16 {
+					t.Errorf("expected 16-byte communicate key, got %d", len(commPlain))
+				}
+
+				// Decrypt password
+				pwdCipher, _ := hex.DecodeString(req.PassWord)
+				//nolint:staticcheck // Mock server decrypting RSA_V1.5 in test
+				pwdPlain, _ := rsa.DecryptPKCS1v15(rand.Reader, privKey, pwdCipher)
+
+				// Candidate 1: Sofia hash -> reject with Ret: 124 (LOGIN_ENC_PWD_NOT_SUP)
+				if string(pwdPlain) == HashPassword("testPlainPassword") {
+					resp := LoginResp{Name: "OPUserLogin", Ret: 124}
+					respData, _ := json.Marshal(resp)
+					respTerm := append(respData, 0x0A, 0x00)
+					rHdr := Header{Magic: HeaderMagic, Channel: 1, Sequence: hdr.Sequence, MsgID: MsgLoginResp, DataLength: uint32(len(respTerm))}
+					_, _ = conn.Write(append(rHdr.Encode(), respTerm...))
+					continue
+				}
+
+				// Candidate 2: Plaintext password -> accept with Ret: 100
+				if string(pwdPlain) == "testPlainPassword" {
+					resp := LoginResp{
+						Name:          "OPUserLogin",
+						Ret:           100,
+						SessionID:     "0x000000BB",
+						AliveInterval: 20,
+						DeviceType:    "IPC",
+					}
+					respData, _ := json.Marshal(resp)
+					respTerm := append(respData, 0x0A, 0x00)
+					rHdr := Header{
+						Magic:      HeaderMagic,
+						Channel:    1,
+						SessionID:  0xBB,
+						Sequence:   hdr.Sequence,
+						MsgID:      MsgLoginResp,
+						DataLength: uint32(len(respTerm)),
+					}
+					_, _ = conn.Write(append(rHdr.Encode(), respTerm...))
+					continue
+				}
+
+				// Unexpected
+				resp := LoginResp{Name: "OPUserLogin", Ret: 106}
+				respData, _ := json.Marshal(resp)
+				respTerm := append(respData, 0x0A, 0x00)
+				rHdr := Header{Magic: HeaderMagic, Channel: 1, Sequence: hdr.Sequence, MsgID: MsgLoginResp, DataLength: uint32(len(respTerm))}
+				_, _ = conn.Write(append(rHdr.Encode(), respTerm...))
+			}
+		}
+	}()
+
+	client := NewClient("127.0.0.1", port, "admin", "testPlainPassword")
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	if err := client.Connect(ctx); err != nil {
+		t.Fatalf("expected successful RSA login with candidate fallback, got error: %v", err)
+	}
+	defer func() { _ = client.Close() }()
+
+	if !client.IsLoggedIn() {
+		t.Fatal("expected client to be logged in")
+	}
+	if client.sessionID != 0xBB {
+		t.Fatalf("expected session ID 0xBB, got 0x%08X", client.sessionID)
+	}
+	if client.GetEffectivePassword() != "testPlainPassword" {
+		t.Fatalf("expected effective password to be plaintext 'testPlainPassword', got %q",
+			client.GetEffectivePassword())
+	}
+}
+
 func TestFormatLoginError(t *testing.T) {
 	tests := []struct {
 		code     int
