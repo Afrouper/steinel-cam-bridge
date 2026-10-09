@@ -2,6 +2,20 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.3.11-beta.3
+
+### 🛠️ NetIP-Paketframing, CommunicateKey & RSA-Kandidaten-Fallback für L 620 CAM (Issue #45)
+
+- **NetIP-Protokoll- & Paket-Terminierung**:
+  - **Präzise 1-Byte Null-Terminierung (`0x00`)**: Einkanalige NetIP-Pakete (Channel 1, MsgID `1000` / `1413`) werden nun spezifikationskonform mit einem einzelnen Null-Byte abgeschlossen (identisch zum Mitschnitt der Steinel CAM App), wodurch Dekodierungs- und Padding-Fehler der Kamera behoben werden.
+  - **Kanal-Header-Parameter**: Setzt `TotalPkt: 0x63` (99) für NetIP-Signalisierungspakete.
+- **Spezifikationskonformer `CommunicateKey`**:
+  - Generierung eines 16-stelligen alphanumerischen Session-Keys (`[0-9A-Za-z]`) gemäß JFTech `CProtocolNetIP::NewLoginPTL` Spezifikation der offiziellen App (beseitigt Code 124 `LOGIN_ENC_PWD_NOT_SUP`).
+- **JSON-Feldreihenfolge & RSA-Kandidaten-Fallback**:
+  - Angleichung der `LoginReq`-Struktur (`UserName` vor `PassWord`).
+  - **Erweiterte RSA-Passwortkandidaten**: Automatische Erprobung von Sofia 8-Zeichen Hash, Klartext sowie 32-Zeichen Hex-MD5 (Klein- und Großschreibung).
+  - **Fehlertoleranter Fallback**: Kein vorzeitiger Abbruch bei Code 124 oder 129 – alle Kandidaten werden vollständig durchprobiert.
+
 ## 1.3.11-beta.2
 
 ### 🔐 Adaptive RSA/AES-Verschlüsselung & Straffung des Logins für L 620 CAM (Issue #45)
