@@ -2,6 +2,18 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.3.11-beta.4
+
+### 🔐 Transparente Session-AES-Verschlüsselung für Post-Login Steuerbefehle (L 620 CAM / Issue #45)
+
+- **Transparente AES-128-CBC Payload-Verschlüsselung (JFTech / NetIP Spezifikation)**:
+  - **Automatische Session-Aushandlung**: Signalisieren moderne Kameras (Firmware `V4.03.R12`) beim Login-Handshake via RSA-Claim die Unterstützung von `DataEncryptionType: {"AES": true}`, aktiviert die Bridge transparent die symmetrische Verschlüsselung für den weiteren Sitzungsverlauf.
+  - **Spezifikationskonforme Kanal-1-Steuerung**: Post-Login Steuer- und Telemetriebefehle (Kanal 1, MsgID `1040` / `1042` Config-Get/Set, `1020` System-Info, `1006` Keepalive, `1440` SD-Karten-Abfragen) werden mit dem während des RSA-Handshakes generierten `CommunicateKey` verschlüsselt (AES-128-CBC, Zero-IV, PKCS#7 Padding, Base64-Kodierung mit Single-Null-Byte Terminierung).
+  - **NotEncryptMsgID-Whitelist**: Exakte Einhaltung der NetIP-Whitelist (`NotEncryptMsgID`) – Authentifizierungs- (MsgID `1000`), Capability- (MsgID `1413`), Talk-Audio- (MsgID `1432`) und Medienströme verbleiben spezifikationsgemäß unverschlüsselt.
+- **Nahtlose Antwort-Entschlüsselung**:
+  - Eingehende Base64-kodierte AES-Payloads auf Kanal 1 werden automatisch erkannt, entschlüsselt und unverändert an die Subsysteme (MCU-Lichtsteuerung, Sensortelemetrie, Watchdog) weitergeleitet.
+  - Beseitigt Ablehnungen von Konfigurations- und Statusabfragen (`CONFIG_GET`, `SYSTEM_INFO`) nach erfolgreichem Login auf modernen L 620 CAM Modellen.
+
 ## 1.3.11-beta.3
 
 ### 🛠️ NetIP-Paketframing, CommunicateKey & RSA-Kandidaten-Fallback für L 620 CAM (Issue #45)
