@@ -27,6 +27,7 @@ const (
 	MsgLoginReq          uint16 = 1000
 	MsgLoginResp         uint16 = 1001
 	MsgLogoutReq         uint16 = 1002
+	MsgLogoutResp        uint16 = 1003
 	MsgKeepAliveReq      uint16 = 1006
 	MsgKeepAliveResp     uint16 = 1007
 	MsgSysManagerReq     uint16 = 1020

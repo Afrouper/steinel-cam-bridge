@@ -26,6 +26,8 @@ type Client struct {
 	password          string
 	effectivePassword string
 	communicateKey    []byte
+	dataEncryptionAES bool
+	notEncryptMsgIDs  map[uint16]bool
 	conn              net.Conn
 	sessionID         uint32
 	sequence          uint32
@@ -33,6 +35,44 @@ type Client struct {
 	isLoggedIn        bool
 	closeChan         chan struct{}
 	closed            atomic.Bool
+}
+
+// defaultNotEncryptMsgIDs lists messages exempted from payload encryption
+// according to Xiongmai / JFTech NetIP specification (CProtocolNetIP).
+var defaultNotEncryptMsgIDs = map[uint16]bool{
+	MsgLoginReq:         true, // 1000
+	MsgLoginResp:        true, // 1001
+	MsgLogoutReq:        true, // 1008
+	MsgLogoutResp:       true, // 1009
+	MsgMonitorClaimReq:  true, // 1413
+	MsgMonitorClaimResp: true, // 1414
+	MsgTalkAudioData:    true, // 1432
+	MsgTalkClaimReq:     true, // 1434
+	MsgTalkClaimResp:    true, // 1435
+	MsgSearchDeviceReq:  true, // 1530
+	MsgSearchDeviceResp: true, // 1531
+}
+
+func (c *Client) initNotEncryptMsgIDs(ids []int) {
+	c.notEncryptMsgIDs = make(map[uint16]bool)
+	for k, v := range defaultNotEncryptMsgIDs {
+		c.notEncryptMsgIDs[k] = v
+	}
+	for _, id := range ids {
+		if id > 0 && id <= 65535 {
+			c.notEncryptMsgIDs[uint16(id)] = true
+		}
+	}
+}
+
+func (c *Client) shouldEncrypt(msgID uint16) bool {
+	if !c.dataEncryptionAES || len(c.communicateKey) != 16 {
+		return false
+	}
+	if c.notEncryptMsgIDs == nil {
+		return !defaultNotEncryptMsgIDs[msgID]
+	}
+	return !c.notEncryptMsgIDs[msgID]
 }
 
 // NewClient creates a new Xiongmai Sofia protocol client.
@@ -425,6 +465,12 @@ func (c *Client) loginRSALocked(claim *MonitorClaimResp) error {
 			c.sessionID = parsedSessionID
 			c.effectivePassword = cand.val
 			c.isLoggedIn = true
+			if claim != nil && (claim.DataEncryptionType["AES"] || claim.DataEncryptionType["AESV2"]) {
+				c.dataEncryptionAES = true
+				c.initNotEncryptMsgIDs(claim.NotEncryptMsgID)
+				logger.Debug("Xiongmai", "🔐 Activated session payload encryption via AES-128-CBC (CommunicateKey, %d unencrypted MsgIDs whitelisted)",
+					len(c.notEncryptMsgIDs))
+			}
 			logger.Info("Xiongmai", "🔑 Authenticated successfully using RSA/AES (%s, User: %s, SessionID: 0x%08X)",
 				cand.label, cleanUser, c.sessionID)
 			return nil
@@ -825,10 +871,46 @@ func (c *Client) sendRawPacketWithHeaderLocked(msgID uint16, channel byte, total
 	return []byte(cleanPayload), respHdr, nil
 }
 
-// sendRawPacketLocked encodes the default Sofia header, sends the packet and reads the response
-// without logging request payloads.
+// sendRawPacketLocked encodes the Sofia header, handles transparent AES-128-CBC encryption
+// when mandated by the camera, sends the packet and reads/decrypts the response without
+// logging sensitive request payloads (CWE-312).
 func (c *Client) sendRawPacketLocked(msgID uint16, payload []byte) ([]byte, *Header, error) {
-	return c.sendRawPacketWithHeaderLocked(msgID, 0, 0, c.sessionID, payload)
+	channel := byte(0)
+	actualPayload := payload
+
+	if c.shouldEncrypt(msgID) {
+		channel = 0x01
+		ciphertext, err := encryptAES128CBC(c.communicateKey, payload)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to AES encrypt MsgID %d payload: %w", msgID, err)
+		}
+		actualPayload = []byte(base64.StdEncoding.EncodeToString(ciphertext))
+		logger.Trace("Xiongmai", "🔒 Encrypted MsgID %d (0x%04X) payload via AES-128-CBC (%d -> %d b64 bytes)",
+			msgID, msgID, len(payload), len(actualPayload))
+	} else if c.dataEncryptionAES {
+		channel = 0x01
+	}
+
+	cleanPayload, respHdr, err := c.sendRawPacketWithHeaderLocked(msgID, channel, 0, c.sessionID, actualPayload)
+	if err != nil {
+		return nil, respHdr, err
+	}
+
+	// Decrypt response if encrypted (Base64 + AES-128-CBC with CommunicateKey)
+	if c.dataEncryptionAES && len(c.communicateKey) == 16 && len(cleanPayload) > 0 && cleanPayload[0] != '{' {
+		cipherBytes, decErr := base64.StdEncoding.DecodeString(string(cleanPayload))
+		if decErr == nil && len(cipherBytes)%16 == 0 && len(cipherBytes) > 0 {
+			plainBytes, decErr2 := decryptAES128CBC(c.communicateKey, cipherBytes)
+			if decErr2 == nil {
+				logger.Trace("Xiongmai", "🔓 Decrypted MsgID %d (0x%04X) response: %s", respHdr.MsgID, respHdr.MsgID, string(plainBytes))
+				cleanPayload = plainBytes
+			} else {
+				logger.Trace("Xiongmai", "⚠️ Failed to AES decrypt MsgID %d response: %v", respHdr.MsgID, decErr2)
+			}
+		}
+	}
+
+	return cleanPayload, respHdr, nil
 }
 
 // sendPacketLocked logs non-sensitive Sofia request/response payloads and delegates to sendRawPacketLocked.

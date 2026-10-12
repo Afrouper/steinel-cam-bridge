@@ -55,9 +55,13 @@ func (t *TalkClient) SendAudioPacket(pkt *rtp.Packet) error {
 
 	// Wrap audio payload in Sofia talk data message (MsgTalkAudioData = 1432 / 1412)
 	// Xiongmai audio frames contain raw G.711 (PCMA/PCMU) samples
+	channel := byte(0)
+	if t.client.dataEncryptionAES {
+		channel = 1
+	}
 	hdr := Header{
 		Magic:      HeaderMagic,
-		Channel:    0,
+		Channel:    channel,
 		SessionID:  t.client.sessionID,
 		Sequence:   t.client.sequence + 1,
 		MsgID:      MsgTalkAudioData,

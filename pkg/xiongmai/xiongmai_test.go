@@ -970,3 +970,318 @@ func TestFormatLoginError(t *testing.T) {
 		}
 	}
 }
+
+func TestShouldEncryptWhitelist(t *testing.T) {
+	c := NewClient("127.0.0.1", 34567, "admin", "secret")
+	// Initially, encryption is disabled
+	if c.shouldEncrypt(MsgConfigSetReq) {
+		t.Error("expected shouldEncrypt to be false when dataEncryptionAES is inactive")
+	}
+
+	// Activate encryption with 16-byte CommunicateKey
+	c.communicateKey = []byte("0123456789ABCDEF")
+	c.dataEncryptionAES = true
+	c.initNotEncryptMsgIDs([]int{1000, 1001, 1008, 1009, 1413, 1414, 1432})
+
+	// Whitelisted messages must NOT be encrypted
+	if c.shouldEncrypt(MsgLoginReq) {
+		t.Error("MsgLoginReq (1000) should not be encrypted")
+	}
+	if c.shouldEncrypt(MsgLoginResp) {
+		t.Error("MsgLoginResp (1001) should not be encrypted")
+	}
+	if c.shouldEncrypt(MsgLogoutReq) {
+		t.Error("MsgLogoutReq (1008) should not be encrypted")
+	}
+	if c.shouldEncrypt(MsgMonitorClaimReq) {
+		t.Error("MsgMonitorClaimReq (1413) should not be encrypted")
+	}
+	if c.shouldEncrypt(MsgTalkAudioData) {
+		t.Error("MsgTalkAudioData (1432) should not be encrypted")
+	}
+
+	// Non-whitelisted control messages MUST be encrypted
+	if !c.shouldEncrypt(MsgConfigSetReq) {
+		t.Error("MsgConfigSetReq (1040) must be encrypted")
+	}
+	if !c.shouldEncrypt(MsgConfigGetReq) {
+		t.Error("MsgConfigGetReq (1042) must be encrypted")
+	}
+	if !c.shouldEncrypt(MsgSysManagerReq) {
+		t.Error("MsgSysManagerReq (1020) must be encrypted")
+	}
+	if !c.shouldEncrypt(MsgKeepAliveReq) {
+		t.Error("MsgKeepAliveReq (1006) must be encrypted")
+	}
+	if !c.shouldEncrypt(MsgFileSearchReq) {
+		t.Error("MsgFileSearchReq (1440) must be encrypted")
+	}
+}
+
+func TestEncryptedPostLoginControlMessages(t *testing.T) {
+	privKey, err := rsa.GenerateKey(rand.Reader, 1024)
+	if err != nil {
+		t.Fatalf("failed to generate test RSA key: %v", err)
+	}
+
+	modulusHex := strings.ToUpper(fmt.Sprintf("%X", privKey.N))
+	pubKeyStr := fmt.Sprintf("%s,010001", modulusHex)
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start listener: %v", err)
+	}
+	defer func() { _ = listener.Close() }()
+
+	port := listener.Addr().(*net.TCPAddr).Port
+
+	var capturedCommKey []byte
+	receivedEncrypted1040 := make(chan bool, 1)
+	receivedEncrypted1042 := make(chan bool, 1)
+	receivedEncrypted1020 := make(chan bool, 1)
+	receivedEncrypted1006 := make(chan bool, 1)
+
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+
+		for {
+			hdrBuf := make([]byte, HeaderLength)
+			if _, err := io.ReadFull(conn, hdrBuf); err != nil {
+				return
+			}
+			hdr, err := DecodeHeader(hdrBuf)
+			if err != nil {
+				return
+			}
+			payload := make([]byte, hdr.DataLength)
+			if _, err := io.ReadFull(conn, payload); err != nil {
+				return
+			}
+
+			cleanPayload := strings.TrimRight(string(payload), "\x00\r\n ")
+
+			switch hdr.MsgID {
+			case MsgMonitorClaimReq: // 1413
+				claimResp := MonitorClaimResp{
+					Ret:         100,
+					Bits:        1024,
+					EncryptAlgo: "RSA_V1.5",
+					PublicKey:   pubKeyStr,
+					LoginEncryptionType: LoginEncryptionType{
+						RSA: true,
+					},
+					DataEncryptionType: map[string]bool{
+						"AES":   true,
+						"AESV2": true,
+					},
+					NotEncryptMsgID: []int{1000, 1001, 1008, 1009, 1413, 1414, 1432, 1434, 1435},
+				}
+				claimBytes, _ := json.Marshal(claimResp)
+				encClaim, _ := encryptAES128CBC([]byte(DefaultSofiaAESKey), claimBytes)
+				b64Claim := base64.StdEncoding.EncodeToString(encClaim)
+
+				respPayloadWithTerm := append([]byte(b64Claim), 0x00)
+				respHdr := &Header{
+					Magic:      HeaderMagic,
+					Channel:    1,
+					SessionID:  hdr.SessionID,
+					Sequence:   hdr.Sequence,
+					MsgID:      MsgMonitorClaimResp,
+					DataLength: uint32(len(respPayloadWithTerm)),
+				}
+				_, _ = conn.Write(append(respHdr.Encode(), respPayloadWithTerm...))
+
+			case MsgLoginReq: // 1000
+				cipherBytes, _ := base64.StdEncoding.DecodeString(cleanPayload)
+				plainJSON, _ := decryptAES128CBC([]byte(DefaultSofiaAESKey), cipherBytes)
+
+				var req LoginReq
+				_ = json.Unmarshal(plainJSON, &req)
+
+				commCipher, _ := hex.DecodeString(req.CommunicateKey)
+				//nolint:staticcheck // Mock server decrypting RSA_V1.5 in test
+				capturedCommKey, _ = rsa.DecryptPKCS1v15(rand.Reader, privKey, commCipher)
+
+				resp := LoginResp{
+					Name:          "OPUserLogin",
+					Ret:           100,
+					SessionID:     "0x000000CC",
+					AliveInterval: 20,
+					DeviceType:    "IPC",
+				}
+				respData, _ := json.Marshal(resp)
+				respTerm := append(respData, 0x00)
+				rHdr := Header{
+					Magic:      HeaderMagic,
+					Channel:    1,
+					SessionID:  0xCC,
+					Sequence:   hdr.Sequence,
+					MsgID:      MsgLoginResp,
+					DataLength: uint32(len(respTerm)),
+				}
+				_, _ = conn.Write(append(rHdr.Encode(), respTerm...))
+
+			case MsgConfigSetReq: // 1040 (SetLightState)
+				if len(cleanPayload) > 0 && cleanPayload[0] != '{' {
+					decB64, _ := base64.StdEncoding.DecodeString(cleanPayload)
+					plain, _ := decryptAES128CBC(capturedCommKey, decB64)
+					if strings.Contains(string(plain), "FbExtraStateCtrl") {
+						receivedEncrypted1040 <- true
+					}
+				}
+
+				respJSON := []byte(`{"Name":"FbExtraStateCtrl","Ret":100}`)
+				encResp, _ := encryptAES128CBC(capturedCommKey, respJSON)
+				b64Resp := base64.StdEncoding.EncodeToString(encResp)
+				respTerm := append([]byte(b64Resp), 0x00)
+
+				rHdr := Header{
+					Magic:      HeaderMagic,
+					Channel:    1,
+					SessionID:  0xCC,
+					Sequence:   hdr.Sequence,
+					MsgID:      MsgConfigSetResp, // 1041
+					DataLength: uint32(len(respTerm)),
+				}
+				_, _ = conn.Write(append(rHdr.Encode(), respTerm...))
+
+			case MsgConfigGetReq: // 1042 (QueryLightState)
+				if len(cleanPayload) > 0 && cleanPayload[0] != '{' {
+					decB64, _ := base64.StdEncoding.DecodeString(cleanPayload)
+					plain, _ := decryptAES128CBC(capturedCommKey, decB64)
+					if strings.Contains(string(plain), "FbExtraStateCtrl") {
+						receivedEncrypted1042 <- true
+					}
+				}
+
+				respJSON := []byte(`{"Name":"FbExtraStateCtrl","Ret":100,"FbExtraStateCtrl":{"ison":1}}`)
+				encResp, _ := encryptAES128CBC(capturedCommKey, respJSON)
+				b64Resp := base64.StdEncoding.EncodeToString(encResp)
+				respTerm := append([]byte(b64Resp), 0x00)
+
+				rHdr := Header{
+					Magic:      HeaderMagic,
+					Channel:    1,
+					SessionID:  0xCC,
+					Sequence:   hdr.Sequence,
+					MsgID:      MsgConfigGetResp, // 1043
+					DataLength: uint32(len(respTerm)),
+				}
+				_, _ = conn.Write(append(rHdr.Encode(), respTerm...))
+
+			case MsgSysManagerReq: // 1020 (QueryMCUConfig BFbU)
+				if len(cleanPayload) > 0 && cleanPayload[0] != '{' {
+					decB64, _ := base64.StdEncoding.DecodeString(cleanPayload)
+					plain, _ := decryptAES128CBC(capturedCommKey, decB64)
+					if strings.Contains(string(plain), "BFbU") {
+						receivedEncrypted1020 <- true
+					}
+				}
+
+				respJSON := []byte(`{"Name":"SerialPortsInfo","Ret":100,"SerialPortsInfo":{"SerialPortsType":0,"SerialPortsData":"BubzbzfzazOU"}}`)
+				encResp, _ := encryptAES128CBC(capturedCommKey, respJSON)
+				b64Resp := base64.StdEncoding.EncodeToString(encResp)
+				respTerm := append([]byte(b64Resp), 0x00)
+
+				rHdr := Header{
+					Magic:      HeaderMagic,
+					Channel:    1,
+					SessionID:  0xCC,
+					Sequence:   hdr.Sequence,
+					MsgID:      MsgSysManagerResp, // 1021
+					DataLength: uint32(len(respTerm)),
+				}
+				_, _ = conn.Write(append(rHdr.Encode(), respTerm...))
+
+			case MsgKeepAliveReq: // 1006 (SendKeepAlive)
+				if len(cleanPayload) > 0 && cleanPayload[0] != '{' {
+					decB64, _ := base64.StdEncoding.DecodeString(cleanPayload)
+					plain, _ := decryptAES128CBC(capturedCommKey, decB64)
+					if strings.Contains(string(plain), "KeepAlive") {
+						receivedEncrypted1006 <- true
+					}
+				}
+
+				respJSON := []byte(`{"Name":"KeepAlive","Ret":100}`)
+				encResp, _ := encryptAES128CBC(capturedCommKey, respJSON)
+				b64Resp := base64.StdEncoding.EncodeToString(encResp)
+				respTerm := append([]byte(b64Resp), 0x00)
+
+				rHdr := Header{
+					Magic:      HeaderMagic,
+					Channel:    1,
+					SessionID:  0xCC,
+					Sequence:   hdr.Sequence,
+					MsgID:      MsgKeepAliveResp, // 1007
+					DataLength: uint32(len(respTerm)),
+				}
+				_, _ = conn.Write(append(rHdr.Encode(), respTerm...))
+			}
+		}
+	}()
+
+	client := NewClient("127.0.0.1", port, "admin", "testCameraPassword")
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	if err := client.Connect(ctx); err != nil {
+		t.Fatalf("failed to connect: %v", err)
+	}
+	defer func() { _ = client.Close() }()
+
+	if !client.IsLoggedIn() {
+		t.Fatal("expected client to be logged in")
+	}
+
+	// 1. Test SetLightState (MsgID 1040)
+	if err := client.SetLightState(true); err != nil {
+		t.Fatalf("SetLightState failed: %v", err)
+	}
+	select {
+	case <-receivedEncrypted1040:
+	case <-time.After(1 * time.Second):
+		t.Error("timed out waiting for encrypted MsgID 1040")
+	}
+
+	// 2. Test QueryLightState (MsgID 1042)
+	lightOn, err := client.QueryLightState()
+	if err != nil {
+		t.Fatalf("QueryLightState failed: %v", err)
+	}
+	if !lightOn {
+		t.Error("expected lightOn == true")
+	}
+	select {
+	case <-receivedEncrypted1042:
+	case <-time.After(1 * time.Second):
+		t.Error("timed out waiting for encrypted MsgID 1042")
+	}
+
+	// 3. Test QueryMCUConfig (MsgID 1020)
+	mcuCfg, err := client.QueryMCUConfig()
+	if err != nil {
+		t.Fatalf("QueryMCUConfig failed: %v", err)
+	}
+	if mcuCfg == nil || mcuCfg.Distance != 10 {
+		t.Errorf("expected mcu distance 10, got %+v", mcuCfg)
+	}
+	select {
+	case <-receivedEncrypted1020:
+	case <-time.After(1 * time.Second):
+		t.Error("timed out waiting for encrypted MsgID 1020")
+	}
+
+	// 4. Test SendKeepAlive (MsgID 1006)
+	if err := client.SendKeepAlive(); err != nil {
+		t.Fatalf("SendKeepAlive failed: %v", err)
+	}
+	select {
+	case <-receivedEncrypted1006:
+	case <-time.After(1 * time.Second):
+		t.Error("timed out waiting for encrypted MsgID 1006")
+	}
+}
