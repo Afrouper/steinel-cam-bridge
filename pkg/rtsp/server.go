@@ -45,6 +45,10 @@ type Server struct {
 	onPlayHandler           OnPlayHandler
 	backchannelPacketCount  atomic.Uint64
 	activeClients           atomic.Int64
+	playingSessions         sync.Map // *gortsplib.ServerSession -> struct{}
+	backchannelMu           sync.Mutex
+	activeTalkSession       *gortsplib.ServerSession
+	lastTalkTime            time.Time
 	lastIdleLogTime         time.Time
 	started                 bool
 	mu                      sync.RWMutex
@@ -187,6 +191,15 @@ func (s *Server) SetOnPlayHandler(handler OnPlayHandler) {
 	s.onPlayHandler = handler
 }
 
+// ActiveClients returns the number of clients currently playing the RTSP stream.
+func (s *Server) ActiveClients() int64 {
+	cnt := s.activeClients.Load()
+	if cnt < 0 {
+		return 0
+	}
+	return cnt
+}
+
 func (s *Server) Start() error {
 	if s.authUser != "" {
 		logger.Info("RTSP", "Server listening at rtsp://0.0.0.0:%d/%s (Auth: user '%s', Profile T Audio Backchannel enabled)", s.port, s.pathName, s.authUser)
@@ -243,8 +256,23 @@ func (s *Server) Close() {
 	}
 }
 
-func (s *Server) handleBackchannelPacket(medi *description.Media, pkt *rtp.Packet, source string) {
+func (s *Server) handleBackchannelPacket(medi *description.Media, pkt *rtp.Packet, source string, sess *gortsplib.ServerSession) {
 	if medi == nil || medi == s.backchannelMedia || medi.IsBackChannel {
+		// Single-talker exclusivity: Only allow one session to stream audio backchannel at a time.
+		now := time.Now()
+		s.backchannelMu.Lock()
+		if s.activeTalkSession == nil || (s.activeTalkSession != sess && now.Sub(s.lastTalkTime) > 2*time.Second) {
+			s.activeTalkSession = sess
+			s.lastTalkTime = now
+			logger.Info("RTSP", "🎙️ Audio backchannel acquired by session (%s)", source)
+		} else if s.activeTalkSession != sess {
+			s.backchannelMu.Unlock()
+			logger.Trace("RTSP", "🎙️ Audio backchannel busy: dropping packet from secondary session (%s)", source)
+			return
+		}
+		s.lastTalkTime = now
+		s.backchannelMu.Unlock()
+
 		cnt := s.backchannelPacketCount.Add(1)
 		if cnt == 1 {
 			logger.Info("RTSP", "🎙️ Audio backchannel stream started (%s, PT=%d, SSRC=%d)", source, pkt.PayloadType, pkt.SSRC)
@@ -282,7 +310,7 @@ func (s *Server) readUDPBackchannelLoop(conn *net.UDPConn) {
 			continue
 		}
 
-		s.handleBackchannelPacket(s.backchannelMedia, pkt, "UDP")
+		s.handleBackchannelPacket(s.backchannelMedia, pkt, "UDP", nil)
 	}
 }
 
@@ -359,12 +387,19 @@ func (s *Server) validateAuth(req *base.Request, conn *gortsplib.ServerConn, ses
 		return true, nil
 	}
 
+	// Bidirectional auth inheritance between session and connection:
 	// If session or connection was already authenticated and request has no new Authorization header, allow
 	if req.Header["Authorization"] == nil {
 		if sess != nil && sess.UserData() == true {
+			if conn != nil {
+				conn.SetUserData(true)
+			}
 			return true, nil
 		}
 		if conn != nil && conn.UserData() == true {
+			if sess != nil {
+				sess.SetUserData(true)
+			}
 			return true, nil
 		}
 	}
@@ -449,10 +484,14 @@ func (s *Server) OnPlay(ctx *gortsplib.ServerHandlerOnPlayCtx) (*base.Response, 
 		return resp, nil
 	}
 
-	count := s.activeClients.Add(1)
-	logger.Debug("RTSP", "▶️ Client connected and playing stream (%s, active clients: %d)", ctx.Path, count)
-	if count == 1 {
-		logger.Info("RTSP", "▶️ Stream active (client connected: %s)", ctx.Path)
+	if ctx.Session != nil {
+		if _, loaded := s.playingSessions.LoadOrStore(ctx.Session, struct{}{}); !loaded {
+			count := s.activeClients.Add(1)
+			logger.Debug("RTSP", "▶️ Client connected and playing stream (%s, active clients: %d)", ctx.Path, count)
+			if count == 1 {
+				logger.Info("RTSP", "▶️ Stream active (client connected: %s)", ctx.Path)
+			}
+		}
 	}
 
 	s.mu.RLock()
@@ -477,7 +516,7 @@ func (s *Server) OnRecord(ctx *gortsplib.ServerHandlerOnRecordCtx) (*base.Respon
 			cmedia := medi
 			for _, forma := range medi.Formats {
 				ctx.Session.OnPacketRTP(medi, forma, func(pkt *rtp.Packet) {
-					s.handleBackchannelPacket(cmedia, pkt, "RECORD")
+					s.handleBackchannelPacket(cmedia, pkt, "RECORD", ctx.Session)
 				})
 			}
 		}
@@ -487,21 +526,32 @@ func (s *Server) OnRecord(ctx *gortsplib.ServerHandlerOnRecordCtx) (*base.Respon
 	}, nil
 }
 
-func (s *Server) OnSessionClose(_ *gortsplib.ServerHandlerOnSessionCloseCtx) {
-	count := s.activeClients.Add(-1)
-	if count < 0 {
-		s.activeClients.Store(0)
-		count = 0
-	}
-
-	logger.Debug("RTSP", "⏹️ Client disconnected (active clients: %d)", count)
-	if count == 0 {
-		s.mu.Lock()
-		now := time.Now()
-		if now.Sub(s.lastIdleLogTime) > 30*time.Second {
-			s.lastIdleLogTime = now
-			logger.Info("RTSP", "⏹️ Stream idle (all clients disconnected)")
+func (s *Server) OnSessionClose(ctx *gortsplib.ServerHandlerOnSessionCloseCtx) {
+	if ctx.Session != nil {
+		s.backchannelMu.Lock()
+		if s.activeTalkSession != nil && s.activeTalkSession == ctx.Session {
+			s.activeTalkSession = nil
+			logger.Info("RTSP", "🎙️ Active audio backchannel session closed, releasing talk lock")
 		}
-		s.mu.Unlock()
+		s.backchannelMu.Unlock()
+
+		if _, loaded := s.playingSessions.LoadAndDelete(ctx.Session); loaded {
+			count := s.activeClients.Add(-1)
+			if count < 0 {
+				s.activeClients.Store(0)
+				count = 0
+			}
+
+			logger.Debug("RTSP", "⏹️ Client disconnected (active clients: %d)", count)
+			if count == 0 {
+				s.mu.Lock()
+				now := time.Now()
+				if now.Sub(s.lastIdleLogTime) > 30*time.Second {
+					s.lastIdleLogTime = now
+					logger.Info("RTSP", "⏹️ Stream idle (all clients disconnected)")
+				}
+				s.mu.Unlock()
+			}
+		}
 	}
 }

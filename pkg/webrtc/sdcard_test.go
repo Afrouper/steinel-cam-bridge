@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -409,4 +410,63 @@ func TestSDCardResetCounterOnSuccess(t *testing.T) {
 	mu.Lock()
 	assert.Equal(t, 0, resetCount)
 	mu.Unlock()
+}
+
+func TestSDCardSingleFlightConcurrentQueries(t *testing.T) {
+	queryCount := atomic.Int32{}
+	sdm := NewSDCardManager(func(_ string, _ map[string]interface{}) error {
+		queryCount.Add(1)
+		return nil
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	var wg sync.WaitGroup
+	results := make([]*EventListResponse, 2)
+	errs := make([]error, 2)
+
+	// Goroutine that automatically replies to get_event_list when triggered
+	stopResponder := make(chan struct{})
+	defer close(stopResponder)
+	go func() {
+		for {
+			select {
+			case <-stopResponder:
+				return
+			default:
+				time.Sleep(10 * time.Millisecond)
+				sdm.HandleJSONMessage(map[string]interface{}{
+					"resp": "get_event_list",
+					"info": map[string]interface{}{
+						"count": float64(1),
+						"total": float64(1),
+						"list": []interface{}{
+							map[string]interface{}{
+								"time_tag":    float64(1700000000),
+								"record_time": float64(30),
+								"type":        "motion",
+							},
+						},
+					},
+				})
+			}
+		}
+	}()
+
+	for i := 0; i < 2; i++ {
+		idx := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results[idx], errs[idx] = sdm.GetEventList(ctx, 0, 0, idx, 10)
+		}()
+	}
+
+	wg.Wait()
+	require.NoError(t, errs[0])
+	require.NoError(t, errs[1])
+	require.NotNil(t, results[0])
+	require.NotNil(t, results[1])
+	assert.Equal(t, int32(2), queryCount.Load())
 }

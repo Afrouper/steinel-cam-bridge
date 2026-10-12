@@ -166,6 +166,9 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 		onNewRec,
 		time.Duration(cfg.SDCardSyncInterval)*time.Second,
 	)
+	recordingSyncer.SetStreamActiveFunc(func() bool {
+		return rtspServer.ActiveClients() > 0
+	})
 
 	eventBus.SubscribeMotion(func(isMotion bool) {
 		if isMotion {

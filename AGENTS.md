@@ -121,7 +121,7 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
     - `media.go`: H.264 Video-Ingest, Audio-Ingest & AAC-Transcoder, 6s Silence-Watchdog & PLI-Burst/Intervallschleife.
     - `backchannel.go`: Zwei-Wege-Audio (Kamera-Lautsprecher) mit 160-Byte G.711u Frame-Chunking und SSRC/Timestamp-Management.
     - `mcu_dispatch.go`: DataChannel Message Handler, JSON-RPC Commands, Hex-MCU-Befehle, 30s Status-Polling und 10s PIR/Motion-Reset Timer.
-  - `sdcard.go`: Verwaltet das Auslesen der internen SD-Karte (`get_event_list`, `get_event_video`) mit Single-Flight Lock (`sync.Mutex`), Client-Abbruchüberwachung und 10s Watchdog.
+  - `sdcard.go`: Verwaltet das Auslesen der internen SD-Karte (`get_event_list`, `get_event_video`) mit striktem Single-Flight Mutex (`eventListQueryMu`) zur Verhinderung von Response-Channel-Kollisionen bei parallelen Abfragen, Entkopplung von SD-Timeouts und Live-Video-Streaming (verhindert Session-Abbrüche bei gesundem Videofluss), Client-Abbruchüberwachung und 15s Watchdog.
 
 - **`pkg/xiongmai/`**:
   - `client.go`: Xiongmai Sofia Binärprotokoll-Client (Port 34567, MD5-Challenge-Response Login mit CWE-312 Credential Protection, JSON-RPC Messages).
@@ -136,7 +136,7 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
   - `extractor.go`: Modulare Abstraktion `FrameExtractor` zur Video-Einzelbild-Extraktion mit `FFmpegExtractor` (extrahiert 5-Sekunden-Keyframe als 640px JPEG mit Fallback-Kette bei kurzen Videos; statisches Multi-Arch FFmpeg im Distroless-Container).
   - `cache.go`: Persistenter On-Disk Speicher (`RecordingCache`) in `/data/recordings`. Speichert `<id>.mp4`, `<id>.jpg` und `<id>.json` mit atomaren Schreibvorgängen (`.tmp`), Thread-sicherer In-Memory-Indexierung und automatischem FIFO-Housekeeping (älteste Aufnahmen werden bereinigt, wenn `cache_recordings` überschritten wird).
   - `cached_provider.go`: `CachedRecordingProvider` nach dem Go-Decorator-Pattern. Beantwortet Abfragen für REST-API und ONVIF Profile G standardmäßig direkt aus dem lokalen Cache (0 ms Latenz, keine Belastung der Kamera-CPU). Erst wenn über den Cache hinausgehende Aufnahmen angefragt werden, wird die Kamera kontaktiert.
-  - `syncer.go`: Hintergrund-Syncer (`RecordingSyncer`), der neue SD-Karten-Aufnahmen periodisch (abschaltbar via `0`) oder bei Bewegungstriggern (mit 35s Pufferzeit gegen I/O-Kollisionen während der 30s-Aufnahme) in den Cache lädt und neue Aufnahme-Events mit vollständiger `thumbnail_url` an MQTT / Home Assistant publiziert.
+  - `syncer.go`: Hintergrund-Syncer (`RecordingSyncer`), der neue SD-Karten-Aufnahmen periodisch (abschaltbar via `0`, adaptiv gedrosselt auf 5 Minuten bei aktivem 24/7 RTSP-Streaming zur Kamera-SoC-Schonung) oder bei Bewegungstriggern (mit 35s Pufferzeit gegen I/O-Kollisionen während der 30s-Aufnahme) in den Cache lädt, redundante Upstream-Queries bei Cache-Nutzung unterbindet und neue Aufnahme-Events mit vollständiger `thumbnail_url` an MQTT / Home Assistant publiziert.
 
 - **`pkg/audio/`**:
   - `g711.go`: ITU-T G.711 µ-law Decoder (8-Bit $\rightarrow$ 16-Bit Linear PCM).
@@ -144,7 +144,7 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
   - `transcoder.go`: Echtzeit-Audiotranscoder mit persistentem VisualOn AAC-Encoder (`github.com/gen2brain/aac-go`), wiederverwendbarem `pcmReader bytes.Reader` via `Reset()` und Puffer-Kompaktierung gegen Speicherfragmentierung.
 
 - **`pkg/rtsp/`**:
-  - `server.go`: RTSP-Server auf Basis von `github.com/bluenviron/gortsplib/v4`. Liefert H.264 Video, AAC/PCMU Audio, ONVIF Profile T Audio Backchannel sowie integrierte Digest (MD5/SHA256) & Basic Authentifizierung.
+  - `server.go`: RTSP-Server auf Basis von `github.com/bluenviron/gortsplib/v4`. Liefert H.264 Video, AAC/PCMU Audio, ONVIF Profile T Audio Backchannel mit Single-Talker-Lock (exklusive Session-Belegung des Mikrofons), akkurates `ActiveClients()`-Tracking (Inkrement ausschließlich bei `PLAY`, dekrementiert nur bei registrierten Spielern) sowie integrierte Digest (MD5/SHA256) & Basic Authentifizierung mit bidirektionaler Session-Connection-Vererbung gegen Reconnect-Abbrüche (`wrong response on SETUP`).
   - `interceptor.go`: Dedizierter UDP-RTP Socket auf Port `8554/udp` sowie TCP-Interleaved Listener (`interceptingConn`) mit vorallokiertem 4-KB Lesepuffer für Zero-Allocation Socket-Reads (**0 Allokationen/Read**).
 
 - **`pkg/onvif/`**:
