@@ -86,6 +86,11 @@ func (d *Driver) Start(ctx context.Context) error {
 
 	logger.Info("Xiongmai Driver", "🚀 Connecting to Steinel L 620 CAM at %s (TCP Port %d)...", d.cameraIP, DefaultPort)
 
+	// Register live telemetry push handler (MsgID 1582)
+	d.client.SetOnTelemetry(func(mcuCfg *MCUConfig) {
+		d.applyMCUConfig(mcuCfg)
+	})
+
 	// Step 1: Connect & Login on Sofia port 34567
 	if err := d.client.Connect(ctx); err != nil {
 		logger.Warn("Xiongmai Driver", "⚠️ Sofia port %d connection error (%v) — continuing in resilient RTSP mode", DefaultPort, err)
@@ -125,6 +130,35 @@ func (d *Driver) Start(ctx context.Context) error {
 	return nil
 }
 
+func (d *Driver) applyMCUConfig(mcuCfg *MCUConfig) {
+	if d.eventBus == nil || mcuCfg == nil {
+		return
+	}
+	st := d.eventBus.GetStatus()
+	if mcuCfg.IsLightOn() {
+		st.LampMode = 1
+	} else {
+		st.LampMode = 0
+	}
+	if mcuCfg.Highlight > 0 {
+		st.Highlight = mcuCfg.Highlight
+	}
+	if mcuCfg.HighlightDelaySec > 0 {
+		st.HighlightTime = mcuCfg.HighlightDelaySec
+	}
+	if mcuCfg.TwilightLux > 0 {
+		st.Lux = mcuCfg.TwilightLux
+	}
+	if mcuCfg.Distance > 0 {
+		st.PIRSensitivity = mcuCfg.Distance * 10
+	}
+	st.Lowlight = mcuCfg.Lowlight
+	if dur, err := strconv.Atoi(strings.TrimSuffix(mcuCfg.LowlightDuration, "h")); err == nil {
+		st.LowlightTime = dur * 60
+	}
+	d.eventBus.UpdateStatus(st)
+}
+
 func (d *Driver) syncInitialState() {
 	if d.eventBus == nil {
 		return
@@ -134,32 +168,14 @@ func (d *Driver) syncInitialState() {
 	st := d.eventBus.GetStatus()
 	st.Resolution = d.resolution
 	st.FirmwareVer = "Xiongmai-Sofia"
-
-	// Query Light Switch
-	if lightOn, err := d.client.QueryLightState(); err == nil {
-		if lightOn {
-			st.LampMode = 1
-		} else {
-			st.LampMode = 0
-		}
-	}
-
-	// Query MCU Config
-	if mcuCfg, err := d.client.QueryMCUConfig(); err == nil && mcuCfg != nil {
-		st.Highlight = mcuCfg.Highlight
-		st.HighlightTime = mcuCfg.HighlightDelaySec
-		st.Lux = mcuCfg.TwilightLux
-		st.PIRSensitivity = mcuCfg.Distance * 10
-		st.Lowlight = mcuCfg.Lowlight
-		if dur, err := strconv.Atoi(strings.TrimSuffix(mcuCfg.LowlightDuration, "h")); err == nil {
-			st.LowlightTime = dur * 60
-		}
-
-		logger.Debug("Xiongmai Driver", "💡 Synced MCU Config: Light=%d%%, Lux=%d, Dist=%dm, Delay=%ds, Lowlight=%d%% (%s)",
-			mcuCfg.Highlight, mcuCfg.TwilightLux, mcuCfg.Distance, mcuCfg.HighlightDelaySec, mcuCfg.Lowlight, mcuCfg.LowlightDuration)
-	}
-
 	d.eventBus.UpdateStatus(st)
+
+	// Query MCU Config via OPTrans (which also queries light on/off state via mode)
+	if mcuCfg, err := d.client.QueryMCUConfig(); err == nil && mcuCfg != nil {
+		d.applyMCUConfig(mcuCfg)
+		logger.Debug("Xiongmai Driver", "💡 Synced MCU Config: LightOn=%v, Bright=%d%%, Lux=%d, Dist=%dm, Delay=%ds, Lowlight=%d%% (%s)",
+			mcuCfg.IsLightOn(), mcuCfg.Highlight, mcuCfg.TwilightLux, mcuCfg.Distance, mcuCfg.HighlightDelaySec, mcuCfg.Lowlight, mcuCfg.LowlightDuration)
+	}
 }
 
 func (d *Driver) keepAliveLoop(ctx context.Context) {

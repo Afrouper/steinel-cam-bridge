@@ -170,3 +170,26 @@ func BuildSetHighlightDelayCommand(seconds int) string {
 	}
 	return fmt.Sprintf("BT%cU", CharConversion(idx))
 }
+
+// BuildSetLightModeCommand builds the MCU command to set the light mode: "BM<char>U"
+// On: Continuous Light (Mode 3, 'd') -> "BMdU"
+// Off: Sensor Automatic (Mode 1, 'b') -> "BMbU"
+func BuildSetLightModeCommand(on bool) string {
+	if on {
+		return "BMdU"
+	}
+	return "BMbU"
+}
+
+// BuildSetTestModeCommand builds the MCU command for sensor walk test mode (Mode 4, 'e'): "BMeU"
+func BuildSetTestModeCommand() string {
+	return "BMeU"
+}
+
+// IsLightOn returns true if the MCU is currently in continuous light mode (Mode 3, 'd').
+func (c *MCUConfig) IsLightOn() bool {
+	if c == nil {
+		return false
+	}
+	return c.Mode == 3
+}

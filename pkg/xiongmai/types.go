@@ -59,6 +59,8 @@ const (
 	MsgTransSendResp     uint16 = 1573
 	MsgTransStartReq     uint16 = 1578
 	MsgTransStartResp    uint16 = 1579
+	MsgTransRecvData     uint16 = 1580
+	MsgTransSerialData   uint16 = 1582
 )
 
 // Header represents the 20-byte Sofia protocol message header.
@@ -238,4 +240,16 @@ type AlarmInfoData struct {
 	State     string `json:"State"` // "Start", "Stop"
 	Channel   int    `json:"Channel"`
 	StartTime string `json:"StartTime"`
+}
+
+// OPTransReq for Transparent Serial Bridge (MsgID 1578)
+type OPTransReq struct {
+	Name      string      `json:"Name"`
+	OPTrans   OPTransInfo `json:"OPTrans"`
+	SessionID string      `json:"SessionID,omitempty"`
+}
+
+type OPTransInfo struct {
+	Action   string `json:"Action"`   // "Start", "Stop"
+	CommName string `json:"CommName"` // "RS232"
 }

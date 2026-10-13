@@ -33,6 +33,9 @@ type Client struct {
 	sequence          uint32
 	mu                sync.Mutex
 	isLoggedIn        bool
+	serialTransActive bool
+	lastMCUConfig     *MCUConfig
+	onTelemetry       func(*MCUConfig)
 	closeChan         chan struct{}
 	closed            atomic.Bool
 }
@@ -51,6 +54,8 @@ var defaultNotEncryptMsgIDs = map[uint16]bool{
 	MsgTalkClaimResp:    true, // 1435
 	MsgSearchDeviceReq:  true, // 1530
 	MsgSearchDeviceResp: true, // 1531
+	MsgTransRecvData:    true, // 1580
+	MsgTransSerialData:  true, // 1582
 }
 
 func (c *Client) initNotEncryptMsgIDs(ids []int) {
@@ -97,6 +102,20 @@ func (c *Client) GetEffectivePassword() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.effectivePassword
+}
+
+// SetOnTelemetry registers a callback invoked when new MCU telemetry is pushed (MsgID 1582).
+func (c *Client) SetOnTelemetry(fn func(*MCUConfig)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.onTelemetry = fn
+}
+
+// GetLastMCUConfig returns the most recently received MCU configuration frame.
+func (c *Client) GetLastMCUConfig() *MCUConfig {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.lastMCUConfig
 }
 
 // Connect dials the camera and performs the Sofia login handshake.
@@ -473,6 +492,9 @@ func (c *Client) loginRSALocked(claim *MonitorClaimResp) error {
 			}
 			logger.Info("Xiongmai", "🔑 Authenticated successfully using RSA/AES (%s, User: %s, SessionID: 0x%08X)",
 				cand.label, cleanUser, c.sessionID)
+			if err := c.startSerialTransLocked(); err != nil {
+				logger.Warn("Xiongmai", "⚠️ Failed to start OPTrans RS232 bridge: %v", err)
+			}
 			return nil
 		}
 
@@ -563,6 +585,9 @@ func (c *Client) loginLocked() error {
 
 			c.isLoggedIn = true
 			logger.Info("Xiongmai", "🔑 Authenticated successfully using %s (User: %s, SessionID: 0x%08X)", cand.label, cand.user, c.sessionID)
+			if err := c.startSerialTransLocked(); err != nil {
+				logger.Warn("Xiongmai", "⚠️ Failed to start OPTrans RS232 bridge: %v", err)
+			}
 			return nil
 		}
 
@@ -636,124 +661,120 @@ func (c *Client) EnableRTSP() error {
 	return nil
 }
 
-// SetLightState switches the main lamp on or off via FbExtraStateCtrl.
-func (c *Client) SetLightState(on bool) error {
-	logger.Trace("Xiongmai", "-> Setting light state: on=%v", on)
+// StartSerialTrans establishes the OPTrans RS232 transparent serial channel (MsgID 1578).
+func (c *Client) StartSerialTrans() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	return c.startSerialTransLocked()
+}
 
-	ison := 0
-	if on {
-		ison = 1
+func (c *Client) startSerialTransLocked() error {
+	if c.serialTransActive {
+		return nil
 	}
-
-	req := LightCtrlReq{
-		Name: "FbExtraStateCtrl",
-		FbExtraStateCtrl: FbExtraStateCtrlVal{
-			IsOn: ison,
+	req := OPTransReq{
+		Name: "OPTrans",
+		OPTrans: OPTransInfo{
+			Action:   "Start",
+			CommName: "RS232",
 		},
+		SessionID: fmt.Sprintf("0x%08x", c.sessionID),
 	}
-
 	payload, err := json.Marshal(req)
 	if err != nil {
 		return err
 	}
+	logger.Debug("Xiongmai", "📡 Starting OPTrans RS232 transparent serial bridge...")
+	respData, respHdr, err := c.sendRawPacketLocked(MsgTransStartReq, payload)
+	if err != nil {
+		return fmt.Errorf("failed to start OPTrans RS232 bridge: %w", err)
+	}
+	if respHdr != nil && respHdr.MsgID == MsgTransStartResp {
+		c.serialTransActive = true
+		logger.Info("Xiongmai", "✅ OPTrans RS232 transparent serial bridge active (Session: 0x%08X)", c.sessionID)
+		return nil
+	}
+	logger.Debug("Xiongmai", "ℹ️ OPTrans response: %s", string(respData))
+	c.serialTransActive = true
+	return nil
+}
 
-	_, err = c.sendPacketLocked(MsgConfigSetReq, payload)
-	if err == nil {
-		logger.Trace("Xiongmai", "<- Light state set successfully to on=%v", on)
+func (c *Client) ensureSerialTransLocked() error {
+	if c.serialTransActive {
+		return nil
+	}
+	return c.startSerialTransLocked()
+}
+
+// SetLightState switches the main lamp on (continuous light) or off (sensor auto) via OPTrans MCU mode.
+func (c *Client) SetLightState(on bool) error {
+	cmd := BuildSetLightModeCommand(on)
+	logger.Info("Xiongmai", "💡 Setting light state via MCU OPTrans: On=%v (cmd: %q)", on, cmd)
+	err := c.SendMCUCommand(cmd)
+	if err == nil && c.lastMCUConfig != nil {
+		if on {
+			c.lastMCUConfig.Mode = 3
+		} else {
+			c.lastMCUConfig.Mode = 1
+		}
 	}
 	return err
 }
 
-// QueryLightState queries the current light state from FbExtraStateCtrl.
+// QueryLightState queries the current light state from the Steinel MCU.
 func (c *Client) QueryLightState() (bool, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	req := map[string]string{
-		"Name": "FbExtraStateCtrl",
-	}
-	payload, _ := json.Marshal(req)
-
-	respData, err := c.sendPacketLocked(MsgConfigGetReq, payload)
+	cfg, err := c.QueryMCUConfig()
 	if err != nil {
-		return false, err
-	}
-
-	var resp LightCtrlReq
-	if err := json.Unmarshal(respData, &resp); err != nil {
-		return false, err
-	}
-
-	logger.Trace("Xiongmai", "<- QueryLightState result: ison=%d", resp.FbExtraStateCtrl.IsOn)
-	return resp.FbExtraStateCtrl.IsOn == 1, nil
-}
-
-// QueryMCUConfig queries the Steinel MCU configuration frame ("BFbU").
-func (c *Client) QueryMCUConfig() (*MCUConfig, error) {
-	logger.Trace("Xiongmai MCU", "-> Querying MCU configuration (BFbU)...")
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	req := SerialPortsReq{
-		Name: "SerialPortsInfo",
-		SerialPortsInfo: SerialPortsData{
-			SerialPortsType: 0,
-			SerialPortsData: BuildQueryMCUCommand(),
-		},
-	}
-
-	payload, err := json.Marshal(req)
-	if err != nil {
-		return nil, err
-	}
-
-	respData, err := c.sendPacketLocked(MsgSysManagerReq, payload)
-	if err != nil {
-		return nil, err
-	}
-
-	var resp SerialPortsReq
-	if err := json.Unmarshal(respData, &resp); err != nil {
-		// Response might be raw string
-		cfg, parseErr := ParseMCUString(string(respData))
-		if parseErr == nil && cfg != nil {
-			logger.Trace("Xiongmai MCU", "<- Parsed MCU config from raw string: Distance=%d, Highlight=%d%%, Delay=%ds, Lux=%d, Lowlight=%d%%",
-				cfg.Distance, cfg.Highlight, cfg.HighlightDelaySec, cfg.TwilightLux, cfg.Lowlight)
+		if c.lastMCUConfig != nil {
+			return c.lastMCUConfig.IsLightOn(), nil
 		}
-		return cfg, parseErr
+		return false, err
 	}
-
-	cfg, parseErr := ParseMCUString(resp.SerialPortsInfo.SerialPortsData)
-	if parseErr == nil && cfg != nil {
-		logger.Trace("Xiongmai MCU", "<- Parsed MCU config: Distance=%d, Highlight=%d%%, Delay=%ds, Lux=%d, Lowlight=%d%%",
-			cfg.Distance, cfg.Highlight, cfg.HighlightDelaySec, cfg.TwilightLux, cfg.Lowlight)
-	}
-	return cfg, parseErr
+	return cfg.IsLightOn(), nil
 }
 
-// SendMCUCommand sends a raw MCU serial port command (e.g. "BXaU").
+// QueryMCUConfig queries the Steinel MCU configuration frame ("BFbU" via OPTrans).
+func (c *Client) QueryMCUConfig() (*MCUConfig, error) {
+	logger.Trace("Xiongmai MCU", "-> Querying MCU configuration (BFbU via OPTrans)...")
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := c.ensureSerialTransLocked(); err != nil {
+		return nil, err
+	}
+
+	_, _, err := c.sendRawPacketLocked(MsgTransSendData, []byte(BuildQueryMCUCommand()))
+	if err != nil {
+		return nil, fmt.Errorf("failed to send MCU query command: %w", err)
+	}
+
+	// Drain immediate telemetry push (1582) that follows 1573
+	c.drainPendingTelemetryLocked()
+
+	if c.lastMCUConfig != nil {
+		return c.lastMCUConfig, nil
+	}
+	return nil, errors.New("no MCU telemetry received after query")
+}
+
+// SendMCUCommand sends a raw MCU serial port command via OPTrans RS232 (e.g. "BMdU", "BXaU").
 func (c *Client) SendMCUCommand(cmd string) error {
 	logger.Trace("Xiongmai MCU", "-> MCU Command: %q", cmd)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	req := SerialPortsReq{
-		Name: "SerialPortsInfo",
-		SerialPortsInfo: SerialPortsData{
-			SerialPortsType: 0,
-			SerialPortsData: cmd,
-		},
-	}
-
-	payload, err := json.Marshal(req)
-	if err != nil {
+	if err := c.ensureSerialTransLocked(); err != nil {
 		return err
 	}
 
-	_, err = c.sendPacketLocked(MsgSysManagerReq, payload)
-	return err
+	_, _, err := c.sendRawPacketLocked(MsgTransSendData, []byte(cmd))
+	if err != nil {
+		return fmt.Errorf("failed to send MCU command %q: %w", cmd, err)
+	}
+
+	// Drain immediate telemetry update (1582) that follows 1573
+	c.drainPendingTelemetryLocked()
+	return nil
 }
 
 // SetLux sets the twilight threshold in lux.
@@ -844,31 +865,86 @@ func (c *Client) sendRawPacketWithHeaderLocked(msgID uint16, channel byte, total
 	}
 
 	// Read response header (20 bytes)
-	respHdrBuf := make([]byte, HeaderLength)
-	if _, err := io.ReadFull(c.conn, respHdrBuf); err != nil {
-		return nil, nil, fmt.Errorf("failed to read response header: %w", err)
-	}
+	for {
+		respHdrBuf := make([]byte, HeaderLength)
+		if _, err := io.ReadFull(c.conn, respHdrBuf); err != nil {
+			return nil, nil, fmt.Errorf("failed to read response header: %w", err)
+		}
 
-	respHdr, err := DecodeHeader(respHdrBuf)
+		respHdr, err := DecodeHeader(respHdrBuf)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		logger.Trace("Xiongmai", "<- Sofia Raw Header: MsgID=%d (0x%04X), Seq=%d, Channel=0x%02X, TotalPkt=0x%02X, SessionID=0x%08X, Len=%d",
+			respHdr.MsgID, respHdr.MsgID, respHdr.Sequence, respHdr.Channel, respHdr.TotalPkt, respHdr.SessionID, respHdr.DataLength)
+
+		if respHdr.DataLength > 65535 {
+			return nil, nil, fmt.Errorf("response payload too large: %d bytes", respHdr.DataLength)
+		}
+
+		respPayload := make([]byte, respHdr.DataLength)
+		if _, err := io.ReadFull(c.conn, respPayload); err != nil {
+			return nil, nil, fmt.Errorf("failed to read response payload: %w", err)
+		}
+
+		// Trim trailing null/newlines
+		cleanPayload := strings.TrimRight(string(respPayload), "\x00\r\n ")
+
+		// Handle unsolicited / push MCU telemetry (MsgID 1582)
+		if respHdr.MsgID == MsgTransSerialData {
+			c.handleTelemetryPushLocked(cleanPayload)
+			if msgID == MsgTransSerialData {
+				return []byte(cleanPayload), respHdr, nil
+			}
+			continue
+		}
+
+		return []byte(cleanPayload), respHdr, nil
+	}
+}
+
+func (c *Client) handleTelemetryPushLocked(raw string) {
+	cfg, err := ParseMCUString(raw)
 	if err != nil {
-		return nil, nil, err
+		logger.Debug("Xiongmai", "⚠️ Could not parse MsgID 1582 telemetry string %q: %v", raw, err)
+		return
 	}
-
-	logger.Trace("Xiongmai", "<- Sofia Raw Header: MsgID=%d (0x%04X), Seq=%d, Channel=0x%02X, TotalPkt=0x%02X, SessionID=0x%08X, Len=%d",
-		respHdr.MsgID, respHdr.MsgID, respHdr.Sequence, respHdr.Channel, respHdr.TotalPkt, respHdr.SessionID, respHdr.DataLength)
-
-	if respHdr.DataLength > 65535 {
-		return nil, nil, fmt.Errorf("response payload too large: %d bytes", respHdr.DataLength)
+	c.lastMCUConfig = cfg
+	logger.Debug("Xiongmai", "💡 Received MCU Telemetry (1582): %q -> LightOn=%v, Dim=%d%%, Lux=%d, Dist=%dm, Delay=%ds, Lowlight=%d%% (%s)",
+		raw, cfg.IsLightOn(), cfg.Highlight, cfg.TwilightLux, cfg.Distance, cfg.HighlightDelaySec, cfg.Lowlight, cfg.LowlightDuration)
+	if c.onTelemetry != nil {
+		cb := c.onTelemetry
+		go cb(cfg)
 	}
+}
 
+func (c *Client) drainPendingTelemetryLocked() {
+	if c.conn == nil {
+		return
+	}
+	_ = c.conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+	respHdrBuf := make([]byte, HeaderLength)
+	n, err := io.ReadFull(c.conn, respHdrBuf)
+	if err != nil || n < HeaderLength {
+		_ = c.conn.SetDeadline(time.Time{})
+		return
+	}
+	respHdr, err := DecodeHeader(respHdrBuf)
+	if err != nil || respHdr.DataLength > 65535 {
+		_ = c.conn.SetDeadline(time.Time{})
+		return
+	}
 	respPayload := make([]byte, respHdr.DataLength)
 	if _, err := io.ReadFull(c.conn, respPayload); err != nil {
-		return nil, nil, fmt.Errorf("failed to read response payload: %w", err)
+		_ = c.conn.SetDeadline(time.Time{})
+		return
 	}
-
-	// Trim trailing null/newlines
+	_ = c.conn.SetDeadline(time.Time{})
 	cleanPayload := strings.TrimRight(string(respPayload), "\x00\r\n ")
-	return []byte(cleanPayload), respHdr, nil
+	if respHdr.MsgID == MsgTransSerialData {
+		c.handleTelemetryPushLocked(cleanPayload)
+	}
 }
 
 // sendRawPacketLocked encodes the Sofia header, handles transparent AES-128-CBC encryption
@@ -949,9 +1025,11 @@ func (c *Client) Close() error {
 			payload, _ := json.Marshal(req)
 			_, _ = c.sendPacketLocked(MsgLogoutReq, payload)
 			c.isLoggedIn = false
+			c.serialTransActive = false
 		}
 		err := c.conn.Close()
 		c.conn = nil
+		c.serialTransActive = false
 		return err
 	}
 	return nil

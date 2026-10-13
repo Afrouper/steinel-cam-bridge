@@ -190,6 +190,10 @@ func TestClientLoginAndAutoRTSP(t *testing.T) {
 				respMsgID = MsgSysManagerResp
 				respPayload = []byte(`{"Name":"SerialPortsInfo","SerialPortsInfo":{"SerialPortsType":0,"SerialPortsData":"BubzbzfzazOU"}}`)
 
+			case MsgTransSendData:
+				respMsgID = MsgTransSendResp
+				respPayload = []byte(`{"Ret":100}`)
+
 			default:
 				respMsgID = hdr.MsgID + 1
 				respPayload = []byte(`{"Ret":100}`)
@@ -206,6 +210,19 @@ func TestClientLoginAndAutoRTSP(t *testing.T) {
 			}
 
 			_, _ = conn.Write(append(respHdr.Encode(), respPayloadWithTerm...))
+
+			if hdr.MsgID == MsgTransSendData {
+				telemetryData := []byte("BubzdzfzazOU\x0A\x00")
+				tHdr := Header{
+					Magic:      HeaderMagic,
+					Channel:    0,
+					SessionID:  0x42,
+					Sequence:   hdr.Sequence + 1,
+					MsgID:      MsgTransSerialData,
+					DataLength: uint32(len(telemetryData)),
+				}
+				_, _ = conn.Write(append(tHdr.Encode(), telemetryData...))
+			}
 		}
 	}()
 
@@ -298,6 +315,11 @@ func TestTalkAudioPacketForwarding(t *testing.T) {
 				_, _ = conn.Write(append(respHdr.Encode(), respWithTerm...))
 			case MsgTalkSendData, MsgTalkAudioData:
 				receivedAudioFrames <- payload
+			default:
+				resp := []byte(`{"Ret":100}`)
+				respWithTerm := append(resp, 0x0A, 0x00)
+				respHdr := Header{Magic: HeaderMagic, SessionID: 1, Sequence: hdr.Sequence, MsgID: hdr.MsgID + 1, DataLength: uint32(len(respWithTerm))}
+				_, _ = conn.Write(append(respHdr.Encode(), respWithTerm...))
 			}
 		}
 	}()
@@ -437,6 +459,20 @@ func TestClientLoginFallback(t *testing.T) {
 					TotalPkt:   1,
 					CurPkt:     0,
 					MsgID:      MsgLoginResp,
+					DataLength: uint32(len(respPayload)),
+				}
+				_, _ = conn.Write(respHdr.Encode())
+				_, _ = conn.Write(respPayload)
+			} else {
+				respPayload := []byte(`{"Ret":100}` + "\n\x00")
+				respHdr := &Header{
+					Magic:      HeaderMagic,
+					Channel:    1,
+					SessionID:  0,
+					Sequence:   hdr.Sequence,
+					TotalPkt:   1,
+					CurPkt:     0,
+					MsgID:      hdr.MsgID + 1,
 					DataLength: uint32(len(respPayload)),
 				}
 				_, _ = conn.Write(respHdr.Encode())
@@ -743,6 +779,18 @@ func TestAdaptiveRSALogin(t *testing.T) {
 					DataLength: uint32(len(respTerm)),
 				}
 				_, _ = conn.Write(append(rHdr.Encode(), respTerm...))
+
+			default:
+				respPayloadWithTerm := []byte(`{"Ret":100}` + "\n\x00")
+				respHdr := &Header{
+					Magic:      HeaderMagic,
+					Channel:    1,
+					SessionID:  hdr.SessionID,
+					Sequence:   hdr.Sequence,
+					MsgID:      hdr.MsgID + 1,
+					DataLength: uint32(len(respPayloadWithTerm)),
+				}
+				_, _ = conn.Write(append(respHdr.Encode(), respPayloadWithTerm...))
 			}
 		}
 	}()
@@ -922,6 +970,18 @@ func TestAdaptiveRSALoginCandidatesFallback(t *testing.T) {
 				respTerm := append(respData, 0x0A, 0x00)
 				rHdr := Header{Magic: HeaderMagic, Channel: 1, Sequence: hdr.Sequence, MsgID: MsgLoginResp, DataLength: uint32(len(respTerm))}
 				_, _ = conn.Write(append(rHdr.Encode(), respTerm...))
+
+			default:
+				respPayloadWithTerm := []byte(`{"Ret":100}` + "\n\x00")
+				respHdr := &Header{
+					Magic:      HeaderMagic,
+					Channel:    1,
+					SessionID:  hdr.SessionID,
+					Sequence:   hdr.Sequence,
+					MsgID:      hdr.MsgID + 1,
+					DataLength: uint32(len(respPayloadWithTerm)),
+				}
+				_, _ = conn.Write(append(respHdr.Encode(), respPayloadWithTerm...))
 			}
 		}
 	}()
@@ -1036,9 +1096,9 @@ func TestEncryptedPostLoginControlMessages(t *testing.T) {
 	port := listener.Addr().(*net.TCPAddr).Port
 
 	var capturedCommKey []byte
-	receivedEncrypted1040 := make(chan bool, 1)
-	receivedEncrypted1042 := make(chan bool, 1)
-	receivedEncrypted1020 := make(chan bool, 1)
+	receivedEncrypted1578 := make(chan bool, 1)
+	receivedEncrypted1572Light := make(chan bool, 1)
+	receivedEncrypted1572Query := make(chan bool, 1)
 	receivedEncrypted1006 := make(chan bool, 1)
 
 	go func() {
@@ -1078,7 +1138,7 @@ func TestEncryptedPostLoginControlMessages(t *testing.T) {
 						"AES":   true,
 						"AESV2": true,
 					},
-					NotEncryptMsgID: []int{1000, 1001, 1008, 1009, 1413, 1414, 1432, 1434, 1435},
+					NotEncryptMsgID: []int{1000, 1001, 1008, 1009, 1413, 1414, 1432, 1434, 1435, 1580, 1582},
 				}
 				claimBytes, _ := json.Marshal(claimResp)
 				encClaim, _ := encryptAES128CBC([]byte(DefaultSofiaAESKey), claimBytes)
@@ -1125,16 +1185,16 @@ func TestEncryptedPostLoginControlMessages(t *testing.T) {
 				}
 				_, _ = conn.Write(append(rHdr.Encode(), respTerm...))
 
-			case MsgConfigSetReq: // 1040 (SetLightState)
+			case MsgTransStartReq: // 1578 (OPTrans RS232 start)
 				if len(cleanPayload) > 0 && cleanPayload[0] != '{' {
 					decB64, _ := base64.StdEncoding.DecodeString(cleanPayload)
 					plain, _ := decryptAES128CBC(capturedCommKey, decB64)
-					if strings.Contains(string(plain), "FbExtraStateCtrl") {
-						receivedEncrypted1040 <- true
+					if strings.Contains(string(plain), "OPTrans") {
+						receivedEncrypted1578 <- true
 					}
 				}
 
-				respJSON := []byte(`{"Name":"FbExtraStateCtrl","Ret":100}`)
+				respJSON := []byte(`{"Name":"OPTrans","Ret":100}`)
 				encResp, _ := encryptAES128CBC(capturedCommKey, respJSON)
 				b64Resp := base64.StdEncoding.EncodeToString(encResp)
 				respTerm := append([]byte(b64Resp), 0x00)
@@ -1144,21 +1204,29 @@ func TestEncryptedPostLoginControlMessages(t *testing.T) {
 					Channel:    1,
 					SessionID:  0xCC,
 					Sequence:   hdr.Sequence,
-					MsgID:      MsgConfigSetResp, // 1041
+					MsgID:      MsgTransStartResp, // 1579
 					DataLength: uint32(len(respTerm)),
 				}
 				_, _ = conn.Write(append(rHdr.Encode(), respTerm...))
 
-			case MsgConfigGetReq: // 1042 (QueryLightState)
+			case MsgTransSendData: // 1572 (MCU commands via OPTrans)
+				var plainCmd string
 				if len(cleanPayload) > 0 && cleanPayload[0] != '{' {
 					decB64, _ := base64.StdEncoding.DecodeString(cleanPayload)
 					plain, _ := decryptAES128CBC(capturedCommKey, decB64)
-					if strings.Contains(string(plain), "FbExtraStateCtrl") {
-						receivedEncrypted1042 <- true
-					}
+					plainCmd = string(plain)
+				} else {
+					plainCmd = cleanPayload
 				}
 
-				respJSON := []byte(`{"Name":"FbExtraStateCtrl","Ret":100,"FbExtraStateCtrl":{"ison":1}}`)
+				if strings.Contains(plainCmd, "BMdU") {
+					receivedEncrypted1572Light <- true
+				} else if strings.Contains(plainCmd, "BFbU") {
+					receivedEncrypted1572Query <- true
+				}
+
+				// 1. Send MsgTransSendResp (1573) ack
+				respJSON := []byte(`{"Name":"OPTrans","Ret":100}`)
 				encResp, _ := encryptAES128CBC(capturedCommKey, respJSON)
 				b64Resp := base64.StdEncoding.EncodeToString(encResp)
 				respTerm := append([]byte(b64Resp), 0x00)
@@ -1168,34 +1236,23 @@ func TestEncryptedPostLoginControlMessages(t *testing.T) {
 					Channel:    1,
 					SessionID:  0xCC,
 					Sequence:   hdr.Sequence,
-					MsgID:      MsgConfigGetResp, // 1043
+					MsgID:      MsgTransSendResp, // 1573
 					DataLength: uint32(len(respTerm)),
 				}
 				_, _ = conn.Write(append(rHdr.Encode(), respTerm...))
 
-			case MsgSysManagerReq: // 1020 (QueryMCUConfig BFbU)
-				if len(cleanPayload) > 0 && cleanPayload[0] != '{' {
-					decB64, _ := base64.StdEncoding.DecodeString(cleanPayload)
-					plain, _ := decryptAES128CBC(capturedCommKey, decB64)
-					if strings.Contains(string(plain), "BFbU") {
-						receivedEncrypted1020 <- true
-					}
-				}
-
-				respJSON := []byte(`{"Name":"SerialPortsInfo","Ret":100,"SerialPortsInfo":{"SerialPortsType":0,"SerialPortsData":"BubzbzfzazOU"}}`)
-				encResp, _ := encryptAES128CBC(capturedCommKey, respJSON)
-				b64Resp := base64.StdEncoding.EncodeToString(encResp)
-				respTerm := append([]byte(b64Resp), 0x00)
-
-				rHdr := Header{
+				// 2. Immediately push unencrypted MsgTransSerialData (1582) telemetry frame
+				// Mode 'd' indicates light on (conversion 3)
+				telemetryData := []byte("BpbndzazazOU\x00")
+				tHdr := Header{
 					Magic:      HeaderMagic,
 					Channel:    1,
 					SessionID:  0xCC,
-					Sequence:   hdr.Sequence,
-					MsgID:      MsgSysManagerResp, // 1021
-					DataLength: uint32(len(respTerm)),
+					Sequence:   hdr.Sequence + 1,
+					MsgID:      MsgTransSerialData, // 1582
+					DataLength: uint32(len(telemetryData)),
 				}
-				_, _ = conn.Write(append(rHdr.Encode(), respTerm...))
+				_, _ = conn.Write(append(tHdr.Encode(), telemetryData...))
 
 			case MsgKeepAliveReq: // 1006 (SendKeepAlive)
 				if len(cleanPayload) > 0 && cleanPayload[0] != '{' {
@@ -1220,6 +1277,21 @@ func TestEncryptedPostLoginControlMessages(t *testing.T) {
 					DataLength: uint32(len(respTerm)),
 				}
 				_, _ = conn.Write(append(rHdr.Encode(), respTerm...))
+
+			default:
+				respJSON := []byte(`{"Ret":100}`)
+				encResp, _ := encryptAES128CBC(capturedCommKey, respJSON)
+				b64Resp := base64.StdEncoding.EncodeToString(encResp)
+				respTerm := append([]byte(b64Resp), 0x00)
+				rHdr := Header{
+					Magic:      HeaderMagic,
+					Channel:    1,
+					SessionID:  0xCC,
+					Sequence:   hdr.Sequence,
+					MsgID:      hdr.MsgID + 1,
+					DataLength: uint32(len(respTerm)),
+				}
+				_, _ = conn.Write(append(rHdr.Encode(), respTerm...))
 			}
 		}
 	}()
@@ -1237,42 +1309,44 @@ func TestEncryptedPostLoginControlMessages(t *testing.T) {
 		t.Fatal("expected client to be logged in")
 	}
 
-	// 1. Test SetLightState (MsgID 1040)
+	// Verify MsgTransStartReq (1578) was sent automatically on login
+	select {
+	case <-receivedEncrypted1578:
+	case <-time.After(1 * time.Second):
+		t.Error("timed out waiting for encrypted MsgTransStartReq (1578)")
+	}
+
+	// 1. Test SetLightState via MsgTransSendData (1572) -> "BMdU"
 	if err := client.SetLightState(true); err != nil {
 		t.Fatalf("SetLightState failed: %v", err)
 	}
 	select {
-	case <-receivedEncrypted1040:
+	case <-receivedEncrypted1572Light:
 	case <-time.After(1 * time.Second):
-		t.Error("timed out waiting for encrypted MsgID 1040")
+		t.Error("timed out waiting for encrypted MsgID 1572 (Light ON BMdU)")
 	}
 
-	// 2. Test QueryLightState (MsgID 1042)
+	// 2. Test QueryMCUConfig via MsgTransSendData (1572) -> "BFbU"
+	mcuCfg, err := client.QueryMCUConfig()
+	if err != nil {
+		t.Fatalf("QueryMCUConfig failed: %v", err)
+	}
+	if mcuCfg == nil || !mcuCfg.IsLightOn() {
+		t.Errorf("expected light on in mcuCfg, got %+v", mcuCfg)
+	}
+	select {
+	case <-receivedEncrypted1572Query:
+	case <-time.After(1 * time.Second):
+		t.Error("timed out waiting for encrypted MsgID 1572 (Query BFbU)")
+	}
+
+	// 3. Test QueryLightState using the received telemetry
 	lightOn, err := client.QueryLightState()
 	if err != nil {
 		t.Fatalf("QueryLightState failed: %v", err)
 	}
 	if !lightOn {
 		t.Error("expected lightOn == true")
-	}
-	select {
-	case <-receivedEncrypted1042:
-	case <-time.After(1 * time.Second):
-		t.Error("timed out waiting for encrypted MsgID 1042")
-	}
-
-	// 3. Test QueryMCUConfig (MsgID 1020)
-	mcuCfg, err := client.QueryMCUConfig()
-	if err != nil {
-		t.Fatalf("QueryMCUConfig failed: %v", err)
-	}
-	if mcuCfg == nil || mcuCfg.Distance != 10 {
-		t.Errorf("expected mcu distance 10, got %+v", mcuCfg)
-	}
-	select {
-	case <-receivedEncrypted1020:
-	case <-time.After(1 * time.Second):
-		t.Error("timed out waiting for encrypted MsgID 1020")
 	}
 
 	// 4. Test SendKeepAlive (MsgID 1006)
@@ -1283,5 +1357,50 @@ func TestEncryptedPostLoginControlMessages(t *testing.T) {
 	case <-receivedEncrypted1006:
 	case <-time.After(1 * time.Second):
 		t.Error("timed out waiting for encrypted MsgID 1006")
+	}
+}
+
+func TestMCUTelemetryLiveTraces(t *testing.T) {
+	// Test the 4 actual live telemetry strings captured from Steinel L 620 CAM in PCAP
+	// 1. Idle (Sensor Mode / Off): "BpbnbzasazOU"
+	cfg1, err := ParseMCUString("BpbnbzasazOU")
+	if err != nil {
+		t.Fatalf("failed to parse live frame 1: %v", err)
+	}
+	if cfg1.IsLightOn() {
+		t.Errorf("expected light off in frame 1, got mode %d", cfg1.Mode)
+	}
+	if cfg1.Mode != 1 { // 'b' == 1
+		t.Errorf("expected mode 1, got %d", cfg1.Mode)
+	}
+
+	// 2. Light ON (Continuous Mode): "BpbndzazazOU"
+	cfg2, err := ParseMCUString("BpbndzazazOU")
+	if err != nil {
+		t.Fatalf("failed to parse live frame 2: %v", err)
+	}
+	if !cfg2.IsLightOn() {
+		t.Errorf("expected light on in frame 2, got mode %d", cfg2.Mode)
+	}
+	if cfg2.Mode != 3 { // 'd' == 3
+		t.Errorf("expected mode 3, got %d", cfg2.Mode)
+	}
+
+	// 3. Lux / Sensitivity changed: "BpbybzasazOU"
+	cfg3, err := ParseMCUString("BpbybzasazOU")
+	if err != nil {
+		t.Fatalf("failed to parse live frame 3: %v", err)
+	}
+	if cfg3.TwilightLux <= cfg1.TwilightLux {
+		t.Errorf("expected higher lux in frame 3 (got %d vs %d)", cfg3.TwilightLux, cfg1.TwilightLux)
+	}
+
+	// 4. Dimming / Highlight changed: "BpbnbzarazOU"
+	cfg4, err := ParseMCUString("BpbnbzarazOU")
+	if err != nil {
+		t.Fatalf("failed to parse live frame 4: %v", err)
+	}
+	if cfg4.Highlight == cfg1.Highlight {
+		t.Errorf("expected different highlight in frame 4 (got %d vs %d)", cfg4.Highlight, cfg1.Highlight)
 	}
 }
