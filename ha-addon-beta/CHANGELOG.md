@@ -2,6 +2,22 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.3.11-beta.6
+
+### 💡 L 620 CAM Hardware-MCU-Lichtsteuerung via OPTrans RS232 & Telemetrie (Issue #45)
+
+- **Transparente OPTrans RS232 Schnittstelle (`MsgTransStartReq` / `MsgTransSendData`)**:
+  - **Authentische Protokoll-Emulation**: Anstelle von ununterstützten `FbExtraStateCtrl`- oder `SerialPortsInfo`-Endpunkten nutzt die Bridge nun die transparente serielle NetIP-Schnittstelle der offiziellen Steinel App.
+  - **Automatischer Bridge-Start**: Nach erfolgreichem Login wird der transparente RS232-Kanal (MsgID `1578` / `1579`) mit Session-AES-Verschlüsselung auf Kanal 1 automatisch initiiert.
+- **Hardware-Modus-Steuerung des L 620 MCU-Lichts**:
+  - **Modus-Umschaltung statt Bool-Flags**: Die L 620 Hardware-MCU steuert das Licht über Betriebsmodi. Ein- und Ausschalten erfolgt über standardisierte ASCII-Befehle via `MsgTransSendData` (MsgID `1572`):
+    - **Licht AN (Dauerlicht)**: Sendet `"BMdU"` (Mode = 3 / Continuous Light).
+    - **Licht AUS (Sensor-Automatik)**: Sendet `"BMbU"` (Mode = 1 / Auto-Sensor).
+    - **Statusabfrage**: Fragt Konfiguration via `"BFbU"` ab.
+- **Echtzeit-Telemetrie & Push-Benachrichtigungen (`MsgTransSerialData` 1582)**:
+  - **Unverschlüsselte Telemetrie-Ingestion**: Die Kamera meldet MCU-Zustände (Distanz, Nachlaufzeit, Lux-Schwelle, Lichtmodus, Dämmerung, Sensorstufe) als unverschlüsselte 12-Byte-ASCII-Frames über MsgID `1582`.
+  - **Whitelisting & Interception**: `MsgTransSerialData` (1582) und `MsgTransRecvData` (1580) sind in der Verschlüsselungs-Whitelist registriert; eingehende Telemetriepakete werden vom Socket-Reader abgefangen, geparst und synchronisieren den Bridge-Status (Home Assistant / MQTT) in Echtzeit.
+
 ## 1.3.11-beta.5
 
 ### ⚡ Concurrency-, RTSP-Backchannel- & SD-Karten-Stabilitäts-Update (Issue #48)
