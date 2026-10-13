@@ -11,13 +11,15 @@ import (
 // RecordingSyncer manages initial and periodic synchronization of SD card recordings
 // and pushes new recording events to Home Assistant / MQTT.
 type RecordingSyncer struct {
-	providerFunc   func() RecordingProvider
-	onNewRecording func(RecordingItem)
-	pollInterval   time.Duration
-	lastSeenID     string
-	lastSeenTime   time.Time
-	triggerChan    chan struct{}
-	mu             sync.Mutex
+	providerFunc     func() RecordingProvider
+	onNewRecording   func(RecordingItem)
+	pollInterval     time.Duration
+	isStreamActive   func() bool
+	lastPeriodicPoll time.Time
+	lastSeenID       string
+	lastSeenTime     time.Time
+	triggerChan      chan struct{}
+	mu               sync.Mutex
 }
 
 // NewRecordingSyncer creates a new RecordingSyncer instance.
@@ -35,6 +37,14 @@ func NewRecordingSyncer(
 		pollInterval:   pollInterval,
 		triggerChan:    make(chan struct{}, 1),
 	}
+}
+
+// SetStreamActiveFunc registers a callback that checks if video streaming is active
+// (e.g. RTSP clients connected).
+func (s *RecordingSyncer) SetStreamActiveFunc(fn func() bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.isStreamActive = fn
 }
 
 // TriggerSync requests an immediate sync check (with debouncing delay).
@@ -73,7 +83,24 @@ func (s *RecordingSyncer) Start(ctx context.Context) {
 		case <-ctx.Done():
 			return
 
-		case <-tickerChan:
+		case now := <-tickerChan:
+			s.mu.Lock()
+			activeFn := s.isStreamActive
+			lastPoll := s.lastPeriodicPoll
+			s.mu.Unlock()
+
+			if activeFn != nil && activeFn() {
+				// During active 24/7 RTSP streaming, throttle background polling to at least 5 minutes
+				// to avoid hammering the camera CPU while motion events are handled event-driven anyway.
+				if !lastPoll.IsZero() && now.Sub(lastPoll) < 5*time.Minute {
+					logger.Trace("Recording Sync", "Throttling periodic sync during active streaming (next in %v)", 5*time.Minute-now.Sub(lastPoll))
+					continue
+				}
+			}
+
+			s.mu.Lock()
+			s.lastPeriodicPoll = now
+			s.mu.Unlock()
 			s.syncOnce(ctx, false)
 
 		case <-s.triggerChan:
@@ -112,6 +139,9 @@ func (s *RecordingSyncer) syncOnce(ctx context.Context, isInitial bool) {
 		}
 		if len(newlyCached) > 0 {
 			latest := newlyCached[0]
+			if latest.ID == "" || latest.StartTime.IsZero() {
+				return
+			}
 			s.mu.Lock()
 			isFirst := (s.lastSeenID == "")
 			s.lastSeenID = latest.ID
@@ -130,8 +160,9 @@ func (s *RecordingSyncer) syncOnce(ctx context.Context, isInitial bool) {
 			if s.onNewRecording != nil {
 				s.onNewRecording(latest)
 			}
-			return
 		}
+		// If cacheSyncer is present and handled, never perform a redundant second query to upstream camera
+		return
 	}
 
 	// 2. Query fallback (for non-cached providers or when cache already holds latest items)
@@ -166,6 +197,9 @@ func (s *RecordingSyncer) syncOnce(ctx context.Context, isInitial bool) {
 	}
 
 	latest := resp.List[0]
+	if latest.ID == "" || latest.StartTime.IsZero() {
+		return
+	}
 
 	s.mu.Lock()
 	lastID := s.lastSeenID

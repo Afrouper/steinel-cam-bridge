@@ -87,7 +87,13 @@ func (b *Bridge) Run(ctx context.Context) error {
 	// Register control-plane health monitor to reset session if SD card queries hang
 	if b.sdcardManager != nil {
 		b.sdcardManager.SetUnresponsiveHandler(func() {
-			logger.Warn("Bridge", "⚠️ SDCard control plane unresponsive. Resetting session to trigger camera reconnect...")
+			lastNano := b.lastVideoPacket.Load()
+			if lastNano > 0 && time.Since(time.Unix(0, lastNano)) < 5*time.Second {
+				logger.Warn("Bridge", "⚠️ SDCard control plane slow/unresponsive, but video streaming is active and healthy. Preserving session.")
+				b.sdcardManager.ResetTimeouts()
+				return
+			}
+			logger.Warn("Bridge", "⚠️ SDCard control plane unresponsive and video stalled. Resetting session to trigger camera reconnect...")
 			sessCancel()
 		})
 		defer b.sdcardManager.SetUnresponsiveHandler(nil)

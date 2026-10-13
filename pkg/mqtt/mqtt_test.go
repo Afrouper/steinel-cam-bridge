@@ -120,4 +120,9 @@ func TestPublishRecordingEvent(t *testing.T) {
 		EventType:       "ai_person",
 		VideoURL:        "/api/sdcard/events/1724528701/video.mp4",
 	})
+
+	// Verify uninitialized/empty item is safely ignored without panic
+	c.PublishRecordingEvent(storage.RecordingItem{})
+	c.PublishRecordingEvent(storage.RecordingItem{ID: ""})
+	c.PublishRecordingEvent(storage.RecordingItem{ID: "123", StartTime: time.Time{}})
 }
