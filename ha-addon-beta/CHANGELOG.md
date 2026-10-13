@@ -2,6 +2,24 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.3.11-beta.5
+
+### ⚡ Concurrency-, RTSP-Backchannel- & SD-Karten-Stabilitäts-Update (Issue #48)
+
+- **SD-Karten Single-Flight Query Lock**: 
+  - Serialisiert gleichzeitige SD-Karten-Abfragen im `SDCardManager` sauber (`eventListQueryMu`) und verhindert das Überschreiben des internen Response-Channels sowie unnötige 15s-Timeouts bei parallelen Zugriffen (z. B. Syncer + ONVIF Profile G).
+- **Vollständige Entkopplung von SD-Timeouts und Live-Streaming**: 
+  - Ein träges SD-Karten-Dateisystem bricht niemals mehr den laufenden 1080p-Live-Stream ab (`sessCancel()`), solange H.264-Videopakete gesund fließen.
+- **Adaptiver Syncer & Beseitigung redundanter Doppelabfragen**: 
+  - Bei aktivem 24/7-RTSP-Streaming (z. B. Frigate / Scrypted) wird das periodische Hintergrund-Polling adaptiv auf 5 Minuten gedrosselt, um die schwache Kamera-CPU zu schonen (PIR-Events synchronisieren weiterhin sofort nach 35s Puffer).
+  - Keine redundante zweite Upstream-Kameraabfrage mehr bei aktivem lokalen Speicher-Cache.
+- **RTSP Single-Talker Lock & robustes Session-Tracking**: 
+  - Exklusiver Single-Talker Mutex für 2-Wege-Audio: Nur ein Client kann gleichzeitig in das Mikrofon sprechen (automatische Freigabe bei Session-Ende).
+  - Exaktes `ActiveClients`-Tracking: Zähler steigt nur bei `PLAY` und sinkt nur bei Schließen tatsächlich spielender Sessions (verhindert Zählerverfälschung durch Probe-Verbindungen).
+  - Bidirektionale Authentifizierungs-Vererbung zwischen Session und TCP-Socket verhindert `wrong response on SETUP: 401` bei schnellen Reconnects in go2rtc.
+- **MQTT Data Integrity Guard**: 
+  - Unterbindet das Senden unvollständiger/leerer Recording-Events an Home Assistant.
+
 ## 1.3.11-beta.4
 
 ### 🔐 Transparente Session-AES-Verschlüsselung für Post-Login Steuerbefehle (L 620 CAM / Issue #45)
