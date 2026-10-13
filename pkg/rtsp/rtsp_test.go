@@ -82,7 +82,7 @@ func TestServerBackchannelPacketHandling(t *testing.T) {
 	}
 
 	// Trigger backchannel packet handling
-	srv.handleBackchannelPacket(srv.backchannelMedia, testPkt, "TCP/Interleaved")
+	srv.handleBackchannelPacket(srv.backchannelMedia, testPkt, "TCP/Interleaved", nil)
 
 	assert.NotNil(t, receivedPkt)
 	assert.Equal(t, uint16(1234), receivedPkt.SequenceNumber)
@@ -275,4 +275,92 @@ func TestServerAuthentication(t *testing.T) {
 
 	_, err = cValid.Play(nil)
 	assert.NoError(t, err)
+}
+
+func TestServer_SingleTalkerLock(t *testing.T) {
+	srv, err := NewServer(8571, "talktest", "pcmu", "", "")
+	assert.NoError(t, err)
+	defer srv.Close()
+
+	var receivedCount int
+	srv.SetAudioBackchannelHandler(func(pkt *rtp.Packet) error {
+		receivedCount++
+		return nil
+	})
+
+	sess1 := &gortsplib.ServerSession{}
+	sess2 := &gortsplib.ServerSession{}
+
+	pkt := &rtp.Packet{
+		Header:  rtp.Header{PayloadType: 0},
+		Payload: []byte{0x01},
+	}
+
+	// Session 1 acquires talk lock
+	srv.handleBackchannelPacket(srv.backchannelMedia, pkt, "sess1", sess1)
+	assert.Equal(t, 1, receivedCount)
+
+	// Session 2 attempts to talk while session 1 is active -> must be dropped
+	srv.handleBackchannelPacket(srv.backchannelMedia, pkt, "sess2", sess2)
+	assert.Equal(t, 1, receivedCount, "Second session packet must be dropped while first session holds lock")
+
+	// Session 1 closes
+	srv.OnSessionClose(&gortsplib.ServerHandlerOnSessionCloseCtx{Session: sess1})
+
+	// Now session 2 can talk
+	srv.handleBackchannelPacket(srv.backchannelMedia, pkt, "sess2", sess2)
+	assert.Equal(t, 2, receivedCount, "Session 2 should acquire lock after Session 1 closes")
+}
+
+func TestServer_ActiveClientsOnlyOnPlay(t *testing.T) {
+	srv, err := NewServer(8572, "clienttest", "pcmu", "", "")
+	assert.NoError(t, err)
+	defer srv.Close()
+
+	sessProbe := &gortsplib.ServerSession{}
+	sessReal := &gortsplib.ServerSession{}
+
+	// sessProbe connects, but only does setup (no play)
+	// closing sessProbe should NOT decrement activeClients
+	srv.OnSessionClose(&gortsplib.ServerHandlerOnSessionCloseCtx{Session: sessProbe})
+	assert.Equal(t, int64(0), srv.ActiveClients())
+
+	// sessReal plays
+	_, err = srv.OnPlay(&gortsplib.ServerHandlerOnPlayCtx{
+		Session: sessReal,
+		Request: &base.Request{},
+		Path:    "clienttest",
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, int64(1), srv.ActiveClients())
+
+	// sessProbe closes again -> activeClients must still be 1!
+	srv.OnSessionClose(&gortsplib.ServerHandlerOnSessionCloseCtx{Session: sessProbe})
+	assert.Equal(t, int64(1), srv.ActiveClients(), "Closing non-playing session must not decrease activeClients")
+
+	// sessReal closes -> activeClients goes to 0
+	srv.OnSessionClose(&gortsplib.ServerHandlerOnSessionCloseCtx{Session: sessReal})
+	assert.Equal(t, int64(0), srv.ActiveClients())
+}
+
+func TestServer_AuthInheritance(t *testing.T) {
+	srv, err := NewServer(8573, "authtest", "pcmu", "user", "pass")
+	assert.NoError(t, err)
+	defer srv.Close()
+
+	sess := &gortsplib.ServerSession{}
+	conn := &gortsplib.ServerConn{}
+
+	// Authenticate session
+	sess.SetUserData(true)
+
+	// New connection without Authorization header should inherit session auth
+	req := &base.Request{
+		Method: base.Setup,
+		Header: base.Header{},
+	}
+	ok, resp := srv.validateAuth(req, conn, sess)
+	assert.True(t, ok)
+	assert.Nil(t, resp)
+	assert.Equal(t, true, conn.UserData(), "Connection should have inherited authentication from session")
 }

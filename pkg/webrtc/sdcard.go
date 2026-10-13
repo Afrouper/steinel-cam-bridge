@@ -56,8 +56,9 @@ type SDCardManager struct {
 	mu          sync.Mutex
 
 	// Event list response synchronization
-	eventListMu   sync.Mutex
-	eventListChan chan *EventListResponse
+	eventListQueryMu sync.Mutex
+	eventListMu      sync.Mutex
+	eventListChan    chan *EventListResponse
 
 	// Control-plane health tracking
 	consecutiveTimeouts int
@@ -83,6 +84,15 @@ func (m *SDCardManager) SetUnresponsiveHandler(handler func()) {
 
 // GetEventList queries the list of recordings from the camera's SD card within a given time range
 func (m *SDCardManager) GetEventList(ctx context.Context, startTime, endTime int64, page, limit int) (*EventListResponse, error) {
+	// Single-flight lock ensures that concurrent queries (e.g. syncer + ONVIF Profile G)
+	// do not overwrite the response channel or overload the camera SoC.
+	m.eventListQueryMu.Lock()
+	defer m.eventListQueryMu.Unlock()
+
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	if limit <= 0 {
 		limit = 1000
 	}
@@ -159,6 +169,11 @@ func (m *SDCardManager) resetTimeouts() {
 	m.mu.Lock()
 	m.consecutiveTimeouts = 0
 	m.mu.Unlock()
+}
+
+// ResetTimeouts resets the consecutive timeout counter.
+func (m *SDCardManager) ResetTimeouts() {
+	m.resetTimeouts()
 }
 
 // ListRecordings implements storage.RecordingProvider

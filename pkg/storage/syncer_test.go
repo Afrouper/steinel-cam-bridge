@@ -82,3 +82,62 @@ func TestRecordingSyncer(t *testing.T) {
 	assert.Equal(t, "rec_101", published[1].ID)
 	pubMu.Unlock()
 }
+
+func TestSyncer_SkipsEmptyItem(t *testing.T) {
+	prov := &mockProvider{
+		items: []RecordingItem{
+			{
+				ID:        "", // Empty ID!
+				FileName:  "",
+				StartTime: time.Time{},
+			},
+		},
+	}
+
+	var published []RecordingItem
+	onNew := func(item RecordingItem) {
+		published = append(published, item)
+	}
+
+	syncer := NewRecordingSyncer(
+		func() RecordingProvider { return prov },
+		onNew,
+		100*time.Millisecond,
+	)
+
+	ctx := context.Background()
+	syncer.syncOnce(ctx, true)
+
+	assert.Empty(t, published, "Empty recording item should never be published")
+}
+
+type mockCachedProvider struct {
+	mockProvider
+	syncLatestCalls int
+	listCalls       int
+}
+
+func (m *mockCachedProvider) SyncLatest(ctx context.Context) ([]RecordingItem, error) {
+	m.syncLatestCalls++
+	return nil, nil // No new items to download
+}
+
+func (m *mockCachedProvider) ListRecordings(ctx context.Context, start, end time.Time, page, limit int, eventType string) (*RecordingListResponse, error) {
+	m.listCalls++
+	return m.mockProvider.ListRecordings(ctx, start, end, page, limit, eventType)
+}
+
+func TestSyncer_NoDuplicateUpstreamQueryOnCached(t *testing.T) {
+	cachedProv := &mockCachedProvider{}
+	syncer := NewRecordingSyncer(
+		func() RecordingProvider { return cachedProv },
+		func(RecordingItem) {},
+		100*time.Millisecond,
+	)
+
+	ctx := context.Background()
+	syncer.syncOnce(ctx, false)
+
+	assert.Equal(t, 1, cachedProv.syncLatestCalls, "SyncLatest should be called once")
+	assert.Equal(t, 0, cachedProv.listCalls, "ListRecordings should NOT be called when SyncLatest handled the provider")
+}

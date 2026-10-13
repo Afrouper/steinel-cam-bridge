@@ -14,6 +14,11 @@ import (
 
 // PublishRecordingEvent publishes a new recording event to Home Assistant MQTT.
 func (c *Client) PublishRecordingEvent(item storage.RecordingItem) {
+	if item.ID == "" || item.StartTime.IsZero() {
+		logger.Debug("MQTT", "Skipping publication of uninitialized recording event")
+		return
+	}
+
 	c.mu.RLock()
 	cl := c.client
 	c.mu.RUnlock()
