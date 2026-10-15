@@ -639,8 +639,35 @@ func (c *Client) EnableRTSP() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	sessionHex := fmt.Sprintf("0x%08X", c.sessionID)
+
+	// 1. Query current RTSP config (MsgConfigGetReq 1040)
+	getReq := map[string]interface{}{
+		"Name":      "NetWork.RTSP",
+		"SessionID": sessionHex,
+	}
+	if getPayload, err := json.Marshal(getReq); err == nil {
+		logger.Debug("Xiongmai", "📡 Querying RTSP server status on camera...")
+		if resp, err := c.sendPacketLocked(MsgConfigGetReq, getPayload); err == nil {
+			var getResp struct {
+				Ret         int `json:"Ret"`
+				NetWorkRTSP struct {
+					IsServer bool `json:"IsServer"`
+				} `json:"NetWork.RTSP"`
+			}
+			if err := json.Unmarshal(resp, &getResp); err == nil && getResp.Ret == 100 {
+				if getResp.NetWorkRTSP.IsServer {
+					logger.Info("Xiongmai", "🎥 RTSP server already active on camera port %d", RTSPPort)
+					return nil
+				}
+			}
+		}
+	}
+
+	// 2. Enable RTSP server (MsgConfigSetReq 1042)
 	req := RTSPConfigReq{
-		Name: "NetWork.RTSP",
+		Name:      "NetWork.RTSP",
+		SessionID: sessionHex,
 		NetWorkRTSP: RTSPServer{
 			IsServer: true,
 		},
@@ -652,10 +679,17 @@ func (c *Client) EnableRTSP() error {
 	}
 
 	logger.Debug("Xiongmai", "📡 Enabling RTSP server on camera...")
-
-	_, err = c.sendPacketLocked(MsgConfigSetReq, payload)
+	respPayload, err := c.sendPacketLocked(MsgConfigSetReq, payload)
 	if err != nil {
 		return fmt.Errorf("failed to enable RTSP server: %w", err)
+	}
+
+	var setResp struct {
+		Ret int `json:"Ret"`
+	}
+	if err := json.Unmarshal(respPayload, &setResp); err == nil && setResp.Ret != 100 {
+		logger.Warn("Xiongmai", "⚠️ Enabling RTSP server returned code %d (response: %s)", setResp.Ret, string(respPayload))
+		return fmt.Errorf("camera returned code %d for NetWork.RTSP enable", setResp.Ret)
 	}
 
 	logger.Info("Xiongmai", "🎥 RTSP server enabled on camera port %d", RTSPPort)

@@ -116,6 +116,7 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 		cfg.AudioCodec,
 		cfg.NabtoConfig.DeviceID,
 		cfg.NabtoConfig.ProductID,
+		modelName,
 		cfg.BridgeUser,
 		cfg.BridgePass,
 		bridgeMgr.SetResolution,

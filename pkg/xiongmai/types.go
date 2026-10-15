@@ -177,6 +177,7 @@ type LoginEncryptionType struct {
 // RTSP Config JSON for automatic enablement
 type RTSPConfigReq struct {
 	Name        string     `json:"Name"`
+	SessionID   string     `json:"SessionID,omitempty"`
 	NetWorkRTSP RTSPServer `json:"NetWork.RTSP"`
 }
 

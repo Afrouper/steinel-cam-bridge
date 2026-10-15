@@ -60,6 +60,16 @@ func getCandidateURLs(cameraIP string, port int, user, password string, streamSu
 			pwds = append(pwds, trimmed)
 		}
 	}
+	hasEmpty := false
+	for _, p := range pwds {
+		if p == "" {
+			hasEmpty = true
+			break
+		}
+	}
+	if !hasEmpty {
+		pwds = append(pwds, "")
+	}
 
 	var urls []string
 	for _, cleanPwd := range pwds {
@@ -76,6 +86,9 @@ func getCandidateURLs(cameraIP string, port int, user, password string, streamSu
 			// 4. Fallback Generic style path
 			fmt.Sprintf("rtsp://%s%s:%d/h264/ch1/main/av_stream",
 				buildAuthPrefix(cleanUser, cleanPwd), cameraIP, port),
+			// 5. Fallback live channel path
+			fmt.Sprintf("rtsp://%s%s:%d/live/ch%d",
+				buildAuthPrefix(cleanUser, cleanPwd), cameraIP, port, streamSubtype),
 		)
 	}
 	return urls

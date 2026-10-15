@@ -94,11 +94,15 @@ func (d *L620Driver) SetLowlightTime(timeVal int) error {
 	return d.xmDriver.SetNightlightDuration(fmt.Sprintf("%dh", timeVal/60))
 }
 
-// SetPIRSensitivity sets the motion detector sensitivity (mapped to 1-10m).
+// SetPIRSensitivity sets the motion detector sensitivity (mapped to 3m, 6m, 10m).
 func (d *L620Driver) SetPIRSensitivity(percent int) error {
-	dist := percent / 10
-	if dist <= 0 {
-		dist = 1
+	var dist int
+	if percent >= 67 {
+		dist = 10 // Maximum ('u')
+	} else if percent >= 34 {
+		dist = 6 // Medium ('p')
+	} else {
+		dist = 3 // Minimum ('k')
 	}
 	return d.xmDriver.SetDistance(dist)
 }

@@ -40,13 +40,13 @@ func NewDriver(cameraIP string, user, password string, resolution string, rtspSe
 		eventBus = events.GlobalBus
 	}
 
-	streamSubtype := 0 // 720p HD (Main stream)
-	resNormalized := "720p"
+	streamSubtype := 0 // 1080p Full HD (Main stream)
+	resNormalized := "1080p"
 	if strings.EqualFold(resolution, "360p") {
 		streamSubtype = 1 // 360p SD (Sub stream)
 		resNormalized = "360p"
-	} else if strings.EqualFold(resolution, "1080p") {
-		logger.Info("Config", "ℹ️ Steinel L 620 CAM sensor supports max 720p HD (mapping '1080p' configuration to native 720p Main Stream channel=1_stream=0)")
+	} else if strings.EqualFold(resolution, "720p") {
+		streamSubtype = 0
 		resNormalized = "720p"
 	}
 
@@ -99,7 +99,7 @@ func (d *Driver) Start(ctx context.Context) error {
 	if d.client.IsLoggedIn() {
 		// Step 2: Zero-Touch RTSP Enablement
 		if err := d.client.EnableRTSP(); err != nil {
-			logger.Debug("Xiongmai Driver", "ℹ️ Zero-touch RTSP enablement result: %v", err)
+			logger.Warn("Xiongmai Driver", "⚠️ Zero-touch RTSP enablement result: %v", err)
 		}
 
 		// Step 3: Query initial light and MCU states
@@ -357,18 +357,18 @@ func (d *Driver) SetNightlightDuration(val string) error {
 	return err
 }
 
-// SetResolution switches between 720p (stream 0) and 360p (stream 1) for the Steinel L 620 CAM.
+// SetResolution switches between 1080p/720p (stream 0) and 360p (stream 1) for the Steinel L 620 CAM.
 func (d *Driver) SetResolution(res string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
 	streamSubtype := 0
-	resNormalized := "720p"
+	resNormalized := "1080p"
 	if strings.EqualFold(res, "360p") {
 		streamSubtype = 1
 		resNormalized = "360p"
-	} else if strings.EqualFold(res, "1080p") {
-		logger.Info("Xiongmai", "ℹ️ Steinel L 620 CAM sensor supports max 720p HD (clamping resolution to 720p)")
+	} else if strings.EqualFold(res, "720p") {
+		streamSubtype = 0
 		resNormalized = "720p"
 	}
 

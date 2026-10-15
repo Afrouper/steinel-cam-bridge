@@ -11,7 +11,7 @@ Im Gegensatz zur **Steinel L 625 CAM SC** (Nabto Edge P2P + WebRTC DataChannel) 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                       Steinel L 620 CAM Hardware                            │
-│  ├─ Video/Audio: Lokaler nativer RTSP-Stream (TCP Port 554, 720p H.264/AAC)│
+│  ├─ Video/Audio: Lokaler nativer RTSP-Stream (TCP Port 554, 1080p Full HD H.264/AAC)│
 │  ├─ Talk-Backchannel: Xiongmai Talk Protokoll (MsgID 1432/1434, G.711u)     │
 │  └─ Steuerung & MCU: Xiongmai Sofia / NetIP Protokoll (TCP Port 34567)      │
 └──────────────────────────────────────┬──────────────────────────────────────┘
@@ -156,9 +156,10 @@ Die L 620 MCU unterstützt genau 3 diskrete Stufen (`XMDetectSettingPresenter.ja
 | Eigenschaft | Steinel L 620 CAM / XLED CAM 1 | Steinel L 625 CAM SC |
 |:---|:---|:---|
 | **Kamera-SoC & Treiber** | Xiongmai / JFTech Sofia (Port 34567) | Nabto Edge P2P Direct Tunnel (Port 5592) |
-| **Kamera-Stream** | Nativer lokaler RTSP-Server (Port 554, 720p HD) | WebRTC Media DTLS/SRTP (1080p Full HD) |
+| **Kamera-Stream** | Nativer lokaler RTSP-Server (Port 554, 1080p Full HD) | WebRTC Media DTLS/SRTP (1080p Full HD) |
 | **MCU-Kommunikation** | Sofia NetIP OPTrans RS232 (`MsgTransSendData` 1572) | WebRTC DataChannel `test` (18-Byte Hex Frames) |
-| **Manuelle Sirene** | **Nicht vorhanden** (Hardware hat keine Alarmsirene) | Vorhanden (18-Byte Frame `5A...06` schaltet Sirene) |
+| **Alarmsirene / Warnton** | **Bewegungsalarm** (`Detect.MotionDetect.[0]` `VoiceEnable: true` / "Push and Alarm") | **Manuelle Sirene** (18-Byte Frame `5A...06` schaltet Sirene) |
 | **Licht-Schalten** | Modus-Umschaltung (`"BMdU"` vs. `"BMbU"`) | UART Byte-Flag (0x01 / 0x00) |
 | **PIR-Stufen** | 3 diskrete Stufen (Min / Med / Max) | Stufenlos (0–100 % bzw. 1–10 m) |
-| **Telemetrie-Übertragung** | Plaintext ASCII-Push via MsgID 1582 | Binäre UART-Frames auf DataChannel `test` |
+| **Telemetrie-Übertragung** | Plaintext ASCII-Push via MsgID 1582 (gepuffert) | Binäre UART-Frames auf DataChannel `test` |
+| **ONVIF Model** | Dynamisch als `"L 620 CAM"` gemeldet | Dynamisch als `"L 625 CAM SC"` gemeldet |

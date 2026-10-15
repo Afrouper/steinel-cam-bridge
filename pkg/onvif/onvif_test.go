@@ -33,6 +33,7 @@ func TestONVIFServices(t *testing.T) {
 		"aac",
 		"de-xxxxxxx",
 		"pr-xxxxx",
+		"L 625 CAM SC",
 		"",
 		"",
 		changeRes,
@@ -197,7 +198,7 @@ func TestDiscoveryProbe(t *testing.T) {
 }
 
 func TestDeviceHandler_NewActions(t *testing.T) {
-	dh := NewDeviceHandler("device-uuid-test", "product-id-test", 8000, 8554, "admin", nil, events.NewBus())
+	dh := NewDeviceHandler("device-uuid-test", "product-id-test", "L 625 CAM SC", 8000, 8554, "admin", nil, events.NewBus())
 
 	// 1. GetServiceCapabilities
 	resp, err := dh.Handle("GetServiceCapabilities", "", "192.168.1.50:8000")
@@ -242,7 +243,7 @@ func TestDeviceHandler_NewActions(t *testing.T) {
 }
 
 func TestDeviceHandler_GetServicesCapabilities(t *testing.T) {
-	dh := NewDeviceHandler("device-uuid-test", "product-id-test", 8000, 8554, "admin", nil, events.NewBus())
+	dh := NewDeviceHandler("device-uuid-test", "product-id-test", "L 625 CAM SC", 8000, 8554, "admin", nil, events.NewBus())
 
 	// Without IncludeCapability
 	respNoCap, err := dh.Handle("GetServices", `<GetServices xmlns="http://www.onvif.org/ver10/device/wsdl"/>`, "192.168.1.50:8000")
@@ -262,5 +263,25 @@ func TestDeviceHandler_GetServicesCapabilities(t *testing.T) {
 		!strings.Contains(respWithCap, "tev:Capabilities") ||
 		!strings.Contains(respWithCap, "tmd:Capabilities") {
 		t.Errorf("GetServices with IncludeCapability=true missing service capabilities: %s", respWithCap)
+	}
+}
+
+func TestDeviceHandler_ModelReporting(t *testing.T) {
+	dh620 := NewDeviceHandler("device-620", "product-620", "L 620 CAM", 8000, 8554, "admin", nil, events.NewBus())
+	resp620, err := dh620.Handle("GetDeviceInformation", "", "192.168.1.50:8000")
+	if err != nil {
+		t.Fatalf("GetDeviceInformation failed: %v", err)
+	}
+	if !strings.Contains(resp620, "<tds:Model>L 620 CAM</tds:Model>") {
+		t.Errorf("expected model 'L 620 CAM', got: %s", resp620)
+	}
+
+	dh625 := NewDeviceHandler("device-625", "product-625", "L 625 CAM SC", 8000, 8554, "admin", nil, events.NewBus())
+	resp625, err := dh625.Handle("GetDeviceInformation", "", "192.168.1.50:8000")
+	if err != nil {
+		t.Fatalf("GetDeviceInformation failed: %v", err)
+	}
+	if !strings.Contains(resp625, "<tds:Model>L 625 CAM SC</tds:Model>") {
+		t.Errorf("expected model 'L 625 CAM SC', got: %s", resp625)
 	}
 }
