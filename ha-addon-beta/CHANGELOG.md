@@ -2,6 +2,32 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.3.11-beta.7
+
+### 🎯 L 620 CAM MCU-Telemetrie-Fragmentierung, Lux-Tabelle, Nachlaufzeit & Sensor-Modus (Issue #45)
+
+- **TCP-Fragmentierungs-Puffer für MsgID 1582 (`MsgTransSerialData`)**:
+  - **Fragment-Reassembly**: Löst das Problem, dass die L 620 CAM 12-Byte MCU-Telemetriestrings in zwei TCP-Paketen (z. B. 8 Bytes `"Bpbkbzac"` + 4 Bytes `"azOU"`) sendet.
+  - Eingehende Fragmente werden thread-sicher gepuffert, bis das Abschlusszeichen `'U'` empfangen wird, und erst dann als vollständiger Frame verarbeitet.
+  - Auch beim Auslesen ausstehender Telemetriedaten nach Abfragebefehlen (`"BFbU"`) werden gesplittete Pakete zuverlässig abgewartet und entleert.
+- **26-Stufen Dämmerungsschwellen-Tabelle (Twilight Lux)**:
+  - **Exakte Umkehrabbildung**: Implementierung der diskreten 26-Stufen-Tabelle (`2, 3, 5, ..., 100, 125, 150, 175, 200, ..., 2000` Lux) mit der von Steinel verwendeten Invertierungsformel (`progress = 25 - conv`).
+  - Behebt die Anzeige falscher Lux-Werte (z. B. 175 Lux statt fälschlich 400 Lux bei Byte `'k'`).
+  - Beim Setzen von Lux-Werten (`BX<char>U`) wird der nächstgelegene Tabellenwert ausgewählt und invertiert kodiert.
+- **Präzise Nachlaufzeit-Berechnung (Stay-On Delay)**:
+  - Das Nachlaufzeit-Byte gibt die Minuten direkt an (`delay = minutes * 60`). Die fehlerhafte `+1`-Addition wurde entfernt (z. B. Byte `'b'` = 1 Minute = 60s statt 120s).
+  - Korrektur des Befehlspräfixes zum Setzen der Nachlaufzeit auf `"BT<char>U"` (gemäß App-Spezifikation).
+- **Berechnung von Hauptlicht (Highlight) & Grundlicht (Lowlight)**:
+  - **Highlight (Dimmstufe Hauptlicht)**: Umrechnung über Multiplikator 4 (`conv * 4`), geklammert auf 30–100 % (z. B. Byte `'s'` = 72 %, Byte `'r'` = 68 %).
+  - **Lowlight (Grundlicht)**: Byte `'a'` = 0 % (Aus); Werte ab `'b'` skaliert auf 10–40 % mit `((conv - 6) * 30 / 19) + 10`. Setzbefehl sendet `"BLaU"` bei 0 %.
+- **3-Stufen PIR-Reichweite (Distance)**:
+  - Diskrete Mappings auf 3 m (33 % / `'k'`), 6 m (66 % / `'p'`) und 10 m (100 % / `'u'`).
+- **Korrektur von Lampenmodus & PIR-Aktivität in Home Assistant**:
+  - **Lichtstatus**: Modus 3 (`'d'`) = Dauerlicht (`LampMode = 1`), Modus 1 (`'b'`) = Sensor-Automatik (`LampMode = 2`).
+  - **PIR-Sensor aktiv**: Der PIR-Sensor wird als aktiv gemeldet, wenn die Reichweite > 0 ist und der Modus nicht deaktiviert (`Mode != 0`) ist (beseitigt dauerhaft inaktiven PIR-Status).
+- **Dokumentation in `AGENTS_L620.md`**:
+  - Vollständiges Byte-Layout, Formeln und Protokoll-Details für zukünftige Entwickler und KI-Agenten dokumentiert.
+
 ## 1.3.11-beta.6
 
 ### 💡 L 620 CAM Hardware-MCU-Lichtsteuerung via OPTrans RS232 & Telemetrie (Issue #45)
