@@ -124,10 +124,11 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
   - `sdcard.go`: Verwaltet das Auslesen der internen SD-Karte (`get_event_list`, `get_event_video`) mit striktem Single-Flight Mutex (`eventListQueryMu`) zur Verhinderung von Response-Channel-Kollisionen bei parallelen Abfragen, Entkopplung von SD-Timeouts und Live-Video-Streaming (verhindert Session-Abbrüche bei gesundem Videofluss), Client-Abbruchüberwachung und 15s Watchdog.
 
 - **`pkg/xiongmai/`**:
-  - `client.go`: Xiongmai Sofia Binärprotokoll-Client (Port 34567, MD5-Challenge-Response Login mit CWE-312 Credential Protection, JSON-RPC Messages).
+  - Detailspezifikation & Byte-Layout: Siehe [`AGENTS_L620.md`](file:///Users/christian/dev/git/steinel-cam-bridge/AGENTS_L620.md).
+  - `client.go`: Xiongmai Sofia Binärprotokoll-Client (Port 34567, MD5-Challenge-Response & adaptiver RSA/AES-Login mit CWE-312 Credential Protection, OPTrans RS232 Serial Bridge & 1582 Telemetrie-Fragmentierungs-Puffer).
   - `driver.go`: Orchestriert Sofia-Verbindung, RTSP-Ingest, MCU-Synchronisation, SD-Karten-Verwaltung und Talk-Backchannel.
   - `rtsp_ingest.go`: Nimmt den nativen H.264/AAC-RTSP-Stream der L 620 entgegen und füttert den internen RTSP-Server.
-  - `mcu.go`: Mappt L 620 spezifische Licht-, Dämmerungs- und Sensorkommandos auf Xiongmai-JSON-Payloads.
+  - `mcu.go`: ASCII-Frame Parser (`B...U`) & Command Builder für L 620 Licht-, Dämmerungs- und Sensorkommandos via OPTrans RS232.
   - `sdcard.go`: Xiongmai SD-Karten Dateisystemabfrage (`OPFileQuery`) und Download mit konsistenter Thumbnail-Behandlung.
   - `talk.go`: Rückkanal-Audiokommunikation (G.711u / PCMU) über das Xiongmai Talk-Protokoll.
 

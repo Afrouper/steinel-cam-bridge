@@ -269,7 +269,7 @@ func TestRedactAuthHeader(t *testing.T) {
 
 func TestServer_SOAPDigestAuthRoundtrip(t *testing.T) {
 	srv := NewServer(
-		8000, 8554, "live", "aac", "de-test", "pr-test", "syno", "naspass123",
+		8000, 8554, "live", "aac", "de-test", "pr-test", "L 625 CAM SC", "syno", "naspass123",
 		nil, nil, nil, nil, nil, nil,
 	)
 
@@ -425,7 +425,7 @@ func TestValidateDigestAuthWithReason_Diagnostics(t *testing.T) {
 
 func TestServer_PRE_AUTH_Exemptions(t *testing.T) {
 	srv := NewServer(
-		8000, 8554, "live", "aac", "de-test", "pr-test", "syno", "naspass123",
+		8000, 8554, "live", "aac", "de-test", "pr-test", "L 625 CAM SC", "syno", "naspass123",
 		nil, nil, nil, nil, nil, nil,
 	)
 

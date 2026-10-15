@@ -11,6 +11,7 @@ import (
 type DeviceHandler struct {
 	deviceID   string
 	productID  string
+	model      string
 	onvifPort  int
 	rtspPort   int
 	authUser   string
@@ -18,13 +19,17 @@ type DeviceHandler struct {
 	eventBus   *events.Bus
 }
 
-func NewDeviceHandler(deviceID, productID string, onvifPort, rtspPort int, authUser string, rebootFunc func() error, eventBus *events.Bus) *DeviceHandler {
+func NewDeviceHandler(deviceID, productID, model string, onvifPort, rtspPort int, authUser string, rebootFunc func() error, eventBus *events.Bus) *DeviceHandler {
 	if eventBus == nil {
 		eventBus = events.GlobalBus
+	}
+	if model == "" {
+		model = "L 625 CAM SC"
 	}
 	return &DeviceHandler{
 		deviceID:   deviceID,
 		productID:  productID,
+		model:      model,
 		onvifPort:  onvifPort,
 		rtspPort:   rtspPort,
 		authUser:   authUser,
@@ -98,14 +103,18 @@ func (h *DeviceHandler) getDeviceInformation() string {
 	if st.FirmwareVer != "" {
 		fw = st.FirmwareVer
 	}
+	model := h.model
+	if model == "" {
+		model = "L 625 CAM SC"
+	}
 
 	return fmt.Sprintf(`<tds:GetDeviceInformationResponse xmlns:tds="%s">
   <tds:Manufacturer>STEINEL</tds:Manufacturer>
-  <tds:Model>L 625 CAM SC</tds:Model>
+  <tds:Model>%s</tds:Model>
   <tds:FirmwareVersion>%s</tds:FirmwareVersion>
   <tds:SerialNumber>%s</tds:SerialNumber>
   <tds:HardwareId>%s</tds:HardwareId>
-</tds:GetDeviceInformationResponse>`, NS_TDS, fw, h.deviceID, h.productID)
+</tds:GetDeviceInformationResponse>`, NS_TDS, model, fw, h.deviceID, h.productID)
 }
 
 func (h *DeviceHandler) getCapabilities(host string) string {

@@ -66,7 +66,7 @@ func TestProfileGServicesAndREST(t *testing.T) {
 	mockProv := &testRecordingProvider{items: fakeItems}
 
 	srv := NewServer(
-		8000, 8554, "live", "aac", "de-test", "pr-test", "", "",
+		8000, 8554, "live", "aac", "de-test", "pr-test", "L 625 CAM SC", "", "",
 		nil, nil, nil, nil,
 		func() storage.RecordingProvider { return mockProv },
 		nil,
@@ -153,7 +153,7 @@ func TestProfileGServicesAndREST(t *testing.T) {
 
 func TestONVIFAuthAndDeviceServices(t *testing.T) {
 	// 1. Test DeviceHandler GetUsers & GetScopes & tt:Security
-	devHandler := NewDeviceHandler("de-test", "pr-test", 8000, 8554, "admin_user", nil, nil)
+	devHandler := NewDeviceHandler("de-test", "pr-test", "L 625 CAM SC", 8000, 8554, "admin_user", nil, nil)
 	usersXML, err := devHandler.Handle("GetUsers", "", "127.0.0.1:8000")
 	assert.NoError(t, err)
 	assert.Contains(t, usersXML, "admin_user")
@@ -170,7 +170,7 @@ func TestONVIFAuthAndDeviceServices(t *testing.T) {
 
 	// 2. Test Authenticated Server
 	authSrv := NewServer(
-		8000, 8554, "live", "aac", "de-test", "pr-test", "steineluser", "steinelpass",
+		8000, 8554, "live", "aac", "de-test", "pr-test", "L 625 CAM SC", "steineluser", "steinelpass",
 		nil, nil, nil, nil, nil, nil,
 	)
 
