@@ -96,11 +96,12 @@ func TestParseMCUString(t *testing.T) {
 	if cfg.Distance != 10 {
 		t.Errorf("expected distance 10, got %d", cfg.Distance)
 	}
-	if cfg.HighlightDelaySec != 120 {
-		t.Errorf("expected delay 120s, got %d", cfg.HighlightDelaySec)
+	if cfg.HighlightDelaySec != 60 {
+		t.Errorf("expected delay 60s, got %d", cfg.HighlightDelaySec)
 	}
-	if cfg.TwilightLux != 1000 {
-		t.Errorf("expected max lux 1000, got %d", cfg.TwilightLux)
+	// 'z' = 25 -> 25 - 25 = 0 -> LuxTable[0] = 2 Lux (night only)
+	if cfg.TwilightLux != 2 {
+		t.Errorf("expected min lux 2, got %d", cfg.TwilightLux)
 	}
 	if cfg.Highlight <= 0 {
 		t.Errorf("expected positive highlight, got %d", cfg.Highlight)
@@ -112,24 +113,40 @@ func TestMCUCommandBuilders(t *testing.T) {
 		t.Errorf("expected query cmd 'BFbU', got %q", q)
 	}
 
-	if cmd := BuildSetLuxCommand(2); !strings.HasPrefix(cmd, "BX") || !strings.HasSuffix(cmd, "U") {
-		t.Errorf("invalid set lux cmd: %q", cmd)
+	// 100 Lux -> LuxTable[12] -> 25 - 12 = 13 ('n') -> "BXnU"
+	if cmd := BuildSetLuxCommand(100); cmd != "BXnU" {
+		t.Errorf("expected set lux cmd 'BXnU', got %q", cmd)
+	}
+	// 175 Lux -> LuxTable[15] -> 25 - 15 = 10 ('k') -> "BXkU"
+	if cmd := BuildSetLuxCommand(175); cmd != "BXkU" {
+		t.Errorf("expected set lux cmd 'BXkU', got %q", cmd)
 	}
 
 	if cmd := BuildSetLowlightCommand(20); !strings.HasPrefix(cmd, "BL") || !strings.HasSuffix(cmd, "U") {
 		t.Errorf("invalid set lowlight cmd: %q", cmd)
 	}
 
-	if cmd := BuildSetDistanceCommand(10); !strings.HasPrefix(cmd, "BD") || !strings.HasSuffix(cmd, "U") {
-		t.Errorf("invalid set distance cmd: %q", cmd)
+	// Maximum distance (10m) -> 20 ('u') -> "BDuU"
+	if cmd := BuildSetDistanceCommand(10); cmd != "BDuU" {
+		t.Errorf("expected set distance cmd 'BDuU', got %q", cmd)
+	}
+	// Medium distance (6m) -> 15 ('p') -> "BDpU"
+	if cmd := BuildSetDistanceCommand(6); cmd != "BDpU" {
+		t.Errorf("expected set distance cmd 'BDpU', got %q", cmd)
+	}
+	// Minimum distance (3m) -> 10 ('k') -> "BDkU"
+	if cmd := BuildSetDistanceCommand(3); cmd != "BDkU" {
+		t.Errorf("expected set distance cmd 'BDkU', got %q", cmd)
 	}
 
-	if cmd := BuildSetHighlightCommand(80); !strings.HasPrefix(cmd, "BH") || !strings.HasSuffix(cmd, "U") {
-		t.Errorf("invalid set highlight cmd: %q", cmd)
+	// 68% -> 68 / 4 = 17 ('r') -> "BHrU"
+	if cmd := BuildSetHighlightCommand(68); cmd != "BHrU" {
+		t.Errorf("expected set highlight cmd 'BHrU', got %q", cmd)
 	}
 
-	if cmd := BuildSetHighlightDelayCommand(300); !strings.HasPrefix(cmd, "BT") || !strings.HasSuffix(cmd, "U") {
-		t.Errorf("invalid set delay cmd: %q", cmd)
+	// 60s (1 min) -> "BTbU"
+	if cmd := BuildSetHighlightDelayCommand(60); cmd != "BTbU" {
+		t.Errorf("expected set delay cmd 'BTbU', got %q", cmd)
 	}
 }
 
@@ -1361,8 +1378,8 @@ func TestEncryptedPostLoginControlMessages(t *testing.T) {
 }
 
 func TestMCUTelemetryLiveTraces(t *testing.T) {
-	// Test the 4 actual live telemetry strings captured from Steinel L 620 CAM in PCAP
-	// 1. Idle (Sensor Mode / Off): "BpbnbzasazOU"
+	// Test the actual live telemetry strings captured from Steinel L 620 CAM
+	// 1. Idle (Sensor Mode / Off): "BpbnbzasazOU" (Issue #45)
 	cfg1, err := ParseMCUString("BpbnbzasazOU")
 	if err != nil {
 		t.Fatalf("failed to parse live frame 1: %v", err)
@@ -1370,8 +1387,20 @@ func TestMCUTelemetryLiveTraces(t *testing.T) {
 	if cfg1.IsLightOn() {
 		t.Errorf("expected light off in frame 1, got mode %d", cfg1.Mode)
 	}
-	if cfg1.Mode != 1 { // 'b' == 1
+	if cfg1.Mode != 1 { // 'b' == 1 (Sensor Auto)
 		t.Errorf("expected mode 1, got %d", cfg1.Mode)
+	}
+	// 'n' = 13 -> 25 - 13 = 12 -> LuxTable[12] = 100 Lux
+	if cfg1.TwilightLux != 100 {
+		t.Errorf("expected 100 lux in frame 1, got %d", cfg1.TwilightLux)
+	}
+	// 'b' = 1 -> 1 * 60 = 60s (1 min)
+	if cfg1.HighlightDelaySec != 60 {
+		t.Errorf("expected 60s delay in frame 1, got %d", cfg1.HighlightDelaySec)
+	}
+	// 's' = 18 -> 18 * 4 = 72%
+	if cfg1.Highlight != 72 {
+		t.Errorf("expected 72%% highlight in frame 1, got %d", cfg1.Highlight)
 	}
 
 	// 2. Light ON (Continuous Mode): "BpbndzazazOU"
@@ -1382,25 +1411,80 @@ func TestMCUTelemetryLiveTraces(t *testing.T) {
 	if !cfg2.IsLightOn() {
 		t.Errorf("expected light on in frame 2, got mode %d", cfg2.Mode)
 	}
-	if cfg2.Mode != 3 { // 'd' == 3
+	if cfg2.Mode != 3 { // 'd' == 3 (Continuous Light)
 		t.Errorf("expected mode 3, got %d", cfg2.Mode)
 	}
 
-	// 3. Lux / Sensitivity changed: "BpbybzasazOU"
-	cfg3, err := ParseMCUString("BpbybzasazOU")
-	if err != nil {
-		t.Fatalf("failed to parse live frame 3: %v", err)
-	}
-	if cfg3.TwilightLux <= cfg1.TwilightLux {
-		t.Errorf("expected higher lux in frame 3 (got %d vs %d)", cfg3.TwilightLux, cfg1.TwilightLux)
-	}
-
-	// 4. Dimming / Highlight changed: "BpbnbzarazOU"
+	// 3. Highlight changed to 68%: "BpbnbzarazOU"
 	cfg4, err := ParseMCUString("BpbnbzarazOU")
 	if err != nil {
 		t.Fatalf("failed to parse live frame 4: %v", err)
 	}
-	if cfg4.Highlight == cfg1.Highlight {
-		t.Errorf("expected different highlight in frame 4 (got %d vs %d)", cfg4.Highlight, cfg1.Highlight)
+	// 'r' = 17 -> 17 * 4 = 68%
+	if cfg4.Highlight != 68 {
+		t.Errorf("expected 68%% highlight in frame 4, got %d", cfg4.Highlight)
+	}
+
+	// 4. Live frame from Tracelog.txt (Issue #45 with 175 Lux): "BpbkbzacazOU"
+	cfg5, err := ParseMCUString("BpbkbzacazOU")
+	if err != nil {
+		t.Fatalf("failed to parse live frame 5: %v", err)
+	}
+	// 'p' = 15 -> Medium -> 6m
+	if cfg5.Distance != 6 {
+		t.Errorf("expected 6m distance in frame 5, got %d", cfg5.Distance)
+	}
+	// 'b' = 1 -> 60s (1 min)
+	if cfg5.HighlightDelaySec != 60 {
+		t.Errorf("expected 60s delay in frame 5, got %d", cfg5.HighlightDelaySec)
+	}
+	// 'k' = 10 -> 25 - 10 = 15 -> LuxTable[15] = 175 Lux
+	if cfg5.TwilightLux != 175 {
+		t.Errorf("expected 175 lux in frame 5, got %d", cfg5.TwilightLux)
+	}
+	// 'b' = 1 (Sensor Auto)
+	if cfg5.Mode != 1 || cfg5.IsLightOn() {
+		t.Errorf("expected sensor auto mode (light off) in frame 5, got mode %d", cfg5.Mode)
+	}
+	// 'a' = 0 (Lowlight Off)
+	if cfg5.Lowlight != 0 {
+		t.Errorf("expected 0%% lowlight in frame 5, got %d", cfg5.Lowlight)
+	}
+}
+
+func TestFragmentedTelemetryReassembly(t *testing.T) {
+	client := NewClient("127.0.0.1", 34567, "admin", "secret")
+
+	// Chunk 1: "Bpbkbzac" (8 bytes, without terminating 'U')
+	client.handleTelemetryPushLocked("Bpbkbzac")
+	if client.GetLastMCUConfig() != nil {
+		t.Errorf("expected nil config before receiving terminating 'U', got %+v", client.GetLastMCUConfig())
+	}
+	if client.telemetryBuf != "Bpbkbzac" {
+		t.Errorf("expected buffered fragment 'Bpbkbzac', got %q", client.telemetryBuf)
+	}
+
+	// Chunk 2: "azOU" (4 bytes, terminating with 'U')
+	client.handleTelemetryPushLocked("azOU")
+	cfg := client.GetLastMCUConfig()
+	if cfg == nil {
+		t.Fatal("expected reassembled MCUConfig, got nil")
+	}
+	if client.telemetryBuf != "" {
+		t.Errorf("expected cleared telemetryBuf, got %q", client.telemetryBuf)
+	}
+
+	// Verify fields of reassembled "BpbkbzacazOU"
+	if cfg.Distance != 6 {
+		t.Errorf("expected 6m distance, got %d", cfg.Distance)
+	}
+	if cfg.HighlightDelaySec != 60 {
+		t.Errorf("expected 60s delay, got %d", cfg.HighlightDelaySec)
+	}
+	if cfg.TwilightLux != 175 {
+		t.Errorf("expected 175 lux, got %d", cfg.TwilightLux)
+	}
+	if cfg.IsLightOn() {
+		t.Errorf("expected light off in reassembled frame")
 	}
 }

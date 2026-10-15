@@ -44,8 +44,26 @@ func CharConversion(val int) byte {
 	return byte(val + 'a')
 }
 
+// LuxTable defines the 26-level twilight threshold lookup table used by the Steinel CAM app (DetectSettingActivity.java).
+var LuxTable = [26]int{
+	2, 3, 5, 7, 10, 18, 30, 38, 50, 58, 70, 85, 100,
+	125, 150, 175, 200, 250, 300, 400, 500, 750, 1000, 1300, 1600, 2000,
+}
+
+// Helper to map 0-25 character conversion value to realistic Lux values according to the app lookup table.
+// In the MCU, the index is inverted: progress = 25 - conv (e.g. 'n'=13 -> 25-13=12 -> 100 Lux; 'k'=10 -> 25-10=15 -> 175 Lux).
+func mapLuxValue(conv int) int {
+	progress := 25 - conv
+	if progress < 0 {
+		progress = 0
+	} else if progress >= len(LuxTable) {
+		progress = len(LuxTable) - 1
+	}
+	return LuxTable[progress]
+}
+
 // ParseMCUString parses a 12-character MCU response string into an MCUConfig struct.
-// Example: "BubzbzfzazOU"
+// Example: "BubzbzfzazOU" or "BpbkbzacazOU"
 func ParseMCUString(s string) (*MCUConfig, error) {
 	s = strings.TrimSpace(s)
 	if !strings.HasPrefix(s, "B") || !strings.HasSuffix(s, "U") || len(s) < 11 {
@@ -56,7 +74,7 @@ func ParseMCUString(s string) (*MCUConfig, error) {
 		RawString: s,
 	}
 
-	// Index 1: Distance (e.g., 'u' -> 20 -> max distance)
+	// Index 1: Distance / PIR Sensitivity ('k'=10 Min -> 3m, 'p'=15 Med -> 6m, 'u'=20 Max -> 10m)
 	distVal := Conversion(s[1])
 	if distVal >= 20 {
 		cfg.Distance = 10
@@ -68,8 +86,8 @@ func ParseMCUString(s string) (*MCUConfig, error) {
 
 	// Index 2: Highlight Delay Time ('b' -> 1 -> 60s)
 	hldVal := Conversion(s[2])
-	cfg.HighlightDelaySec = (hldVal + 1) * 60
-	if cfg.HighlightDelaySec == 0 {
+	cfg.HighlightDelaySec = hldVal * 60
+	if cfg.HighlightDelaySec <= 0 {
 		cfg.HighlightDelaySec = 60
 	}
 
@@ -77,26 +95,41 @@ func ParseMCUString(s string) (*MCUConfig, error) {
 	luxVal := Conversion(s[3])
 	cfg.TwilightLux = mapLuxValue(luxVal)
 
-	// Index 4: Mode
+	// Index 4: Mode (1 / 'b' = Sensor Auto, 3 / 'd' = Continuous / Dauerlicht, 4 / 'e' = Test)
 	cfg.Mode = Conversion(s[4])
 
 	// Index 5: Indicator LED
 	cfg.Indicator = Conversion(s[5])
 
-	// Index 6: Lowlight (Nightlight Dimming)
-	cfg.Lowlight = Conversion(s[6]) * 5 // e.g. 0-50%
-
-	// Index 7: Highlight (Main Light Dimming)
-	cfg.Highlight = Conversion(s[7]) * 10
-	if cfg.Highlight == 0 {
-		cfg.Highlight = 100
+	// Index 6: Lowlight (Nightlight Dimming: 'a' = Off/0%, else 10-40%)
+	lowVal := Conversion(s[6])
+	if lowVal == 0 {
+		cfg.Lowlight = 0
+	} else {
+		prog := lowVal - 6
+		if prog < 0 {
+			prog = 0
+		}
+		cfg.Lowlight = ((prog * 30) / 19) + 10
+		if cfg.Lowlight > 50 {
+			cfg.Lowlight = 50
+		}
 	}
 
-	// Index 8: Lowlight Duration (lld)
+	// Index 7: Highlight (Main Light Dimming: 30% to 100%, step: progress * 4%)
+	highVal := Conversion(s[7])
+	if highVal <= 7 {
+		cfg.Highlight = 30
+	} else {
+		cfg.Highlight = highVal * 4
+		if cfg.Highlight > 100 {
+			cfg.Highlight = 100
+		}
+	}
+
+	// Index 8: Lowlight Duration (lld: 'a' = all night / 24h)
 	lldVal := Conversion(s[8])
-	if lldVal == 0 {
-		cfg.LowlightDuration = "off"
-	} else if lldVal >= 20 {
+	if lldVal == 0 || lldVal >= 20 {
 		cfg.LowlightDuration = "all_night"
 	} else {
 		cfg.LowlightDuration = fmt.Sprintf("%dh", lldVal/2)
@@ -108,18 +141,6 @@ func ParseMCUString(s string) (*MCUConfig, error) {
 	return cfg, nil
 }
 
-// Helper to map 0-25 character index to realistic Lux values
-func mapLuxValue(idx int) int {
-	if idx <= 0 {
-		return 2
-	}
-	if idx >= 25 {
-		return 1000
-	}
-	// Linear interpolation approximation: 2 to 1000 Lux
-	return 2 + (idx * 40)
-}
-
 // BuildQueryMCUCommand returns the command to request the current MCU state: "BFbU"
 func BuildQueryMCUCommand() string {
 	return "BFbU"
@@ -127,14 +148,34 @@ func BuildQueryMCUCommand() string {
 
 // BuildSetLuxCommand builds the MCU command to set the twilight threshold: "BX<char>U"
 func BuildSetLuxCommand(lux int) string {
-	idx := (lux - 2) / 40
-	return fmt.Sprintf("BX%cU", CharConversion(idx))
+	bestIdx := 0
+	minDiff := 999999
+	for i, val := range LuxTable {
+		diff := val - lux
+		if diff < 0 {
+			diff = -diff
+		}
+		if diff < minDiff {
+			minDiff = diff
+			bestIdx = i
+		}
+	}
+	conv := 25 - bestIdx
+	return fmt.Sprintf("BX%cU", CharConversion(conv))
 }
 
 // BuildSetLowlightCommand builds the MCU command to set the nightlight brightness: "BL<char>U"
 func BuildSetLowlightCommand(percent int) string {
-	idx := percent / 5
-	return fmt.Sprintf("BL%cU", CharConversion(idx))
+	if percent <= 0 {
+		return "BLaU"
+	}
+	prog := ((percent - 10) * 19) / 30
+	if prog < 0 {
+		prog = 0
+	} else if prog > 19 {
+		prog = 19
+	}
+	return fmt.Sprintf("BL%cU", CharConversion(prog+6))
 }
 
 // BuildSetLowlightDurationCommand builds the MCU command for nightlight duration: "BS<char>U"
@@ -147,28 +188,33 @@ func BuildSetLowlightDurationCommand(dur int) string {
 func BuildSetDistanceCommand(dist int) string {
 	var idx int
 	if dist >= 8 {
-		idx = 20
+		idx = 20 // 'u' (Maximum)
 	} else if dist >= 5 {
-		idx = 15
+		idx = 15 // 'p' (Medium)
 	} else {
-		idx = 10
+		idx = 10 // 'k' (Minimum)
 	}
 	return fmt.Sprintf("BD%cU", CharConversion(idx))
 }
 
 // BuildSetHighlightCommand builds the MCU command to set the main light brightness: "BH<char>U"
 func BuildSetHighlightCommand(percent int) string {
-	idx := percent / 10
+	idx := percent / 4
+	if idx < 7 {
+		idx = 7
+	} else if idx > 25 {
+		idx = 25
+	}
 	return fmt.Sprintf("BH%cU", CharConversion(idx))
 }
 
 // BuildSetHighlightDelayCommand builds the MCU command to set the main light delay: "BT<char>U"
 func BuildSetHighlightDelayCommand(seconds int) string {
-	idx := (seconds / 60) - 1
-	if idx < 0 {
-		idx = 0
+	minutes := seconds / 60
+	if minutes < 1 {
+		minutes = 1
 	}
-	return fmt.Sprintf("BT%cU", CharConversion(idx))
+	return fmt.Sprintf("BT%cU", CharConversion(minutes))
 }
 
 // BuildSetLightModeCommand builds the MCU command to set the light mode: "BM<char>U"

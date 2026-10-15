@@ -135,11 +135,16 @@ func (d *Driver) applyMCUConfig(mcuCfg *MCUConfig) {
 		return
 	}
 	st := d.eventBus.GetStatus()
-	if mcuCfg.IsLightOn() {
+	switch mcuCfg.Mode {
+	case 3: // 'd' -> Continuous Light (Dauerlicht)
 		st.LampMode = 1
-	} else {
+	case 1: // 'b' -> Sensor Automatik
+		st.LampMode = 2
+	default:
 		st.LampMode = 0
 	}
+	st.PIRActive = (mcuCfg.Distance > 0 && mcuCfg.Mode != 0)
+
 	if mcuCfg.Highlight > 0 {
 		st.Highlight = mcuCfg.Highlight
 	}
@@ -149,8 +154,12 @@ func (d *Driver) applyMCUConfig(mcuCfg *MCUConfig) {
 	if mcuCfg.TwilightLux > 0 {
 		st.Lux = mcuCfg.TwilightLux
 	}
-	if mcuCfg.Distance > 0 {
-		st.PIRSensitivity = mcuCfg.Distance * 10
+	if mcuCfg.Distance >= 10 {
+		st.PIRSensitivity = 100
+	} else if mcuCfg.Distance >= 6 {
+		st.PIRSensitivity = 66
+	} else if mcuCfg.Distance > 0 {
+		st.PIRSensitivity = 33
 	}
 	st.Lowlight = mcuCfg.Lowlight
 	if dur, err := strconv.Atoi(strings.TrimSuffix(mcuCfg.LowlightDuration, "h")); err == nil {
@@ -222,9 +231,13 @@ func (d *Driver) GetMQTTCallbacks() mqtt.Callbacks {
 			return d.SetNightlightDuration(fmt.Sprintf("%dh", timeVal/60))
 		},
 		SetPIRSensitivity: func(percent int) error {
-			dist := percent / 10
-			if dist <= 0 {
-				dist = 1
+			var dist int
+			if percent >= 67 {
+				dist = 10 // Maximum ('u')
+			} else if percent >= 34 {
+				dist = 6 // Medium ('p')
+			} else {
+				dist = 3 // Minimum ('k')
 			}
 			return d.SetDistance(dist)
 		},
@@ -241,9 +254,9 @@ func (d *Driver) SetLamp(on bool) error {
 	if err == nil && d.eventBus != nil {
 		st := d.eventBus.GetStatus()
 		if on {
-			st.LampMode = 1
+			st.LampMode = 1 // Dauerlicht (Mode 3, 'd')
 		} else {
-			st.LampMode = 0
+			st.LampMode = 2 // Sensor Automatik (Mode 1, 'b')
 		}
 		d.eventBus.UpdateStatus(st)
 	}
@@ -280,7 +293,13 @@ func (d *Driver) SetDistance(val int) error {
 	err := d.client.SetDistance(val)
 	if err == nil && d.eventBus != nil {
 		st := d.eventBus.GetStatus()
-		st.PIRSensitivity = val * 10
+		if val >= 8 {
+			st.PIRSensitivity = 100
+		} else if val >= 5 {
+			st.PIRSensitivity = 66
+		} else {
+			st.PIRSensitivity = 33
+		}
 		d.eventBus.UpdateStatus(st)
 	}
 	return err

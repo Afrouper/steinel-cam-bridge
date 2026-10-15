@@ -35,6 +35,7 @@ type Client struct {
 	isLoggedIn        bool
 	serialTransActive bool
 	lastMCUConfig     *MCUConfig
+	telemetryBuf      string
 	onTelemetry       func(*MCUConfig)
 	closeChan         chan struct{}
 	closed            atomic.Bool
@@ -894,7 +895,7 @@ func (c *Client) sendRawPacketWithHeaderLocked(msgID uint16, channel byte, total
 		// Handle unsolicited / push MCU telemetry (MsgID 1582)
 		if respHdr.MsgID == MsgTransSerialData {
 			c.handleTelemetryPushLocked(cleanPayload)
-			if msgID == MsgTransSerialData {
+			if msgID == MsgTransSerialData && c.telemetryBuf == "" {
 				return []byte(cleanPayload), respHdr, nil
 			}
 			continue
@@ -905,14 +906,40 @@ func (c *Client) sendRawPacketWithHeaderLocked(msgID uint16, channel byte, total
 }
 
 func (c *Client) handleTelemetryPushLocked(raw string) {
-	cfg, err := ParseMCUString(raw)
+	raw = strings.Trim(raw, "\x00\r\n ")
+	if raw == "" {
+		return
+	}
+
+	full := c.telemetryBuf + raw
+
+	// If the accumulated string does not end with "U", buffer it and wait for next chunk
+	if !strings.HasSuffix(full, "U") {
+		// If it contains "B", start buffering from the last "B"
+		if startIdx := strings.LastIndex(full, "B"); startIdx >= 0 {
+			c.telemetryBuf = full[startIdx:]
+		} else {
+			c.telemetryBuf = ""
+		}
+		return
+	}
+
+	// Full frame received: locate starting "B"
+	c.telemetryBuf = ""
+	startIdx := strings.LastIndex(full, "B")
+	if startIdx < 0 {
+		return
+	}
+	frame := full[startIdx:]
+
+	cfg, err := ParseMCUString(frame)
 	if err != nil {
-		logger.Debug("Xiongmai", "⚠️ Could not parse MsgID 1582 telemetry string %q: %v", raw, err)
+		logger.Debug("Xiongmai", "⚠️ Could not parse MsgID 1582 telemetry string %q: %v", frame, err)
 		return
 	}
 	c.lastMCUConfig = cfg
 	logger.Debug("Xiongmai", "💡 Received MCU Telemetry (1582): %q -> LightOn=%v, Dim=%d%%, Lux=%d, Dist=%dm, Delay=%ds, Lowlight=%d%% (%s)",
-		raw, cfg.IsLightOn(), cfg.Highlight, cfg.TwilightLux, cfg.Distance, cfg.HighlightDelaySec, cfg.Lowlight, cfg.LowlightDuration)
+		frame, cfg.IsLightOn(), cfg.Highlight, cfg.TwilightLux, cfg.Distance, cfg.HighlightDelaySec, cfg.Lowlight, cfg.LowlightDuration)
 	if c.onTelemetry != nil {
 		cb := c.onTelemetry
 		go cb(cfg)
@@ -923,27 +950,33 @@ func (c *Client) drainPendingTelemetryLocked() {
 	if c.conn == nil {
 		return
 	}
-	_ = c.conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
-	respHdrBuf := make([]byte, HeaderLength)
-	n, err := io.ReadFull(c.conn, respHdrBuf)
-	if err != nil || n < HeaderLength {
+	// Try reading up to 2 packets in case the 1582 frame was split into 2 chunks
+	for i := 0; i < 2; i++ {
+		_ = c.conn.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
+		respHdrBuf := make([]byte, HeaderLength)
+		n, err := io.ReadFull(c.conn, respHdrBuf)
+		if err != nil || n < HeaderLength {
+			_ = c.conn.SetDeadline(time.Time{})
+			break
+		}
+		respHdr, err := DecodeHeader(respHdrBuf)
+		if err != nil || respHdr.DataLength > 65535 {
+			_ = c.conn.SetDeadline(time.Time{})
+			break
+		}
+		respPayload := make([]byte, respHdr.DataLength)
+		if _, err := io.ReadFull(c.conn, respPayload); err != nil {
+			_ = c.conn.SetDeadline(time.Time{})
+			break
+		}
 		_ = c.conn.SetDeadline(time.Time{})
-		return
-	}
-	respHdr, err := DecodeHeader(respHdrBuf)
-	if err != nil || respHdr.DataLength > 65535 {
-		_ = c.conn.SetDeadline(time.Time{})
-		return
-	}
-	respPayload := make([]byte, respHdr.DataLength)
-	if _, err := io.ReadFull(c.conn, respPayload); err != nil {
-		_ = c.conn.SetDeadline(time.Time{})
-		return
-	}
-	_ = c.conn.SetDeadline(time.Time{})
-	cleanPayload := strings.TrimRight(string(respPayload), "\x00\r\n ")
-	if respHdr.MsgID == MsgTransSerialData {
-		c.handleTelemetryPushLocked(cleanPayload)
+		cleanPayload := strings.TrimRight(string(respPayload), "\x00\r\n ")
+		if respHdr.MsgID == MsgTransSerialData {
+			c.handleTelemetryPushLocked(cleanPayload)
+			if c.telemetryBuf == "" && c.lastMCUConfig != nil {
+				break
+			}
+		}
 	}
 }
 
@@ -1030,6 +1063,7 @@ func (c *Client) Close() error {
 		err := c.conn.Close()
 		c.conn = nil
 		c.serialTransActive = false
+		c.telemetryBuf = ""
 		return err
 	}
 	return nil
