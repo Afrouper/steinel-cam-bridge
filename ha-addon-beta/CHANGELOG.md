@@ -2,6 +2,23 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.3.11-beta.8
+
+### 🛠️ L 620 CAM Bugfixes: Dämmerungsschwelle, 1080p Auflösung, RTSP-Aktivierung & ONVIF-Modell (Issue #45)
+
+- **Dämmerungsschwelle: Startwert-Schutz & 2000 Lux Maximalwert**:
+  - **Startwert-Schutz**: Verhindert das Senden von `0` an Home Assistant beim Start der Bridge vor dem ersten Eintreffen echter Telemetriedaten (`st.Lux >= 2`). Beseitigt die Fehlermeldung `"Invalid value ... 0 (range 2.0 - 1000.0)"`.
+  - **Erweiterter Schieberegler**: Maximalwert der MQTT-Entität `lux_threshold` von 1000 auf 2000 lx angehoben, passend zur 26-Stufen-Wertetabelle der Steinel App.
+- **Native 1080p Full HD Videoauflösung**:
+  - Entfernung des veralteten Clampings auf 720p in `pkg/xiongmai/driver.go`. Die L 620 CAM behält nun 1080p Full HD als Standard-Hauptstream (`channel=1_stream=0`) dauerhaft über Add-on-Neustarts hinweg bei.
+- **Automatische RTSP-Server-Aktivierung auf Port 554 & Ingest-Kandidaten**:
+  - **SessionID im NetIP CONFIG_SET Payload**: Die Aktivierung des internen Kamera-RTSP-Servers (`NetWork.RTSP` MsgID 1042) enthält nun zwingend die von der Firmware geforderte `SessionID` sowie eine vorherige Statusabfrage via `MsgConfigGetReq` (1040).
+  - **Erweiterte URL-Kandidaten & Fallbacks**: Automatischer Fallback auf leere/unauthentifizierte Passwörter sowie alternative Stream-Pfade (`/live/ch0`), falls der RTSP-Daemon der Kamera ohne Authentifizierung lauscht.
+- **Dynamische ONVIF-Modellmeldung (`L 620 CAM`)**:
+  - `GetDeviceInformation` meldet sich bei ONVIF-Clients (wie Home Assistant / go2rtc) nun dynamisch mit dem tatsächlichen Modellnamen (`L 620 CAM` bzw. `L 625 CAM SC`), anstatt statisch `L 625 CAM SC` auszugeben.
+- **PIR-Empfindlichkeits-Mapping**:
+  - Angleichung der 3 diskreten Stufen (3m, 6m, 10m) auch im generischen `driver.L620Driver`.
+
 ## 1.3.11-beta.7
 
 ### 🎯 L 620 CAM MCU-Telemetrie-Fragmentierung, Lux-Tabelle, Nachlaufzeit & Sensor-Modus (Issue #45)
