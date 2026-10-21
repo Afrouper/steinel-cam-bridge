@@ -185,6 +185,30 @@ type RTSPServer struct {
 	IsServer bool `json:"IsServer"`
 }
 
+// VideoFormatConfig represents video stream encoding parameters in Sofia Simplify.Encode.
+type VideoFormatConfig struct {
+	BitRate        int    `json:"BitRate"`
+	BitRateControl string `json:"BitRateControl,omitempty"`
+	Compression    string `json:"Compression"`
+	FPS            int    `json:"FPS"`
+	GOP            int    `json:"GOP,omitempty"`
+	Quality        int    `json:"Quality,omitempty"`
+	Resolution     string `json:"Resolution"`
+}
+
+// FormatConfig represents a single stream format configuration (MainFormat / ExtraFormat).
+type FormatConfig struct {
+	AudioEnable bool              `json:"AudioEnable"`
+	VideoEnable bool              `json:"VideoEnable,omitempty"`
+	Video       VideoFormatConfig `json:"Video"`
+}
+
+// SimplifyEncodeItem represents a channel's encoding configuration.
+type SimplifyEncodeItem struct {
+	MainFormat  FormatConfig `json:"MainFormat"`
+	ExtraFormat FormatConfig `json:"ExtraFormat,omitempty"`
+}
+
 // Light Switch JSON (FbExtraStateCtrl)
 type LightCtrlReq struct {
 	Name             string              `json:"Name"`

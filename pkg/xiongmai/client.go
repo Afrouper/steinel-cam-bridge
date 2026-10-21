@@ -696,6 +696,103 @@ func (c *Client) EnableRTSP() error {
 	return nil
 }
 
+// EnsureH264Encoding queries the camera's Simplify.Encode configuration (MsgID 1040).
+// If the camera is set to H.265 (HEVC), it automatically reconfigures it to H.264 (MsgID 1042)
+// to ensure standard RTSP and ONVIF Profile S compatibility.
+func (c *Client) EnsureH264Encoding() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	sessionHex := fmt.Sprintf("0x%08X", c.sessionID)
+	getReq := map[string]interface{}{
+		"Name":      "Simplify.Encode",
+		"SessionID": sessionHex,
+	}
+	getPayload, err := json.Marshal(getReq)
+	if err != nil {
+		return err
+	}
+
+	logger.Debug("Xiongmai", "📡 Querying video encode configuration (Simplify.Encode)...")
+	resp, err := c.sendPacketLocked(MsgConfigGetReq, getPayload)
+	if err != nil {
+		return fmt.Errorf("failed to query Simplify.Encode: %w", err)
+	}
+
+	var baseResp struct {
+		Name           string          `json:"Name"`
+		Ret            int             `json:"Ret"`
+		SessionID      string          `json:"SessionID"`
+		SimplifyEncode json.RawMessage `json:"Simplify.Encode"`
+	}
+	if err := json.Unmarshal(resp, &baseResp); err != nil {
+		return fmt.Errorf("failed to parse Simplify.Encode response: %w", err)
+	}
+	if baseResp.Ret != 100 && baseResp.Ret != 0 {
+		return fmt.Errorf("camera returned error code %d for Simplify.Encode query", baseResp.Ret)
+	}
+
+	// Simplify.Encode can be either an array of objects or a single object
+	var items []SimplifyEncodeItem
+	var single SimplifyEncodeItem
+	isArray := false
+	if err := json.Unmarshal(baseResp.SimplifyEncode, &items); err == nil && len(items) > 0 {
+		isArray = true
+	} else if err := json.Unmarshal(baseResp.SimplifyEncode, &single); err == nil {
+		items = []SimplifyEncodeItem{single}
+	} else {
+		logger.Debug("Xiongmai", "ℹ️ Could not unmarshal Simplify.Encode payload: %s", string(baseResp.SimplifyEncode))
+		return nil
+	}
+
+	mainVideo := &items[0].MainFormat.Video
+	logger.Info("Xiongmai", "🎥 Video encode config: Compression=%s, Resolution=%s, FPS=%d, BitRate=%d kbps, AudioEnable=%v",
+		mainVideo.Compression, mainVideo.Resolution, mainVideo.FPS, mainVideo.BitRate, items[0].MainFormat.AudioEnable)
+
+	// If compression is not H.264 (e.g. H.265 / HEVC), update it to H.264
+	compUpper := strings.ToUpper(strings.TrimSpace(mainVideo.Compression))
+	if strings.Contains(compUpper, "H.265") || strings.Contains(compUpper, "H265") || strings.Contains(compUpper, "HEVC") {
+		logger.Info("Xiongmai", "🔄 Camera video compression is %s — switching to H.264 for RTSP/ONVIF Profile S compatibility...", mainVideo.Compression)
+		items[0].MainFormat.Video.Compression = "H.264"
+		if items[0].ExtraFormat.Video.Compression != "" {
+			items[0].ExtraFormat.Video.Compression = "H.264"
+		}
+
+		var encodeVal interface{} = items
+		if !isArray {
+			encodeVal = items[0]
+		}
+
+		setReq := map[string]interface{}{
+			"Name":            "Simplify.Encode",
+			"SessionID":       sessionHex,
+			"Simplify.Encode": encodeVal,
+		}
+		setPayload, err := json.Marshal(setReq)
+		if err != nil {
+			return err
+		}
+
+		setResp, err := c.sendPacketLocked(MsgConfigSetReq, setPayload)
+		if err != nil {
+			return fmt.Errorf("failed to set Simplify.Encode to H.264: %w", err)
+		}
+
+		var setResult struct {
+			Ret int `json:"Ret"`
+		}
+		if err := json.Unmarshal(setResp, &setResult); err == nil && (setResult.Ret == 100 || setResult.Ret == 0) {
+			logger.Info("Xiongmai", "✅ Camera video compression successfully switched to H.264")
+		} else {
+			logger.Warn("Xiongmai", "⚠️ Setting Simplify.Encode to H.264 returned code %d (response: %s)", setResult.Ret, string(setResp))
+		}
+	} else {
+		logger.Info("Xiongmai", "✅ Camera video compression is confirmed H.264")
+	}
+
+	return nil
+}
+
 // StartSerialTrans establishes the OPTrans RS232 transparent serial channel (MsgID 1578).
 func (c *Client) StartSerialTrans() error {
 	c.mu.Lock()

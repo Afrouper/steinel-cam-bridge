@@ -163,3 +163,38 @@ Die L 620 MCU unterstützt genau 3 diskrete Stufen (`XMDetectSettingPresenter.ja
 | **PIR-Stufen** | 3 diskrete Stufen (Min / Med / Max) | Stufenlos (0–100 % bzw. 1–10 m) |
 | **Telemetrie-Übertragung** | Plaintext ASCII-Push via MsgID 1582 (gepuffert) | Binäre UART-Frames auf DataChannel `test` |
 | **ONVIF Model** | Dynamisch als `"L 620 CAM"` gemeldet | Dynamisch als `"L 625 CAM SC"` gemeldet |
+
+---
+
+## 7. Video- & Audio-Ingest (RTSP Port 554 & Sofia Simplify.Encode)
+
+### 1. RTSP-Pfad-Reihenfolge & Kamera-Puffer-Schutz
+Die Xiongmai V4.03.R12 Firmware besitzt einen begrenzten Pfad-Puffer auf ihrem internen RTSP-Server (Port 554). Wird ein Query-Parameter wie `?real_stream` an den Pfad angehängt, bricht der interne Parser mit `buffer length exceeds 64` ab oder akzeptiert zwar `PLAY`, sendet jedoch keine RTP-Datenpakete.
+Daher gilt für Kandidaten-URLs strikt:
+1. **Kandidat #1 (Kanonischer sauberer Pfad, empfohlen)**:
+   `rtsp://<ip>:554/user=admin_password=***_channel=1_stream=0.sdp`
+2. **Kandidat #2 (Legacy Query-Parameter Pfad)**:
+   `rtsp://<ip>:554/user=admin_password=***_channel=1_stream=0.sdp?real_stream`
+3. **Kandidat #3–5 (Xiongmai Standard & Generische Fallbacks)**:
+   `/stream=0`, `/h264/ch1/main/av_stream`, `/live/ch0`
+
+### 2. Zero-Packet Watchdog & Silence Watchdog
+Um zu verhindern, dass ein Kandidat nach erfolgreichem `PLAY` ewig blockiert, falls die Kamera keine RTP-Pakete liefert:
+- **5-Sekunden Initial-Watchdog**: Wenn innerhalb von 5 Sekunden nach `PLAY` kein einziges RTP-Videopaket von der Kamera empfangen wurde, wird die Verbindung geschlossen und sofort auf den nächsten URL-Kandidaten umgeschaltet.
+- **15-Sekunden Silence-Watchdog**: Bleibt der RTP-Videodatenstrom während des laufenden Betriebs länger als 15 Sekunden stumm, wird die Verbindung automatisch neu initialisiert.
+- **Status-Logging**: Der Log-Eintrag `▶️ Streaming active` wird erst dann ausgegeben, wenn tatsächlich das erste Video-RTP-Paket empfangen wurde.
+
+### 3. SDP-Track-Validierung & Audio-Codecs
+- **H.264 Pflicht für ONVIF Profile S**: Der RTSP-Ingest prüft `desc.Medias` explizit. Fehlt ein H.264-Videotrack (oder bietet die Kamera ausschließlich H.265 an), schlägt der Kandidat sofort mit einer verständlichen Fehlermeldung fehl, anstatt stumm zu blockieren.
+- **Audio-Unterstützung**:
+  - `*format.MPEG4Audio` (AAC): Wird direkt ohne Transcoding an den RTSP-Server weitergeleitet.
+  - `*format.G711` (µ-law oder A-law): Wird über `ProcessPCMU` bzw. `ProcessPCMA` dekodiert und in AAC-LC (16 kHz) transkodiert.
+
+### 4. Sofia Video-Encoding & H.264 Erzwingung (`Simplify.Encode`)
+Beim Start prüft die Bridge über `MsgConfigGetReq` (1040) die Konfiguration `Simplify.Encode`:
+- Antwortet die Kamera mit `Compression: "H.265"` (HEVC), rekonfiguriert die Bridge die Kamera automatisch via `MsgConfigSetReq` (1042) auf `Compression: "H.264"`, um die volle Kompatibilität mit RTSP, go2rtc, Home Assistant und ONVIF Profile S sicherzustellen.
+
+### 5. Bewegungsalarm & Warnton (Siren Buzzer)
+Die L 620 CAM besitzt im Gegensatz zur L 625 CAM SC keine manuell per Befehl schaltbare Sirene, sondern einen **Bewegungsalarm-Summer** ("Push-Notification and Alarm"):
+- Gesteuert über NetIP-Konfiguration `Detect.MotionDetect.[0]` (`EventHandler.VoiceEnable: true` bzw. `BeepEnable: true`).
+- Wenn aktiviert, ertönt bei Bewegungserkennung an der Leuchte ein ca. 60-sekündiger Alarmton.

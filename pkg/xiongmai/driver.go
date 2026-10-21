@@ -102,6 +102,11 @@ func (d *Driver) Start(ctx context.Context) error {
 			logger.Warn("Xiongmai Driver", "⚠️ Zero-touch RTSP enablement result: %v", err)
 		}
 
+		// Step 2b: Query video encode config & ensure H.264
+		if err := d.client.EnsureH264Encoding(); err != nil {
+			logger.Warn("Xiongmai Driver", "⚠️ Video encode check result: %v", err)
+		}
+
 		// Step 3: Query initial light and MCU states
 		d.syncInitialState()
 

@@ -125,9 +125,9 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
 
 - **`pkg/xiongmai/`**:
   - Detailspezifikation & Byte-Layout: Siehe [`AGENTS_L620.md`](file:///Users/christian/dev/git/steinel-cam-bridge/AGENTS_L620.md).
-  - `client.go`: Xiongmai Sofia Binärprotokoll-Client (Port 34567, MD5-Challenge-Response & adaptiver RSA/AES-Login mit CWE-312 Credential Protection, OPTrans RS232 Serial Bridge & 1582 Telemetrie-Fragmentierungs-Puffer).
+  - `client.go`: Xiongmai Sofia Binärprotokoll-Client (Port 34567, MD5-Challenge-Response & adaptiver RSA/AES-Login mit CWE-312 Credential Protection, OPTrans RS232 Serial Bridge, 1582 Telemetrie-Fragmentierungs-Puffer & `EnsureH264Encoding` via `Simplify.Encode` 1040/1042).
   - `driver.go`: Orchestriert Sofia-Verbindung, RTSP-Ingest, MCU-Synchronisation, SD-Karten-Verwaltung und Talk-Backchannel.
-  - `rtsp_ingest.go`: Nimmt den nativen H.264/AAC-RTSP-Stream der L 620 entgegen und füttert den internen RTSP-Server.
+  - `rtsp_ingest.go`: Nimmt den nativen H.264/AAC-RTSP-Stream der L 620 entgegen mit kanonischer sauberer Pfad-Reihenfolge (ohne `?real_stream` an Position 1 gegen Kamera-Pufferüberläufe), SDP-Track-Prüfung, Zero-Packet Initial-Watchdog (5s) und Silence-Watchdog (15s).
   - `mcu.go`: ASCII-Frame Parser (`B...U`) & Command Builder für L 620 Licht-, Dämmerungs- und Sensorkommandos via OPTrans RS232.
   - `sdcard.go`: Xiongmai SD-Karten Dateisystemabfrage (`OPFileQuery`) und Download mit konsistenter Thumbnail-Behandlung.
   - `talk.go`: Rückkanal-Audiokommunikation (G.711u / PCMU) über das Xiongmai Talk-Protokoll.
@@ -140,9 +140,9 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
   - `syncer.go`: Hintergrund-Syncer (`RecordingSyncer`), der neue SD-Karten-Aufnahmen periodisch (abschaltbar via `0`, adaptiv gedrosselt auf 5 Minuten bei aktivem 24/7 RTSP-Streaming zur Kamera-SoC-Schonung) oder bei Bewegungstriggern (mit 35s Pufferzeit gegen I/O-Kollisionen während der 30s-Aufnahme) in den Cache lädt, redundante Upstream-Queries bei Cache-Nutzung unterbindet und neue Aufnahme-Events mit vollständiger `thumbnail_url` an MQTT / Home Assistant publiziert.
 
 - **`pkg/audio/`**:
-  - `g711.go`: ITU-T G.711 µ-law Decoder (8-Bit $\rightarrow$ 16-Bit Linear PCM).
+  - `g711.go`: ITU-T G.711 µ-law & A-law Decoder (`DecodePCMU` & `DecodePCMA`, 8-Bit $\rightarrow$ 16-Bit Linear PCM).
   - `resample.go`: Polyphase- / Interpolations-Resampler (8 kHz $\rightarrow$ 16 kHz / 32 kHz).
-  - `transcoder.go`: Echtzeit-Audiotranscoder mit persistentem VisualOn AAC-Encoder (`github.com/gen2brain/aac-go`), wiederverwendbarem `pcmReader bytes.Reader` via `Reset()` und Puffer-Kompaktierung gegen Speicherfragmentierung.
+  - `transcoder.go`: Echtzeit-Audiotranscoder (`ProcessPCMU` & `ProcessPCMA`) mit persistentem VisualOn AAC-Encoder (`github.com/gen2brain/aac-go`), wiederverwendbarem `pcmReader bytes.Reader` via `Reset()` und Puffer-Kompaktierung gegen Speicherfragmentierung.
 
 - **`pkg/rtsp/`**:
   - `server.go`: RTSP-Server auf Basis von `github.com/bluenviron/gortsplib/v4`. Liefert H.264 Video, AAC/PCMU Audio, ONVIF Profile T Audio Backchannel mit Single-Talker-Lock (exklusive Session-Belegung des Mikrofons), akkurates `ActiveClients()`-Tracking (Inkrement ausschließlich bei `PLAY`, dekrementiert nur bei registrierten Spielern) sowie integrierte Digest (MD5/SHA256) & Basic Authentifizierung mit bidirektionaler Session-Connection-Vererbung gegen Reconnect-Abbrüche (`wrong response on SETUP`).

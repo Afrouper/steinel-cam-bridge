@@ -1488,3 +1488,246 @@ func TestFragmentedTelemetryReassembly(t *testing.T) {
 		t.Errorf("expected light off in reassembled frame")
 	}
 }
+
+func TestEnsureH264Encoding(t *testing.T) {
+	// 1. Test case: Already H.264 -> No set request needed
+	t.Run("AlreadyH264", func(t *testing.T) {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("failed to listen: %v", err)
+		}
+		defer func() { _ = listener.Close() }()
+
+		port := listener.Addr().(*net.TCPAddr).Port
+
+		go func() {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			defer func() { _ = conn.Close() }()
+
+			for {
+				hdrBytes := make([]byte, 20)
+				if _, err := io.ReadFull(conn, hdrBytes); err != nil {
+					return
+				}
+				hdr, err := DecodeHeader(hdrBytes)
+				if err != nil {
+					return
+				}
+
+				payload := make([]byte, hdr.DataLength)
+				if _, err := io.ReadFull(conn, payload); err != nil {
+					return
+				}
+
+				switch hdr.MsgID {
+				case MsgMonitorClaimReq:
+					respPayload := []byte(`{"Ret":-100}` + "\x00")
+					respHdr := Header{
+						Magic:      HeaderMagic,
+						Channel:    1,
+						SessionID:  0,
+						Sequence:   hdr.Sequence,
+						MsgID:      MsgMonitorClaimResp,
+						DataLength: uint32(len(respPayload)),
+					}
+					_, _ = conn.Write(append(respHdr.Encode(), respPayload...))
+				case MsgLoginReq:
+					respPayload := []byte(`{"Ret":100,"SessionID":"0x00000001"}` + "\x00")
+					respHdr := Header{
+						Magic:      HeaderMagic,
+						Channel:    1,
+						SessionID:  0x01,
+						Sequence:   hdr.Sequence,
+						MsgID:      MsgLoginResp,
+						DataLength: uint32(len(respPayload)),
+					}
+					_, _ = conn.Write(append(respHdr.Encode(), respPayload...))
+				case MsgTransStartReq:
+					respPayload := []byte(`{"Ret":100,"SessionID":"0x00000001"}` + "\x00")
+					respHdr := Header{
+						Magic:      HeaderMagic,
+						Channel:    1,
+						SessionID:  0x01,
+						Sequence:   hdr.Sequence,
+						MsgID:      MsgTransStartResp,
+						DataLength: uint32(len(respPayload)),
+					}
+					_, _ = conn.Write(append(respHdr.Encode(), respPayload...))
+				case MsgLogoutReq:
+					respPayload := []byte(`{"Ret":100,"SessionID":"0x00000001"}` + "\x00")
+					respHdr := Header{
+						Magic:      HeaderMagic,
+						Channel:    1,
+						SessionID:  0x01,
+						Sequence:   hdr.Sequence,
+						MsgID:      MsgLogoutResp,
+						DataLength: uint32(len(respPayload)),
+					}
+					_, _ = conn.Write(append(respHdr.Encode(), respPayload...))
+				case MsgConfigGetReq:
+					respPayload := []byte(`{"Name":"Simplify.Encode","Ret":100,"SessionID":"0x00000001","Simplify.Encode":[{"MainFormat":{"AudioEnable":true,"Video":{"Compression":"H.264","Resolution":"1080P","FPS":25,"BitRate":2048}}}]}` + "\x00")
+					respHdr := Header{
+						Magic:      HeaderMagic,
+						Channel:    1,
+						SessionID:  0x01,
+						Sequence:   hdr.Sequence,
+						MsgID:      MsgConfigGetResp,
+						DataLength: uint32(len(respPayload)),
+					}
+					_, _ = conn.Write(append(respHdr.Encode(), respPayload...))
+				case MsgConfigSetReq:
+					t.Errorf("unexpected MsgConfigSetReq sent when stream is already H.264")
+				}
+			}
+		}()
+
+		client := NewClient("127.0.0.1", port, "admin", "")
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		if err := client.Connect(ctx); err != nil {
+			t.Fatalf("failed to connect: %v", err)
+		}
+		defer func() { _ = client.Close() }()
+
+		if err := client.EnsureH264Encoding(); err != nil {
+			t.Fatalf("EnsureH264Encoding failed: %v", err)
+		}
+	})
+
+	// 2. Test case: Camera has H.265 -> Reconfigures to H.264 via MsgConfigSetReq
+	t.Run("SwitchFromH265ToH264", func(t *testing.T) {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("failed to listen: %v", err)
+		}
+		defer func() { _ = listener.Close() }()
+
+		port := listener.Addr().(*net.TCPAddr).Port
+		setReceived := make(chan struct{}, 1)
+
+		go func() {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			defer func() { _ = conn.Close() }()
+
+			for {
+				hdrBytes := make([]byte, 20)
+				if _, err := io.ReadFull(conn, hdrBytes); err != nil {
+					return
+				}
+				hdr, err := DecodeHeader(hdrBytes)
+				if err != nil {
+					return
+				}
+
+				payload := make([]byte, hdr.DataLength)
+				if _, err := io.ReadFull(conn, payload); err != nil {
+					return
+				}
+
+				switch hdr.MsgID {
+				case MsgMonitorClaimReq:
+					respPayload := []byte(`{"Ret":-100}` + "\x00")
+					respHdr := Header{
+						Magic:      HeaderMagic,
+						Channel:    1,
+						SessionID:  0,
+						Sequence:   hdr.Sequence,
+						MsgID:      MsgMonitorClaimResp,
+						DataLength: uint32(len(respPayload)),
+					}
+					_, _ = conn.Write(append(respHdr.Encode(), respPayload...))
+				case MsgLoginReq:
+					respPayload := []byte(`{"Ret":100,"SessionID":"0x00000002"}` + "\x00")
+					respHdr := Header{
+						Magic:      HeaderMagic,
+						Channel:    1,
+						SessionID:  0x02,
+						Sequence:   hdr.Sequence,
+						MsgID:      MsgLoginResp,
+						DataLength: uint32(len(respPayload)),
+					}
+					_, _ = conn.Write(append(respHdr.Encode(), respPayload...))
+				case MsgTransStartReq:
+					respPayload := []byte(`{"Ret":100,"SessionID":"0x00000002"}` + "\x00")
+					respHdr := Header{
+						Magic:      HeaderMagic,
+						Channel:    1,
+						SessionID:  0x02,
+						Sequence:   hdr.Sequence,
+						MsgID:      MsgTransStartResp,
+						DataLength: uint32(len(respPayload)),
+					}
+					_, _ = conn.Write(append(respHdr.Encode(), respPayload...))
+				case MsgLogoutReq:
+					respPayload := []byte(`{"Ret":100,"SessionID":"0x00000002"}` + "\x00")
+					respHdr := Header{
+						Magic:      HeaderMagic,
+						Channel:    1,
+						SessionID:  0x02,
+						Sequence:   hdr.Sequence,
+						MsgID:      MsgLogoutResp,
+						DataLength: uint32(len(respPayload)),
+					}
+					_, _ = conn.Write(append(respHdr.Encode(), respPayload...))
+				case MsgConfigGetReq:
+					respPayload := []byte(`{"Name":"Simplify.Encode","Ret":100,"SessionID":"0x00000002","Simplify.Encode":[{"MainFormat":{"AudioEnable":true,"Video":{"Compression":"H.265","Resolution":"1080P","FPS":25,"BitRate":2048}}}]}` + "\x00")
+					respHdr := Header{
+						Magic:      HeaderMagic,
+						Channel:    1,
+						SessionID:  0x02,
+						Sequence:   hdr.Sequence,
+						MsgID:      MsgConfigGetResp,
+						DataLength: uint32(len(respPayload)),
+					}
+					_, _ = conn.Write(append(respHdr.Encode(), respPayload...))
+				case MsgConfigSetReq:
+					// Verify set payload contains "H.264"
+					if !strings.Contains(string(payload), `"Compression":"H.264"`) {
+						t.Errorf("expected set payload to contain H.264, got %s", string(payload))
+					}
+					select {
+					case setReceived <- struct{}{}:
+					default:
+					}
+					respPayload := []byte(`{"Name":"Simplify.Encode","Ret":100,"SessionID":"0x00000002"}` + "\x00")
+					respHdr := Header{
+						Magic:      HeaderMagic,
+						Channel:    1,
+						SessionID:  0x02,
+						Sequence:   hdr.Sequence,
+						MsgID:      MsgConfigSetResp,
+						DataLength: uint32(len(respPayload)),
+					}
+					_, _ = conn.Write(append(respHdr.Encode(), respPayload...))
+				}
+			}
+		}()
+
+		client := NewClient("127.0.0.1", port, "admin", "")
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		if err := client.Connect(ctx); err != nil {
+			t.Fatalf("failed to connect: %v", err)
+		}
+		defer func() { _ = client.Close() }()
+
+		if err := client.EnsureH264Encoding(); err != nil {
+			t.Fatalf("EnsureH264Encoding failed: %v", err)
+		}
+
+		select {
+		case <-setReceived:
+			// Expected! Set request was received with H.264
+		case <-time.After(1 * time.Second):
+			t.Fatal("timed out waiting for MsgConfigSetReq to switch to H.264")
+		}
+	})
+}

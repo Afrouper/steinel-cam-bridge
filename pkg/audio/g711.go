@@ -18,3 +18,16 @@ func DecodePCMU(src []byte) []int16 {
 	}
 	return dst
 }
+
+// DecodePCMA converts a slice of G.711 a-law (PCMA) bytes into 16-bit signed PCM samples.
+func DecodePCMA(src []byte) []int16 {
+	if len(src) == 0 {
+		return nil
+	}
+	raw := g711.DecodeAlaw(src)
+	dst := make([]int16, len(raw)/2)
+	for i := 0; i < len(dst); i++ {
+		dst[i] = int16(binary.LittleEndian.Uint16(raw[i*2:]))
+	}
+	return dst
+}

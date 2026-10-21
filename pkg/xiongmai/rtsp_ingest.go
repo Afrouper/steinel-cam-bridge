@@ -74,11 +74,11 @@ func getCandidateURLs(cameraIP string, port int, user, password string, streamSu
 	var urls []string
 	for _, cleanPwd := range pwds {
 		urls = append(urls,
-			// 1. Steinel L 620 canonical path format with ?real_stream (Confirmed working in MotionEye)
-			fmt.Sprintf("rtsp://%s:%d/user=%s_password=%s_channel=1_stream=%d.sdp?real_stream",
-				cameraIP, port, cleanUser, cleanPwd, streamSubtype),
-			// 2. Steinel L 620 canonical path format without ?real_stream
+			// 1. Steinel L 620 canonical path format without ?real_stream (Clean path, prevents camera buffer overflow "buffer length exceeds 64")
 			fmt.Sprintf("rtsp://%s:%d/user=%s_password=%s_channel=1_stream=%d.sdp",
+				cameraIP, port, cleanUser, cleanPwd, streamSubtype),
+			// 2. Steinel L 620 canonical path format with ?real_stream (Legacy / MotionEye query parameter)
+			fmt.Sprintf("rtsp://%s:%d/user=%s_password=%s_channel=1_stream=%d.sdp?real_stream",
 				cameraIP, port, cleanUser, cleanPwd, streamSubtype),
 			// 3. Fallback standard Xiongmai path
 			fmt.Sprintf("rtsp://%s%s:%d/stream=%d",
@@ -180,7 +180,9 @@ func (ing *RTSPIngest) runSession(_ context.Context) error {
 
 		transport := gortsplib.TransportTCP
 		client := &gortsplib.Client{
-			Transport: &transport, // Use TCP interleaved for reliable local transmission
+			Transport:    &transport, // Use TCP interleaved for reliable local transmission
+			ReadTimeout:  10 * time.Second,
+			WriteTimeout: 10 * time.Second,
 		}
 
 		ing.mu.Lock()
@@ -206,39 +208,75 @@ func (ing *RTSPIngest) runSession(_ context.Context) error {
 				return fmt.Errorf("describe error: %w", err)
 			}
 
-			// Setup Video Media (H.264)
+			// Log detailed SDP track information
+			for i, medi := range desc.Medias {
+				var formatNames []string
+				for _, f := range medi.Formats {
+					formatNames = append(formatNames, fmt.Sprintf("%s (pt=%d, clock=%d)", f.Codec(), f.PayloadType(), f.ClockRate()))
+				}
+				logger.Debug("Xiongmai Ingest", "📹 Camera SDP Track #%d [%s]: %s", i+1, medi.Type, strings.Join(formatNames, ", "))
+			}
+
+			// Setup Video Media (H.264 mandatory for ONVIF Profile S and local RTSP server)
 			var videoMedia *description.Media
 			var videoFormat *format.H264
+			var h265Found bool
 			for _, medi := range desc.Medias {
-				var f *format.H264
-				if medi.FindFormat(&f) {
+				var f264 *format.H264
+				if medi.FindFormat(&f264) {
 					videoMedia = medi
-					videoFormat = f
+					videoFormat = f264
 					break
 				}
-			}
-
-			if videoMedia != nil {
-				_, err := client.Setup(desc.BaseURL, videoMedia, 0, 0)
-				if err != nil {
-					logger.Warn("Xiongmai Ingest", "⚠️ Video track setup failed: %v", err)
-				} else {
-					client.OnPacketRTP(videoMedia, videoFormat, func(pkt *rtp.Packet) {
-						if ing.rtspServer != nil {
-							ing.rtspServer.WriteVideoPacket(pkt)
-						}
-					})
+				var f265 *format.H265
+				if medi.FindFormat(&f265) {
+					h265Found = true
 				}
 			}
 
-			// Setup Audio Media (G.711 PCMU / PCMA)
+			if videoMedia == nil {
+				if h265Found {
+					logger.Warn("Xiongmai Ingest", "⚠️ Camera is offering H.265 video on %s, but RTSP and ONVIF Profile S require H.264", SanitizeRTSPURL(rawURL))
+					return fmt.Errorf("camera video stream is H.265 (HEVC), H.264 is required")
+				}
+				return fmt.Errorf("no compatible H.264 video track found in SDP on %s", SanitizeRTSPURL(rawURL))
+			}
+
+			_, err = client.Setup(desc.BaseURL, videoMedia, 0, 0)
+			if err != nil {
+				return fmt.Errorf("video track setup failed: %w", err)
+			}
+
+			var firstPacketOnce sync.Once
+			var firstPacketReceived atomic.Bool
+			var lastPacketTime atomic.Int64
+
+			client.OnPacketRTP(videoMedia, videoFormat, func(pkt *rtp.Packet) {
+				lastPacketTime.Store(time.Now().UnixNano())
+				firstPacketOnce.Do(func() {
+					firstPacketReceived.Store(true)
+					logger.Info("Xiongmai Ingest", "▶️ Streaming active: received video packets from camera via %s", SanitizeRTSPURL(rawURL))
+				})
+				if ing.rtspServer != nil {
+					ing.rtspServer.WriteVideoPacket(pkt)
+				}
+			})
+
+			// Setup Audio Media (G.711 PCMU/PCMA or AAC)
 			var audioMedia *description.Media
-			var audioFormat *format.G711
+			var audioFormatG711 *format.G711
+			var audioFormatAAC *format.MPEG4Audio
 			for _, medi := range desc.Medias {
-				var f *format.G711
-				if medi.FindFormat(&f) {
+				var fG711 *format.G711
+				if medi.FindFormat(&fG711) {
 					audioMedia = medi
-					audioFormat = f
+					audioFormatG711 = fG711
+					break
+				}
+				var fAAC *format.MPEG4Audio
+				if medi.FindFormat(&fAAC) {
+					audioMedia = medi
+					audioFormatAAC = fAAC
 					break
 				}
 			}
@@ -247,11 +285,21 @@ func (ing *RTSPIngest) runSession(_ context.Context) error {
 				_, err := client.Setup(desc.BaseURL, audioMedia, 0, 0)
 				if err != nil {
 					logger.Warn("Xiongmai Ingest", "⚠️ Audio track setup failed: %v", err)
-				} else {
-					client.OnPacketRTP(audioMedia, audioFormat, func(pkt *rtp.Packet) {
+				} else if audioFormatG711 != nil {
+					client.OnPacketRTP(audioMedia, audioFormatG711, func(pkt *rtp.Packet) {
 						if ing.audioTranscoder != nil {
-							_ = ing.audioTranscoder.ProcessPCMU(pkt.Payload)
+							if audioFormatG711.MULaw {
+								_ = ing.audioTranscoder.ProcessPCMU(pkt.Payload)
+							} else {
+								_ = ing.audioTranscoder.ProcessPCMA(pkt.Payload)
+							}
 						} else if ing.rtspServer != nil {
+							ing.rtspServer.WriteAudioPacket(pkt)
+						}
+					})
+				} else if audioFormatAAC != nil {
+					client.OnPacketRTP(audioMedia, audioFormatAAC, func(pkt *rtp.Packet) {
+						if ing.rtspServer != nil {
 							ing.rtspServer.WriteAudioPacket(pkt)
 						}
 					})
@@ -263,7 +311,46 @@ func (ing *RTSPIngest) runSession(_ context.Context) error {
 				return fmt.Errorf("play error: %w", err)
 			}
 
-			logger.Info("Xiongmai Ingest", "▶️ Streaming active from camera RTSP server via %s", SanitizeRTSPURL(rawURL))
+			logger.Debug("Xiongmai Ingest", "📡 PLAY request acknowledged by camera on %s, awaiting RTP data...", SanitizeRTSPURL(rawURL))
+
+			// Watchdog: detect zero RTP video packets within 5 seconds of PLAY, or silence >15 seconds thereafter
+			sessionCtx, sessionCancel := context.WithCancel(context.Background())
+			defer sessionCancel()
+
+			go func() {
+				// Phase 1: 5-second initial frame watchdog
+				select {
+				case <-sessionCtx.Done():
+					return
+				case <-ing.closeChan:
+					return
+				case <-time.After(5 * time.Second):
+					if !firstPacketReceived.Load() {
+						logger.Warn("Xiongmai Ingest", "⚠️ Zero video RTP packets received within 5s after PLAY on %s — aborting candidate", SanitizeRTSPURL(rawURL))
+						client.Close()
+						return
+					}
+				}
+
+				// Phase 2: 15-second silence watchdog while streaming
+				ticker := time.NewTicker(5 * time.Second)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-sessionCtx.Done():
+						return
+					case <-ing.closeChan:
+						return
+					case <-ticker.C:
+						last := lastPacketTime.Load()
+						if last > 0 && time.Since(time.Unix(0, last)) > 15*time.Second {
+							logger.Warn("Xiongmai Ingest", "⚠️ RTSP video stream silence (>15s without packets) on %s — reconnecting", SanitizeRTSPURL(rawURL))
+							client.Close()
+							return
+						}
+					}
+				}
+			}()
 
 			// Block until connection is closed or error occurs
 			return client.Wait()

@@ -20,6 +20,12 @@ func TestG711Decode(t *testing.T) {
 	data := []byte{0x00, 0x80, 0x7F, 0xFF}
 	pcm = DecodePCMU(data)
 	assert.Equal(t, 4, len(pcm))
+
+	// A-law silence test (0xD5 is silence in a-law)
+	silenceAlaw := []byte{0xD5, 0xD5, 0xD5, 0xD5}
+	pcmAlaw := DecodePCMA(silenceAlaw)
+	require.Equal(t, 4, len(pcmAlaw))
+	assert.Equal(t, int16(8), pcmAlaw[0])
 }
 
 func TestResampling(t *testing.T) {
@@ -57,6 +63,29 @@ func TestTranscoder(t *testing.T) {
 	}
 
 	// We should have received at least 1-2 AAC frames
+	assert.NotEmpty(t, aacFrames)
+	for _, frame := range aacFrames {
+		assert.NotEmpty(t, frame)
+	}
+}
+
+func TestTranscoderPCMA(t *testing.T) {
+	var aacFrames [][]byte
+	transcoder := NewTranscoder(func(au []byte, pts time.Duration) {
+		aacFrames = append(aacFrames, au)
+	})
+	defer transcoder.Close()
+
+	pcmaChunk := make([]byte, 160)
+	for i := range pcmaChunk {
+		pcmaChunk[i] = 0xD5 // A-law silence
+	}
+
+	for i := 0; i < 20; i++ {
+		err := transcoder.ProcessPCMA(pcmaChunk)
+		require.NoError(t, err)
+	}
+
 	assert.NotEmpty(t, aacFrames)
 	for _, frame := range aacFrames {
 		assert.NotEmpty(t, frame)

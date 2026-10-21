@@ -79,20 +79,42 @@ func (t *Transcoder) ProcessPCMU(pcmuData []byte) error {
 		return fmt.Errorf("transcoder is closed")
 	}
 
-	// 1. Decode G.711u -> 16-bit PCM (8000 Hz)
-	pcm8k := DecodePCMU(pcmuData)
+	return t.processPCM8kLocked(DecodePCMU(pcmuData))
+}
 
-	// 2. Resample 8000 Hz -> 16000 Hz (2x upsample)
+// ProcessPCMA processes a chunk of G.711a (8000 Hz) audio bytes from an RTP packet.
+func (t *Transcoder) ProcessPCMA(pcmaData []byte) error {
+	if len(pcmaData) == 0 {
+		return nil
+	}
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if t.encoder == nil {
+		return fmt.Errorf("transcoder is closed")
+	}
+
+	return t.processPCM8kLocked(DecodePCMA(pcmaData))
+}
+
+// processPCM8kLocked resamples 8 kHz PCM to 16 kHz and encodes complete frames to AAC. Must be called with t.mu held.
+func (t *Transcoder) processPCM8kLocked(pcm8k []int16) error {
+	if len(pcm8k) == 0 {
+		return nil
+	}
+
+	// 1. Resample 8000 Hz -> 16000 Hz (2x upsample)
 	pcm16k := Resample8kTo16k(pcm8k)
 
-	// 3. Append to PCM buffer (Little-Endian 16-bit)
+	// 2. Append to PCM buffer (Little-Endian 16-bit)
 	byteBuf := make([]byte, len(pcm16k)*2)
 	for i, s := range pcm16k {
 		binary.LittleEndian.PutUint16(byteBuf[i*2:], uint16(s))
 	}
 	t.pcmBuf = append(t.pcmBuf, byteBuf...)
 
-	// 4. While we have at least one full AAC frame (1024 samples = 2048 bytes)
+	// 3. While we have at least one full AAC frame (1024 samples = 2048 bytes)
 	consumed := 0
 	for len(t.pcmBuf)-consumed >= AACFrameBytes {
 		chunk := t.pcmBuf[consumed : consumed+AACFrameBytes]
