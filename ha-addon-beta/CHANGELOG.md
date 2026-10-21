@@ -2,6 +2,28 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.3.11-beta.9
+
+### 🎥 L 620 CAM Video-Streaming-Fixes: RTSP-Pfadreihenfolge, SDP-Validierung, Paket-Watchdogs & H.264-Erzwingung (Issue #45)
+
+- **Kanonischer sauberer RTSP-Pfad als Kandidat #1**:
+  - Der Pfad `rtsp://<ip>:554/user=admin_password=***_channel=1_stream=0.sdp` (ohne Query-Parameter) wird nun primär verwendet.
+  - Verhindert das Überlaufen des internen URL-Puffers der Xiongmai-Firmware (`buffer length exceeds 64`), der bei `?real_stream` auftrat und zum Ausbleiben von RTP-Videopaketen führte.
+  - Der Legacy-Pfad mit `?real_stream` dient weiterhin als Fallback an Position 2.
+- **5-Sekunden Initial-Watchdog & 15-Sekunden Silence-Watchdog**:
+  - **Sofortiges Failover**: Wenn nach dem `PLAY`-Kommando innerhalb von 5 Sekunden keine RTP-Videopakete von der internen Kamera eintreffen, wird der Kandidat sofort abgebrochen und auf den nächsten URL-Pfad umgeschaltet (verhindert endloses Hängenbleiben in `client.Wait()`).
+  - **Dauerhafter Silence-Watchdog**: Bricht der RTP-Videostrom im laufenden Betrieb für mehr als 15 Sekunden ab, wird die Verbindung automatisch neu aufgebaut.
+  - **Echtes Status-Logging**: Die Meldung `▶️ Streaming active` wird erst dann ausgegeben, wenn tatsächlich das erste Video-RTP-Paket empfangen wurde.
+- **SDP-Track-Validierung & Format-Inspektion**:
+  - Detailliertes Logging aller Mediatracks (Video & Audio) mit Codec, Payload-Type und Clock-Rate aus dem SDP der Kamera zur transparenten Diagnose.
+  - Strikte Prüfung auf kompatible H.264-Videotracks; liefert die Kamera kein H.264, bricht der Ingest mit einer aussagekräftigen Warnung ab, anstatt einen leeren Stream zu öffnen.
+- **Automatische H.264-Erzwingung via `Simplify.Encode` (MsgID 1040/1042)**:
+  - Fragt beim Start die Video-Encoding-Konfiguration der Kamera ab.
+  - Steht die Kamera auf H.265 (HEVC), konfiguriert die Bridge sie automatisch via `MsgConfigSetReq` auf `H.264`, um volle Kompatibilität mit RTSP, Home Assistant (go2rtc) und ONVIF Profile S zu gewährleisten.
+- **Erweiterte Audio-Codec-Unterstützung**:
+  - Unterstützt nativer AAC-Stream (`*format.MPEG4Audio`) direkt ohne erneute Transkodierung.
+  - Unterstützt sowohl G.711 µ-law (`ProcessPCMU`) als auch A-law (`ProcessPCMA`, in europäischen Xiongmai-Modellen weit verbreitet) mit automatischer Transkodierung in AAC-LC.
+
 ## 1.3.11-beta.8
 
 ### 🛠️ L 620 CAM Bugfixes: Dämmerungsschwelle, 1080p Auflösung, RTSP-Aktivierung & ONVIF-Modell (Issue #45)
