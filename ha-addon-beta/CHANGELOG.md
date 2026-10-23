@@ -2,6 +2,24 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.3.11-beta.10
+
+### 🛡️ L 620 CAM Resilienz & Hardening: RTSP Dial Short-Circuit, Sofia Reconnect-Supervisor & 100 % Passwort-Maskierung (Issue #45)
+
+- **RTSP Port 554 Dial Failure Short-Circuit & Exponentieller Backoff**:
+  - Wenn Port 554 der Kamera noch geschlossen oder unreachable ist (z. B. während des Kamera-Boots), bricht der Ingest beim ersten Verbindungsversuch (`connection refused` / `net.OpError`) sofort ab (`short-circuit`).
+  - Überspringt alle nachfolgenden 11 URL-Kandidaten, anstatt die Kamera sequentiell mit Verbindungsversuchen und Timeouts zu fluten.
+  - Wendet adaptiven exponentiellen Backoff (5s $\rightarrow$ 10s $\rightarrow$ 20s $\rightarrow$ 40s $\rightarrow$ 60s max) an, wodurch die Kamera nach Reboots sauber hochfahren kann, ohne durch TCP-Stürme überlastet zu werden.
+- **Autonomer Sofia Reconnect-Supervisor (`superviseSofiaLoop`)**:
+  - Die Steuerverbindung (Port 34567) wird nun durch einen eigenständigen Überwachungs-Worker im Hintergrund verwaltet.
+  - Startet die Bridge parallel oder vor der Kamera, verbindet sie sich automatisch im Hintergrund, sobald Port 34567 erreichbar ist (ohne dass die Bridge neu gestartet werden muss).
+  - Erkennt Verbindungsabbrüche und führt automatische Wiederverbindungsversuche mit Backoff durch.
+  - Führt nach Reconnect vollautomatisch `EnableRTSP()`, `EnsureH264Encoding()` und MCU-State-Synchronisation durch.
+- **Vollständige Passwort-Maskierung (CWE-312 Konformität)**:
+  - Passwörter in Log-Ausgaben werden ausnahmslos zu 100 % durch Asterisks (`*`) maskiert. Es werden keinerlei Klartext-Zeichen (weder Anfang noch Ende) preisgegeben.
+- **MQTT Initial-State Guarding**:
+  - Beim Verbindungsaufbau zu MQTT (`OnConnect`) wird der Gerätestatus nur dann publiziert, wenn er bereits durch echte Kamera-Telemetrie befüllt wurde (`LampMode > 0 || Lux >= 2 || Highlight > 0`). Dies verhindert, dass Default-/Dummy-Werte ("Aus", 0 Lux) an Home Assistant gemeldet werden, solange die Kamera noch bootet.
+
 ## 1.3.11-beta.9
 
 ### 🎥 L 620 CAM Video-Streaming-Fixes: RTSP-Pfadreihenfolge, SDP-Validierung, Paket-Watchdogs & H.264-Erzwingung (Issue #45)
