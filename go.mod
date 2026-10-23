@@ -8,10 +8,10 @@ require (
 	github.com/eclipse/paho.mqtt.golang v1.5.1
 	github.com/gen2brain/aac-go v0.0.0-20230119102159-ef1e76509d21
 	github.com/google/uuid v1.6.0
-	github.com/pion/dtls/v3 v3.1.11
+	github.com/pion/dtls/v3 v3.1.13
 	github.com/pion/rtcp v1.2.19
 	github.com/pion/rtp v1.10.5
-	github.com/pion/webrtc/v4 v4.2.23
+	github.com/pion/webrtc/v4 v4.2.24
 	github.com/stretchr/testify v1.12.1
 	github.com/zaf/g711 v1.4.0
 )
