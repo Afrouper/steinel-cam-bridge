@@ -29,6 +29,7 @@ type Driver struct {
 	sdcard     *SDCardManager
 	mu         sync.Mutex
 	running    bool
+	closeChan  chan struct{}
 }
 
 // NewDriver creates a new driver instance for a Steinel L 620 CAM.
@@ -66,6 +67,7 @@ func NewDriver(cameraIP string, user, password string, resolution string, rtspSe
 		talk:       talk,
 		ingest:     ingest,
 		sdcard:     sdcard,
+		closeChan:  make(chan struct{}),
 	}
 }
 
@@ -93,10 +95,8 @@ func (d *Driver) Start(ctx context.Context) error {
 
 	// Step 1: Connect & Login on Sofia port 34567
 	if err := d.client.Connect(ctx); err != nil {
-		logger.Warn("Xiongmai Driver", "⚠️ Sofia port %d connection error (%v) — continuing in resilient RTSP mode", DefaultPort, err)
-	}
-
-	if d.client.IsLoggedIn() {
+		logger.Warn("Xiongmai Driver", "⚠️ Sofia port %d connection error (%v) — starting in resilient RTSP mode with background reconnect", DefaultPort, err)
+	} else if d.client.IsLoggedIn() {
 		// Step 2: Zero-Touch RTSP Enablement
 		if err := d.client.EnableRTSP(); err != nil {
 			logger.Warn("Xiongmai Driver", "⚠️ Zero-touch RTSP enablement result: %v", err)
@@ -109,10 +109,10 @@ func (d *Driver) Start(ctx context.Context) error {
 
 		// Step 3: Query initial light and MCU states
 		d.syncInitialState()
-
-		// Step 5: Start KeepAlive loop
-		go d.keepAliveLoop(ctx)
 	}
+
+	// Step 3b: Always launch autonomous background supervisor for Sofia control connection
+	go d.superviseSofiaLoop(ctx)
 
 	// Step 4: Start RTSP Ingest with effective password or configured password
 	effectivePwd := d.client.GetEffectivePassword()
@@ -192,17 +192,63 @@ func (d *Driver) syncInitialState() {
 	}
 }
 
-func (d *Driver) keepAliveLoop(ctx context.Context) {
+func (d *Driver) superviseSofiaLoop(ctx context.Context) {
 	ticker := time.NewTicker(20 * time.Second)
 	defer ticker.Stop()
 
+	reconnectBackoff := 5 * time.Second
+	firstAttempt := true
+
 	for {
+		if !d.client.IsLoggedIn() {
+			if !firstAttempt {
+				select {
+				case <-ctx.Done():
+					return
+				case <-d.closeChan:
+					return
+				case <-time.After(reconnectBackoff):
+				}
+			}
+			firstAttempt = false
+
+			logger.Debug("Xiongmai Driver", "🔄 Attempting background reconnect to Sofia port %d...", DefaultPort)
+			connCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			err := d.client.Connect(connCtx)
+			cancel()
+
+			if err == nil && d.client.IsLoggedIn() {
+				logger.Info("Xiongmai Driver", "✅ Sofia control connection established (SessionID: 0x%08X)", d.client.GetSessionID())
+				reconnectBackoff = 5 * time.Second
+				firstAttempt = false
+
+				_ = d.client.EnableRTSP()
+				_ = d.client.EnsureH264Encoding()
+				d.syncInitialState()
+			} else {
+				logger.Debug("Xiongmai Driver", "ℹ️ Sofia reconnect attempt failed: %v (retrying in %v)", err, reconnectBackoff)
+				if reconnectBackoff < 60*time.Second {
+					reconnectBackoff *= 2
+					if reconnectBackoff > 60*time.Second {
+						reconnectBackoff = 60 * time.Second
+					}
+				}
+			}
+			continue
+		}
+
 		select {
 		case <-ctx.Done():
 			return
+		case <-d.closeChan:
+			return
 		case <-ticker.C:
-			if err := d.client.SendKeepAlive(); err != nil {
-				logger.Debug("Xiongmai Driver", "⚠️ Heartbeat failed: %v", err)
+			if d.client.IsLoggedIn() {
+				if err := d.client.SendKeepAlive(); err != nil {
+					logger.Warn("Xiongmai Driver", "⚠️ Sofia heartbeat failed: %v (connection lost, reconnecting in background...)", err)
+					_ = d.client.Close()
+					reconnectBackoff = 5 * time.Second
+				}
 			}
 		}
 	}
@@ -405,6 +451,7 @@ func (d *Driver) Close() error {
 		return nil
 	}
 	d.running = false
+	close(d.closeChan)
 
 	if d.talk != nil {
 		_ = d.talk.StopTalk()

@@ -2,7 +2,9 @@ package xiongmai
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"regexp"
 	"strings"
@@ -21,6 +23,20 @@ import (
 )
 
 var passwordQueryRegex = regexp.MustCompile(`_password=([^_]*)_`)
+
+// dialError indicates that the initial TCP connection to the RTSP server port failed.
+type dialError struct {
+	host string
+	err  error
+}
+
+func (e *dialError) Error() string {
+	return fmt.Sprintf("TCP dial to RTSP server %s failed: %v", e.host, e.err)
+}
+
+func (e *dialError) Unwrap() error {
+	return e.err
+}
 
 // SanitizeRTSPURL safely masks password credentials in RTSP URLs (both in URL authority and query paths).
 func SanitizeRTSPURL(rawURL string) string {
@@ -150,7 +166,18 @@ func (ing *RTSPIngest) ingestLoop(ctx context.Context) {
 
 		err := ing.runSession(ctx)
 		if err != nil && !ing.closed.Load() {
-			logger.Warn("Xiongmai Ingest", "⚠️ RTSP connection lost: %v (reconnecting in %v)", err, backoff)
+			var dErr *dialError
+			if errors.As(err, &dErr) {
+				// RTSP port 554 is down / refused (e.g. camera rebooting or busy)
+				// Use exponential backoff (5s up to 60s) to avoid overwhelming the camera SoC
+				if backoff < 5*time.Second {
+					backoff = 5 * time.Second
+				}
+				logger.Warn("Xiongmai Ingest", "⚠️ Camera RTSP server %s unreachable: %v (reconnecting in %v)", dErr.host, dErr.err, backoff)
+			} else {
+				logger.Warn("Xiongmai Ingest", "⚠️ RTSP connection lost: %v (reconnecting in %v)", err, backoff)
+			}
+
 			select {
 			case <-ctx.Done():
 				return
@@ -158,8 +185,12 @@ func (ing *RTSPIngest) ingestLoop(ctx context.Context) {
 				return
 			case <-time.After(backoff):
 			}
-			if backoff < 15*time.Second {
+
+			if backoff < 60*time.Second {
 				backoff *= 2
+				if backoff > 60*time.Second {
+					backoff = 60 * time.Second
+				}
 			}
 		} else {
 			backoff = 1 * time.Second
@@ -200,11 +231,15 @@ func (ing *RTSPIngest) runSession(_ context.Context) error {
 			}()
 
 			if err := client.Start(u.Scheme, u.Host); err != nil {
-				return fmt.Errorf("failed to dial RTSP server: %w", err)
+				return &dialError{host: u.Host, err: err}
 			}
 
 			desc, _, err := client.Describe(u)
 			if err != nil {
+				var opErr *net.OpError
+				if errors.As(err, &opErr) {
+					return &dialError{host: u.Host, err: err}
+				}
 				return fmt.Errorf("describe error: %w", err)
 			}
 
@@ -358,6 +393,14 @@ func (ing *RTSPIngest) runSession(_ context.Context) error {
 
 		if err == nil || ing.closed.Load() {
 			return nil
+		}
+
+		var dErr *dialError
+		if errors.As(err, &dErr) {
+			// Port 554 is closed or unreachable on the camera.
+			// Do NOT iterate through remaining candidate URLs on the same unreachable port!
+			logger.Debug("Xiongmai Ingest", "ℹ️ RTSP port at %s unreachable (%v) — skipping remaining candidate URLs", dErr.host, dErr.err)
+			return err
 		}
 
 		lastErr = err

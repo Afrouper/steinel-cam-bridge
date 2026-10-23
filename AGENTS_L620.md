@@ -198,3 +198,27 @@ Beim Start prüft die Bridge über `MsgConfigGetReq` (1040) die Konfiguration `S
 Die L 620 CAM besitzt im Gegensatz zur L 625 CAM SC keine manuell per Befehl schaltbare Sirene, sondern einen **Bewegungsalarm-Summer** ("Push-Notification and Alarm"):
 - Gesteuert über NetIP-Konfiguration `Detect.MotionDetect.[0]` (`EventHandler.VoiceEnable: true` bzw. `BeepEnable: true`).
 - Wenn aktiviert, ertönt bei Bewegungserkennung an der Leuchte ein ca. 60-sekündiger Alarmton.
+
+---
+
+## 8. Resilienz, Reconnect-Supervisor & Sicherheit
+
+### 1. Autonomer Sofia Reconnect-Supervisor (`superviseSofiaLoop`)
+Um sicherzustellen, dass die Bridge auch dann voll funktionsfähig bleibt bzw. sich selbst heilt, wenn die Kamera parallel zur Bridge bootet oder im laufenden Betrieb neu startet:
+- Startet non-blocking als autonomer Hintergrund-Worker in `pkg/xiongmai/driver.go`.
+- Versucht sofort bzw. bei Verbindungsverlust im adaptiven Backoff-Intervall (5s $\rightarrow$ 10s $\rightarrow$ 20s $\rightarrow$ 40s $\rightarrow$ 60s max) die Wiederverbindung zu Sofia Port 34567.
+- Führt bei bestehender Verbindung alle 20 Sekunden einen Keepalive-Heartbeat (`1006`) durch. Schlägt dieser fehl, wird der Socket ordnungsgemäß geschlossen und die Reconnect-Sequenz eingeleitet.
+- Nach erfolgreichem Reconnect werden automatisch `EnableRTSP()`, `EnsureH264Encoding()` und `syncInitialState()` ausgeführt.
+
+### 2. Port 554 Dial Failure Short-Circuiting & Exponentieller Backoff
+Ist der RTSP-Port 554 der Kamera noch geschlossen oder unreachable (z. B. während des Kamera-Boots):
+- Erkennt der Ingest TCP Dial-Fehler (`net.OpError` / `connection refused`) sofort beim ersten Kandidaten.
+- Bricht die sequentielle Prüfung aller 12 Kandidaten-URLs unmittelbar ab (`short-circuit`), anstatt für jeden Kandidaten Timeouts abzuwarten.
+- Nutzt für Neuversuche einen adaptiven exponentiellen Backoff (5s $\rightarrow$ 10s $\rightarrow$ 20s $\rightarrow$ 40s $\rightarrow$ 60s max), um einen TCP-Sturm auf den SoC der Kamera zu verhindern.
+
+### 3. Passwort-Maskierung (CWE-312 Konformität)
+- Passwörter werden in Log-Ausgaben zu 100 % als Asterisks maskiert (`strings.Repeat("*", len(pwd))`). Es werden keinerlei Klartext-Zeichen (weder Anfang noch Ende) preisgegeben.
+
+### 4. MQTT Initial-State Guarding
+- Beim Verbindungsaufbau zu MQTT (`OnConnect`) wird der Gerätestatus nur dann publiziert, wenn er bereits durch echte Kamera-Telemetrie befüllt wurde (`LampMode > 0 || Lux >= 2 || Highlight > 0`). Dies verhindert, dass Default-/Dummy-Werte ("Aus", 0 Lux) an Home Assistant gemeldet werden, solange die Kamera noch bootet.
+

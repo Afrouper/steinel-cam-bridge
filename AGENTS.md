@@ -125,9 +125,9 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
 
 - **`pkg/xiongmai/`**:
   - Detailspezifikation & Byte-Layout: Siehe [`AGENTS_L620.md`](file:///Users/christian/dev/git/steinel-cam-bridge/AGENTS_L620.md).
-  - `client.go`: Xiongmai Sofia Binärprotokoll-Client (Port 34567, MD5-Challenge-Response & adaptiver RSA/AES-Login mit CWE-312 Credential Protection, OPTrans RS232 Serial Bridge, 1582 Telemetrie-Fragmentierungs-Puffer & `EnsureH264Encoding` via `Simplify.Encode` 1040/1042).
-  - `driver.go`: Orchestriert Sofia-Verbindung, RTSP-Ingest, MCU-Synchronisation, SD-Karten-Verwaltung und Talk-Backchannel.
-  - `rtsp_ingest.go`: Nimmt den nativen H.264/AAC-RTSP-Stream der L 620 entgegen mit kanonischer sauberer Pfad-Reihenfolge (ohne `?real_stream` an Position 1 gegen Kamera-Pufferüberläufe), SDP-Track-Prüfung, Zero-Packet Initial-Watchdog (5s) und Silence-Watchdog (15s).
+  - `client.go`: Xiongmai Sofia Binärprotokoll-Client (Port 34567, MD5-Challenge-Response & adaptiver RSA/AES-Login mit 100 % CWE-312 Passwort-Maskierung, OPTrans RS232 Serial Bridge, 1582 Telemetrie-Fragmentierungs-Puffer & `EnsureH264Encoding` via `Simplify.Encode` 1040/1042).
+  - `driver.go`: Orchestriert Sofia-Verbindung, autonomer Sofia Reconnect-Supervisor (`superviseSofiaLoop`), RTSP-Ingest, MCU-Synchronisation, SD-Karten-Verwaltung und Talk-Backchannel.
+  - `rtsp_ingest.go`: Nimmt den nativen H.264/AAC-RTSP-Stream der L 620 entgegen mit kanonischer sauberer Pfad-Reihenfolge (ohne `?real_stream` an Position 1 gegen Kamera-Pufferüberläufe), Port-554-Unreachable-Short-Circuit & exponentiellem Backoff, SDP-Track-Prüfung, Zero-Packet Initial-Watchdog (5s) und Silence-Watchdog (15s).
   - `mcu.go`: ASCII-Frame Parser (`B...U`) & Command Builder für L 620 Licht-, Dämmerungs- und Sensorkommandos via OPTrans RS232.
   - `sdcard.go`: Xiongmai SD-Karten Dateisystemabfrage (`OPFileQuery`) und Download mit konsistenter Thumbnail-Behandlung.
   - `talk.go`: Rückkanal-Audiokommunikation (G.711u / PCMU) über das Xiongmai Talk-Protokoll.

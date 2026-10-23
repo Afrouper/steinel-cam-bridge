@@ -299,17 +299,12 @@ func (c *Client) getPasswordCandidates() []passwordCandidate {
 }
 
 // MaskPassword returns a safely masked representation of a password for debug logging.
-// It shows the first 3 characters followed by asterisks for the remaining characters.
-// If the password has 3 or fewer characters, all characters are masked as asterisks.
+// In compliance with CWE-312, passwords are fully masked as asterisks with zero plaintext characters exposed.
 func MaskPassword(pwd string) string {
 	if pwd == "" {
 		return "<empty>"
 	}
-	runes := []rune(pwd)
-	if len(runes) <= 3 {
-		return strings.Repeat("*", len(runes))
-	}
-	return string(runes[:3]) + strings.Repeat("*", len(runes)-3)
+	return strings.Repeat("*", len([]rune(pwd)))
 }
 
 // queryClaimLocked queries camera encryption and authentication capabilities via OPMonitor Claim (MsgID 1413).
@@ -632,6 +627,13 @@ func (c *Client) IsLoggedIn() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.isLoggedIn
+}
+
+// GetSessionID returns the active Sofia session ID.
+func (c *Client) GetSessionID() uint32 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.sessionID
 }
 
 // EnableRTSP ensures that the internal RTSP server on port 554 is activated on the camera.

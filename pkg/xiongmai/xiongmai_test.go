@@ -519,9 +519,9 @@ func TestMaskPassword(t *testing.T) {
 		{"a", "*"},
 		{"ab", "**"},
 		{"abc", "***"},
-		{"abcd", "abc*"},
-		{"secret123", "sec******"},
-		{"superlongpassword", "sup**************"},
+		{"abcd", "****"},
+		{"secret123", "*********"},
+		{"superlongpassword", "*****************"},
 	}
 
 	for _, tc := range tests {
@@ -1730,4 +1730,143 @@ func TestEnsureH264Encoding(t *testing.T) {
 			t.Fatal("timed out waiting for MsgConfigSetReq to switch to H.264")
 		}
 	})
+}
+
+func TestSuperviseSofiaLoop(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer func() { _ = listener.Close() }()
+
+	port := listener.Addr().(*net.TCPAddr).Port
+
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+
+		for {
+			hdrBytes := make([]byte, 20)
+			if _, err := io.ReadFull(conn, hdrBytes); err != nil {
+				return
+			}
+			hdr, err := DecodeHeader(hdrBytes)
+			if err != nil {
+				return
+			}
+
+			payload := make([]byte, hdr.DataLength)
+			if _, err := io.ReadFull(conn, payload); err != nil {
+				return
+			}
+
+			switch hdr.MsgID {
+			case MsgMonitorClaimReq:
+				respPayload := []byte(`{"Ret":-100}` + "\x00")
+				respHdr := Header{
+					Magic:      HeaderMagic,
+					Channel:    1,
+					SessionID:  0,
+					Sequence:   hdr.Sequence,
+					MsgID:      MsgMonitorClaimResp,
+					DataLength: uint32(len(respPayload)),
+				}
+				_, _ = conn.Write(append(respHdr.Encode(), respPayload...))
+			case MsgLoginReq:
+				respPayload := []byte(`{"Ret":100,"SessionID":"0x00000005"}` + "\x00")
+				respHdr := Header{
+					Magic:      HeaderMagic,
+					Channel:    1,
+					SessionID:  0x05,
+					Sequence:   hdr.Sequence,
+					MsgID:      MsgLoginResp,
+					DataLength: uint32(len(respPayload)),
+				}
+				_, _ = conn.Write(append(respHdr.Encode(), respPayload...))
+			case MsgTransStartReq:
+				respPayload := []byte(`{"Ret":100,"SessionID":"0x00000005"}` + "\x00")
+				respHdr := Header{
+					Magic:      HeaderMagic,
+					Channel:    1,
+					SessionID:  0x05,
+					Sequence:   hdr.Sequence,
+					MsgID:      MsgTransStartResp,
+					DataLength: uint32(len(respPayload)),
+				}
+				_, _ = conn.Write(append(respHdr.Encode(), respPayload...))
+			case MsgLogoutReq:
+				respPayload := []byte(`{"Ret":100,"SessionID":"0x00000005"}` + "\x00")
+				respHdr := Header{
+					Magic:      HeaderMagic,
+					Channel:    1,
+					SessionID:  0x05,
+					Sequence:   hdr.Sequence,
+					MsgID:      MsgLogoutResp,
+					DataLength: uint32(len(respPayload)),
+				}
+				_, _ = conn.Write(append(respHdr.Encode(), respPayload...))
+			case MsgConfigGetReq:
+				respPayload := []byte(`{"Name":"NetWork.RTSP","Ret":100,"SessionID":"0x00000005","NetWork.RTSP":{"IsServer":true}}` + "\x00")
+				respHdr := Header{
+					Magic:      HeaderMagic,
+					Channel:    1,
+					SessionID:  0x05,
+					Sequence:   hdr.Sequence,
+					MsgID:      MsgConfigGetResp,
+					DataLength: uint32(len(respPayload)),
+				}
+				_, _ = conn.Write(append(respHdr.Encode(), respPayload...))
+			case MsgConfigSetReq:
+				respPayload := []byte(`{"Ret":100,"SessionID":"0x00000005"}` + "\x00")
+				respHdr := Header{
+					Magic:      HeaderMagic,
+					Channel:    1,
+					SessionID:  0x05,
+					Sequence:   hdr.Sequence,
+					MsgID:      MsgConfigSetResp,
+					DataLength: uint32(len(respPayload)),
+				}
+				_, _ = conn.Write(append(respHdr.Encode(), respPayload...))
+			case MsgTransSendData:
+				respPayload := []byte(`{"Name":"OPTrans","Ret":100,"SessionID":"0x00000005"}` + "\x00")
+				respHdr := Header{
+					Magic:      HeaderMagic,
+					Channel:    1,
+					SessionID:  0x05,
+					Sequence:   hdr.Sequence,
+					MsgID:      MsgTransSendResp,
+					DataLength: uint32(len(respPayload)),
+				}
+				_, _ = conn.Write(append(respHdr.Encode(), respPayload...))
+			}
+		}
+	}()
+
+	d := NewDriver("127.0.0.1", "admin", "", "1080p", nil, nil)
+	d.client.addr = fmt.Sprintf("127.0.0.1:%d", port) // point to mock port
+	defer func() { _ = d.Close() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	go d.superviseSofiaLoop(ctx)
+
+	// Wait until client is logged in via the background supervisor
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if d.client.IsLoggedIn() {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	if !d.client.IsLoggedIn() {
+		t.Fatal("expected client to be logged in via background supervisor")
+	}
+	if d.client.GetSessionID() != 0x05 {
+		t.Errorf("expected session ID 0x05, got 0x%08X", d.client.GetSessionID())
+	}
 }
