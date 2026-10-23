@@ -157,7 +157,8 @@ connectionLoop:
 		case <-ctx.Done():
 			safeCloseDriver(client)
 			select {
-			case <-connectDone:
+			case err := <-connectDone:
+				_ = err
 			case <-time.After(2 * time.Second):
 			}
 			break connectionLoop
@@ -165,7 +166,8 @@ connectionLoop:
 			connectErr = fmt.Errorf("connection timeout (%v) reached", connectTimeout)
 			safeCloseDriver(client)
 			select {
-			case <-connectDone:
+			case err := <-connectDone:
+				_ = err
 			case <-time.After(6 * time.Second):
 				logger.Warn("Supervisor", "⚠️ Warning: connect goroutine did not exit within 6s after Close")
 			}
