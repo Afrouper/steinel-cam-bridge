@@ -141,3 +141,19 @@ func TestSyncer_NoDuplicateUpstreamQueryOnCached(t *testing.T) {
 	assert.Equal(t, 1, cachedProv.syncLatestCalls, "SyncLatest should be called once")
 	assert.Equal(t, 0, cachedProv.listCalls, "ListRecordings should NOT be called when SyncLatest handled the provider")
 }
+
+func TestSyncer_ZeroIntervalDisablesPeriodicSync(t *testing.T) {
+	syncer := NewRecordingSyncer(
+		func() RecordingProvider { return &mockProvider{} },
+		func(RecordingItem) {},
+		0,
+	)
+	assert.Equal(t, time.Duration(0), syncer.pollInterval, "pollInterval 0 should be retained to disable periodic polling")
+
+	negSyncer := NewRecordingSyncer(
+		func() RecordingProvider { return &mockProvider{} },
+		func(RecordingItem) {},
+		-5*time.Second,
+	)
+	assert.Equal(t, time.Duration(0), negSyncer.pollInterval, "negative pollInterval should normalize to 0")
+}

@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"math/big"
 	"strconv"
 	"strings"
@@ -91,9 +92,12 @@ func parseRSAPublicKey(pubKeyStr string) (*rsa.PublicKey, error) {
 		return nil, fmt.Errorf("failed to parse RSA modulus from hex: %s", modulusHex)
 	}
 
-	e, err := strconv.ParseInt(exponentHex, 16, 64)
+	e, err := strconv.ParseInt(exponentHex, 16, 32)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse RSA exponent from hex %s: %w", exponentHex, err)
+	}
+	if e <= 0 || e > math.MaxInt32 {
+		return nil, fmt.Errorf("invalid RSA exponent value: %d", e)
 	}
 
 	return &rsa.PublicKey{
