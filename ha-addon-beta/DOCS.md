@@ -1,17 +1,24 @@
 # Home Assistant Add-on: Steinel CAM Bridge - BETA
 
-Standalone ONVIF, 2-Way Audio (Gegensprechen) & MQTT Bridge für die **Steinel L 625 CAM SC** (oder ähnlich) Außenleuchte.
+Standalone ONVIF, 2-Way Audio (Gegensprechen) & MQTT Bridge für Steinel CAM Leuchten (**L 625 CAM SC**, **L 620 CAM**, **XLED CAM 1/2**).
 
 ---
 
 ## 🚀 Schnellstart
 
+### A. Steinel L 625 CAM SC (WebRTC)
 1. **Kamera-IP** eintragen (z. B. `192.168.1.100`).
 2. **QR-Code Payload** aus der Steinel App ("Kamera teilen") in das Feld `qr_code` einfügen.
    - Format: `did=de-xxxxxxx,pid=pr-xxxxx,sct=xxxx,pairPwd=xxxx`
 3. Auf **Speichern** und anschließend auf **Starten** klicken!
 
-Der QR Code wird initial für das Pairing benötigt. Danach muss er nicht mehr zwingend angegeben werden da das Schlüsselmaterial lokal gespeichert wird.
+Der QR-Code wird initial für das Pairing benötigt. Danach muss er nicht mehr zwingend angegeben werden, da das Schlüsselmaterial persistent gespeichert wird.
+
+### B. Steinel L 620 CAM / XLED CAM 1 (Sofia)
+1. **Kamera-IP** eintragen.
+2. In der Steinel App vergebenes Geräte-Passwort unter **`camera_password`** eintragen (`camera_user` bleibt `admin`).
+3. Optional `camera_type: l620` setzen.
+4. Auf **Speichern** und **Starten** klicken!
 
 ---
 
@@ -40,15 +47,6 @@ Der QR Code wird initial für das Pairing benötigt. Danach muss er nicht mehr z
 | `mqtt_password` | Passwort | `""` | Optional: MQTT Passwort |
 | `mqtt_topic_prefix` | String | `steinel` | MQTT Basis-Topic |
 | `mqtt_discovery_prefix` | String | `homeassistant` | Home Assistant Auto-Discovery Prefix |
-
----
-
-## 📷 Einrichtung Steinel L 620 CAM (Generation 1)
-Für die Vorgängermodelle **L 620 CAM** und **XLED CAM 1**:
-1. Tragen Sie die **`camera_ip`** ein.
-2. Geben Sie Ihr in der Steinel-App vergebenes **`camera_password`** ein (Benutzer `camera_user` bleibt `admin`).
-3. Setzen Sie optional `camera_type: l620`.
-4. Klicken Sie auf **Speichern** und **Starten**. Die Bridge aktiviert RTSP auf der Kamera vollautomatisch und bindet Video, 2-Wege-Audio und alle MQTT-Entitäten lokal ein!
 
 ---
 

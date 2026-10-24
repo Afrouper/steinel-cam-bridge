@@ -6,10 +6,21 @@ Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hi
 
 ### 🚀 Steinel L 620 CAM Support & Frigate 2-Wege-Audio
 
-- **Offizieller Release v1.4.0**: Konsolidiert alle Neuerungen und Stabilitätsverbesserungen der Testreihen v1.3.11-beta.1 bis beta.10.
-- **Steinel L 620 CAM Support**: Vollständige Unterstützung inklusive Auto-Erkennung, H.264-RTSP, ONVIF Profile S/T und voller Licht-/PIR-Steuerung.
-- **Frigate 2-Wege-Audio**: Talk-Backchannel (Profile T) sowie automatisches AAC / G.711 Transcoding.
-- **Systemoptimierungen**: Periodischer SD-Karten-Sync abschaltbar (`sdcard_sync_interval: 0`), Sofia Reconnect-Supervisor und 100 % Passwort-Maskierung.
+- **Synchronisation mit v1.4.0 (Finales Release)**:
+  - Übernahme des stabilen Release-Stands **v1.4.0**.
+  - Vollständiger Abschluss der Beta-Zyklen `v1.3.11-beta.1` bis `beta.10`.
+- **Vollständige Unterstützung für Steinel L 620 CAM**:
+  - Nativer Treiber für die Xiongmai/Sofia-Plattform mit automatischer Modellerkennung (`auto`).
+  - Umfassende Licht-, PIR-, Dämmerungs- und Nachlaufzeit-Steuerung über Home Assistant & MQTT.
+  - Stabiler H.264-Videostream über RTSP und dynamische ONVIF Profile S/T Einbindung.
+  - Autonomer Reconnect-Supervisor und Dial-Schutz für höchste Zuverlässigkeit bei Neustarts.
+- **Frigate 2-Wege-Audio & Codec-Erweiterungen**:
+  - Volle 2-Wege-Audio-Unterstützung (Talk Backchannel nach ONVIF Profile T) für Frigate, Scrypted und Home Assistant.
+  - Unterstützung und automatische Transkodierung für AAC, G.711 µ-law (PCMU) und A-law (PCMA).
+- **Stabilität & Systemoptimierungen**:
+  - Konfigurierbarer SD-Karten-Sync (periodischer Hintergrund-Sync abschaltbar über `sdcard_sync_interval: 0`).
+  - 100 % Passwort-Maskierung im gesamten Logging (CWE-312 Konformität).
+  - Aktualisierte Pion WebRTC (`v4.2.24`) und Pion DTLS (`v3.1.15`) Abhängigkeiten.
 
 ## 1.3.11-beta.10
 

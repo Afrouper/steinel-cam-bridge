@@ -29,7 +29,7 @@ Der QR-Code wird initial für das Pairing benötigt. Danach muss er nicht mehr z
 | `camera_ip` | String | *(Pflichtfeld)* | Lokale IP-Adresse der Steinel-Kamera im Heimnetz (z. B. `192.168.1.100`) |
 | `camera_type` | Liste | `auto` | Kameramodell: `auto` (automatische Erkennung), `l625` (L 625 CAM SC), `l620` (L 620 CAM / XLED CAM 1) |
 | `camera_user` | String | `admin` | Benutzername für L 620 CAM (Standard: `admin`) |
-| `camera_password` | String | `""` | Geräte-Passwort für L 620 CAM |
+| `camera_password` | String | `""` | Geräte-Passwort für L 620 CAM (in der Steinel App vergeben) |
 | `bridge_user` | String | `""` | Optional: Benutzername für den Zugriffsschutz der Bridge (RTSP, ONVIF, REST). Leer = ungeschützt |
 | `bridge_pass` | Passwort | `""` | Optional: Passwort für den Zugriffsschutz der Bridge (RTSP Digest/Basic, ONVIF HTTP Digest / WS-Security, REST) |
 | `qr_code` | String | `""` | QR-Code Payload zum automatischen Pairing der L 625 CAM SC |
@@ -37,7 +37,7 @@ Der QR-Code wird initial für das Pairing benötigt. Danach muss er nicht mehr z
 | `audio_codec` | Liste | `aac` | Audio-Codec des RTSP-Streams: `aac` (nativ transkodiert) oder `pcmu` |
 | `rtsp_port` | Port | `8554` | RTSP Server Port |
 | `onvif_port` | Port | `8000` | ONVIF HTTP & SD-Karten REST API Service Port |
-| `sdcard_sync_interval` | Ganzzahl | `60` | Intervall in Sekunden für die Hintergrundabfrage neuer SD-Karten-Aufnahmen (5–300 s) |
+| `sdcard_sync_interval` | Ganzzahl | `120` | Intervall in Sekunden für die Hintergrundabfrage neuer SD-Karten-Aufnahmen (0–300 s, 0 = deaktiviert) |
 | `cache_recordings` | Ganzzahl | `5` | Anzahl der jüngsten Aufnahmen im lokalen Bridge-Cache (0–100). Hält Videos und 5s-Snapshots vor, entlastet die Kamera und ermöglicht sofortiges Abspielen / Vorschaubilder (0 = deaktiviert) |
 | `nabto_driver` | Liste | `cgo` | Nabto-Treiber-Engine für L 625: `cgo` (offizielles C-SDK, empfohlen & Standard) oder `pure` (nativer Go-Stack, experimentell) |
 | `reset_pairing` | Boolean | `false` | Setzen Sie diese Option auf `true`, um den gespeicherten Schlüssel zu löschen und ein erneutes Pairing der L 625 mit dem angegebenen `qr_code` zu erzwingen |

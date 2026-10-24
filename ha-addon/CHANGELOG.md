@@ -17,7 +17,7 @@ Alle wichtigen Änderungen für das **Steinel CAM Bridge** Add-on werden hier do
 - **Stabilität & Systemoptimierungen**:
   - Konfigurierbarer SD-Karten-Sync (periodischer Hintergrund-Sync abschaltbar über `sdcard_sync_interval: 0`).
   - 100 % Passwort-Maskierung im gesamten Logging (CWE-312 Konformität).
-  - Aktualisierte Abhängigkeiten und Sicherheitsverbesserungen.
+  - Aktualisierte Pion WebRTC (`v4.2.24`) und Pion DTLS (`v3.1.15`) Abhängigkeiten und Sicherheitsverbesserungen.
 
 ## 1.3.10
 

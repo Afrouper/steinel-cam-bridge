@@ -37,7 +37,7 @@ configuration:
     description: "Netzwerkport des integrierten ONVIF- und SD-Karten-REST-API-Servers (Standard: 8000)."
   sdcard_sync_interval:
     name: "SD-Karten Sync-Intervall"
-    description: "Intervall in Sekunden zur Hintergrundabfrage neuer Aufnahmen von der MicroSD-Karte (Standard: 60s)."
+    description: "Intervall in Sekunden zur Hintergrundabfrage neuer Aufnahmen von der MicroSD-Karte (Standard: 120s, 0 deaktiviert die zyklische Abfrage)."
   cache_recordings:
     name: "Lokaler Aufnahme-Cache"
     description: "Anzahl der jüngsten Aufnahmen, die im lokalen Bridge-Speicher vorgehalten werden (Standard: 10, ca. 80–150 MB). Erlaubt sofortigen Zugriff, extrahiert Snapshots und entlastet die Kamera. 0 deaktiviert den Cache."
