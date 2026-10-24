@@ -2,6 +2,15 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.4.0
+
+### 🚀 Steinel L 620 CAM Support & Frigate 2-Wege-Audio
+
+- **Offizieller Release v1.4.0**: Konsolidiert alle Neuerungen und Stabilitätsverbesserungen der Testreihen v1.3.11-beta.1 bis beta.10.
+- **Steinel L 620 CAM Support**: Vollständige Unterstützung inklusive Auto-Erkennung, H.264-RTSP, ONVIF Profile S/T und voller Licht-/PIR-Steuerung.
+- **Frigate 2-Wege-Audio**: Talk-Backchannel (Profile T) sowie automatisches AAC / G.711 Transcoding.
+- **Systemoptimierungen**: Periodischer SD-Karten-Sync abschaltbar (`sdcard_sync_interval: 0`), Sofia Reconnect-Supervisor und 100 % Passwort-Maskierung.
+
 ## 1.3.11-beta.10
 
 ### 🛡️ L 620 CAM Resilienz & Hardening: RTSP Dial Short-Circuit, Sofia Reconnect-Supervisor & 100 % Passwort-Maskierung (Issue #45)

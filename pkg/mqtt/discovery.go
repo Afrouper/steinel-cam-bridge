@@ -80,11 +80,11 @@ func (c *Client) publishDiscovery(client paho.Client) {
 		"command_topic":       fmt.Sprintf("%s/pir_sensitivity/set", c.baseTopic),
 	})
 
-	// 5. Number (Lux Threshold: 2 - 1000 lx)
+	// 5. Number (Lux Threshold: 2 - 2000 lx)
 	publishEntity("number", "lux_threshold", map[string]interface{}{
 		"name":                "Dämmerungsschwelle",
 		"min":                 2,
-		"max":                 1000,
+		"max":                 2000,
 		"step":                5,
 		"unit_of_measurement": "lx",
 		"icon":                "mdi:weather-sunset",

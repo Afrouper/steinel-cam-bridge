@@ -113,8 +113,10 @@ func (c *Client) publishStatus(st events.DeviceStatus) {
 	pub("lowlight/state", strconv.Itoa(st.Lowlight))
 
 	// 3. Sensor values & thresholds
-	pub("lux_threshold/state", strconv.Itoa(st.Lux))
-	pub("lux/state", strconv.Itoa(st.Lux))
+	if st.Lux >= 2 {
+		pub("lux_threshold/state", strconv.Itoa(st.Lux))
+		pub("lux/state", strconv.Itoa(st.Lux))
+	}
 	pub("pir_sensitivity/state", strconv.Itoa(st.PIRSensitivity))
 
 	pirState := "OFF"

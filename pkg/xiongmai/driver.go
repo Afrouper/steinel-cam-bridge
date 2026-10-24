@@ -29,6 +29,7 @@ type Driver struct {
 	sdcard     *SDCardManager
 	mu         sync.Mutex
 	running    bool
+	closeChan  chan struct{}
 }
 
 // NewDriver creates a new driver instance for a Steinel L 620 CAM.
@@ -40,13 +41,13 @@ func NewDriver(cameraIP string, user, password string, resolution string, rtspSe
 		eventBus = events.GlobalBus
 	}
 
-	streamSubtype := 0 // 720p HD (Main stream)
-	resNormalized := "720p"
+	streamSubtype := 0 // 1080p Full HD (Main stream)
+	resNormalized := "1080p"
 	if strings.EqualFold(resolution, "360p") {
 		streamSubtype = 1 // 360p SD (Sub stream)
 		resNormalized = "360p"
-	} else if strings.EqualFold(resolution, "1080p") {
-		logger.Info("Config", "ℹ️ Steinel L 620 CAM sensor supports max 720p HD (mapping '1080p' configuration to native 720p Main Stream channel=1_stream=0)")
+	} else if strings.EqualFold(resolution, "720p") {
+		streamSubtype = 0
 		resNormalized = "720p"
 	}
 
@@ -66,6 +67,7 @@ func NewDriver(cameraIP string, user, password string, resolution string, rtspSe
 		talk:       talk,
 		ingest:     ingest,
 		sdcard:     sdcard,
+		closeChan:  make(chan struct{}),
 	}
 }
 
@@ -86,23 +88,31 @@ func (d *Driver) Start(ctx context.Context) error {
 
 	logger.Info("Xiongmai Driver", "🚀 Connecting to Steinel L 620 CAM at %s (TCP Port %d)...", d.cameraIP, DefaultPort)
 
+	// Register live telemetry push handler (MsgID 1582)
+	d.client.SetOnTelemetry(func(mcuCfg *MCUConfig) {
+		d.applyMCUConfig(mcuCfg)
+	})
+
 	// Step 1: Connect & Login on Sofia port 34567
 	if err := d.client.Connect(ctx); err != nil {
-		logger.Warn("Xiongmai Driver", "⚠️ Sofia port %d connection error (%v) — continuing in resilient RTSP mode", DefaultPort, err)
-	}
-
-	if d.client.IsLoggedIn() {
+		logger.Warn("Xiongmai Driver", "⚠️ Sofia port %d connection error (%v) — starting in resilient RTSP mode with background reconnect", DefaultPort, err)
+	} else if d.client.IsLoggedIn() {
 		// Step 2: Zero-Touch RTSP Enablement
 		if err := d.client.EnableRTSP(); err != nil {
-			logger.Debug("Xiongmai Driver", "ℹ️ Zero-touch RTSP enablement result: %v", err)
+			logger.Warn("Xiongmai Driver", "⚠️ Zero-touch RTSP enablement result: %v", err)
+		}
+
+		// Step 2b: Query video encode config & ensure H.264
+		if err := d.client.EnsureH264Encoding(); err != nil {
+			logger.Warn("Xiongmai Driver", "⚠️ Video encode check result: %v", err)
 		}
 
 		// Step 3: Query initial light and MCU states
 		d.syncInitialState()
-
-		// Step 5: Start KeepAlive loop
-		go d.keepAliveLoop(ctx)
 	}
+
+	// Step 3b: Always launch autonomous background supervisor for Sofia control connection
+	go d.superviseSofiaLoop(ctx)
 
 	// Step 4: Start RTSP Ingest with effective password or configured password
 	effectivePwd := d.client.GetEffectivePassword()
@@ -113,7 +123,9 @@ func (d *Driver) Start(ctx context.Context) error {
 	if d.resolution == "360p" {
 		streamSubtype = 1
 	}
-	d.ingest = NewRTSPIngest(d.cameraIP, RTSPPort, d.user, effectivePwd, streamSubtype, d.rtspServer)
+	logger.Trace("Xiongmai Driver", "Starting RTSP Ingest: IP=%s, Port=%d, User=%s, PwdMasked=%s, FallbackPwdMasked=%s",
+		d.cameraIP, RTSPPort, d.user, MaskPassword(effectivePwd), MaskPassword(d.password))
+	d.ingest = NewRTSPIngest(d.cameraIP, RTSPPort, d.user, effectivePwd, streamSubtype, d.rtspServer, d.password)
 	if err := d.ingest.Start(ctx); err != nil {
 		logger.Warn("Xiongmai Driver", "⚠️ Failed to start RTSP Ingest: %v", err)
 	}
@@ -123,53 +135,120 @@ func (d *Driver) Start(ctx context.Context) error {
 	return nil
 }
 
+func (d *Driver) applyMCUConfig(mcuCfg *MCUConfig) {
+	if d.eventBus == nil || mcuCfg == nil {
+		return
+	}
+	st := d.eventBus.GetStatus()
+	switch mcuCfg.Mode {
+	case 3: // 'd' -> Continuous Light (Dauerlicht)
+		st.LampMode = 1
+	case 1: // 'b' -> Sensor Automatik
+		st.LampMode = 2
+	default:
+		st.LampMode = 0
+	}
+	st.PIRActive = (mcuCfg.Distance > 0 && mcuCfg.Mode != 0)
+
+	if mcuCfg.Highlight > 0 {
+		st.Highlight = mcuCfg.Highlight
+	}
+	if mcuCfg.HighlightDelaySec > 0 {
+		st.HighlightTime = mcuCfg.HighlightDelaySec
+	}
+	if mcuCfg.TwilightLux > 0 {
+		st.Lux = mcuCfg.TwilightLux
+	}
+	if mcuCfg.Distance >= 10 {
+		st.PIRSensitivity = 100
+	} else if mcuCfg.Distance >= 6 {
+		st.PIRSensitivity = 66
+	} else if mcuCfg.Distance > 0 {
+		st.PIRSensitivity = 33
+	}
+	st.Lowlight = mcuCfg.Lowlight
+	if dur, err := strconv.Atoi(strings.TrimSuffix(mcuCfg.LowlightDuration, "h")); err == nil {
+		st.LowlightTime = dur * 60
+	}
+	d.eventBus.UpdateStatus(st)
+}
+
 func (d *Driver) syncInitialState() {
 	if d.eventBus == nil {
 		return
 	}
 
+	logger.Trace("Xiongmai Driver", "Synchronizing initial camera state via Sofia port %d...", DefaultPort)
 	st := d.eventBus.GetStatus()
 	st.Resolution = d.resolution
 	st.FirmwareVer = "Xiongmai-Sofia"
-
-	// Query Light Switch
-	if lightOn, err := d.client.QueryLightState(); err == nil {
-		if lightOn {
-			st.LampMode = 1
-		} else {
-			st.LampMode = 0
-		}
-	}
-
-	// Query MCU Config
-	if mcuCfg, err := d.client.QueryMCUConfig(); err == nil && mcuCfg != nil {
-		st.Highlight = mcuCfg.Highlight
-		st.HighlightTime = mcuCfg.HighlightDelaySec
-		st.Lux = mcuCfg.TwilightLux
-		st.PIRSensitivity = mcuCfg.Distance * 10
-		st.Lowlight = mcuCfg.Lowlight
-		if dur, err := strconv.Atoi(strings.TrimSuffix(mcuCfg.LowlightDuration, "h")); err == nil {
-			st.LowlightTime = dur * 60
-		}
-
-		logger.Debug("Xiongmai Driver", "💡 Synced MCU Config: Light=%d%%, Lux=%d, Dist=%dm, Delay=%ds, Lowlight=%d%% (%s)",
-			mcuCfg.Highlight, mcuCfg.TwilightLux, mcuCfg.Distance, mcuCfg.HighlightDelaySec, mcuCfg.Lowlight, mcuCfg.LowlightDuration)
-	}
-
 	d.eventBus.UpdateStatus(st)
+
+	// Query MCU Config via OPTrans (which also queries light on/off state via mode)
+	if mcuCfg, err := d.client.QueryMCUConfig(); err == nil && mcuCfg != nil {
+		d.applyMCUConfig(mcuCfg)
+		logger.Debug("Xiongmai Driver", "💡 Synced MCU Config: LightOn=%v, Bright=%d%%, Lux=%d, Dist=%dm, Delay=%ds, Lowlight=%d%% (%s)",
+			mcuCfg.IsLightOn(), mcuCfg.Highlight, mcuCfg.TwilightLux, mcuCfg.Distance, mcuCfg.HighlightDelaySec, mcuCfg.Lowlight, mcuCfg.LowlightDuration)
+	}
 }
 
-func (d *Driver) keepAliveLoop(ctx context.Context) {
+func (d *Driver) superviseSofiaLoop(ctx context.Context) {
 	ticker := time.NewTicker(20 * time.Second)
 	defer ticker.Stop()
 
+	reconnectBackoff := 5 * time.Second
+	firstAttempt := true
+
 	for {
+		if !d.client.IsLoggedIn() {
+			if !firstAttempt {
+				select {
+				case <-ctx.Done():
+					return
+				case <-d.closeChan:
+					return
+				case <-time.After(reconnectBackoff):
+				}
+			}
+			firstAttempt = false
+
+			logger.Debug("Xiongmai Driver", "🔄 Attempting background reconnect to Sofia port %d...", DefaultPort)
+			connCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			err := d.client.Connect(connCtx)
+			cancel()
+
+			if err == nil && d.client.IsLoggedIn() {
+				logger.Info("Xiongmai Driver", "✅ Sofia control connection established (SessionID: 0x%08X)", d.client.GetSessionID())
+				reconnectBackoff = 5 * time.Second
+				firstAttempt = false
+
+				_ = d.client.EnableRTSP()
+				_ = d.client.EnsureH264Encoding()
+				d.syncInitialState()
+			} else {
+				logger.Debug("Xiongmai Driver", "ℹ️ Sofia reconnect attempt failed: %v (retrying in %v)", err, reconnectBackoff)
+				if reconnectBackoff < 60*time.Second {
+					reconnectBackoff *= 2
+					if reconnectBackoff > 60*time.Second {
+						reconnectBackoff = 60 * time.Second
+					}
+				}
+			}
+			continue
+		}
+
 		select {
 		case <-ctx.Done():
 			return
+		case <-d.closeChan:
+			return
 		case <-ticker.C:
-			if err := d.client.SendKeepAlive(); err != nil {
-				logger.Debug("Xiongmai Driver", "⚠️ Heartbeat failed: %v", err)
+			if d.client.IsLoggedIn() {
+				if err := d.client.SendKeepAlive(); err != nil {
+					logger.Warn("Xiongmai Driver", "⚠️ Sofia heartbeat failed: %v (connection lost, reconnecting in background...)", err)
+					_ = d.client.Close()
+					reconnectBackoff = 5 * time.Second
+				}
 			}
 		}
 	}
@@ -203,9 +282,13 @@ func (d *Driver) GetMQTTCallbacks() mqtt.Callbacks {
 			return d.SetNightlightDuration(fmt.Sprintf("%dh", timeVal/60))
 		},
 		SetPIRSensitivity: func(percent int) error {
-			dist := percent / 10
-			if dist <= 0 {
-				dist = 1
+			var dist int
+			if percent >= 67 {
+				dist = 10 // Maximum ('u')
+			} else if percent >= 34 {
+				dist = 6 // Medium ('p')
+			} else {
+				dist = 3 // Minimum ('k')
 			}
 			return d.SetDistance(dist)
 		},
@@ -217,13 +300,14 @@ func (d *Driver) GetMQTTCallbacks() mqtt.Callbacks {
 
 // SetLamp turns the main light on or off.
 func (d *Driver) SetLamp(on bool) error {
+	logger.Trace("Xiongmai Driver", "SetLamp: on=%v", on)
 	err := d.client.SetLightState(on)
 	if err == nil && d.eventBus != nil {
 		st := d.eventBus.GetStatus()
 		if on {
-			st.LampMode = 1
+			st.LampMode = 1 // Dauerlicht (Mode 3, 'd')
 		} else {
-			st.LampMode = 0
+			st.LampMode = 2 // Sensor Automatik (Mode 1, 'b')
 		}
 		d.eventBus.UpdateStatus(st)
 	}
@@ -232,6 +316,7 @@ func (d *Driver) SetLamp(on bool) error {
 
 // SetDim sets the main light dimming level (10-100%).
 func (d *Driver) SetDim(val int) error {
+	logger.Trace("Xiongmai Driver", "SetDim: val=%d%%", val)
 	err := d.client.SetHighlight(val)
 	if err == nil && d.eventBus != nil {
 		st := d.eventBus.GetStatus()
@@ -243,6 +328,7 @@ func (d *Driver) SetDim(val int) error {
 
 // SetTwilight sets the twilight sensor threshold (2-1000 Lux).
 func (d *Driver) SetTwilight(val int) error {
+	logger.Trace("Xiongmai Driver", "SetTwilight: lux=%d", val)
 	err := d.client.SetLux(val)
 	if err == nil && d.eventBus != nil {
 		st := d.eventBus.GetStatus()
@@ -254,10 +340,17 @@ func (d *Driver) SetTwilight(val int) error {
 
 // SetDistance sets the PIR detection distance (1-10 meters).
 func (d *Driver) SetDistance(val int) error {
+	logger.Trace("Xiongmai Driver", "SetDistance: distance=%dm", val)
 	err := d.client.SetDistance(val)
 	if err == nil && d.eventBus != nil {
 		st := d.eventBus.GetStatus()
-		st.PIRSensitivity = val * 10
+		if val >= 8 {
+			st.PIRSensitivity = 100
+		} else if val >= 5 {
+			st.PIRSensitivity = 66
+		} else {
+			st.PIRSensitivity = 33
+		}
 		d.eventBus.UpdateStatus(st)
 	}
 	return err
@@ -265,6 +358,7 @@ func (d *Driver) SetDistance(val int) error {
 
 // SetDuration sets the main light on-time in seconds.
 func (d *Driver) SetDuration(val int) error {
+	logger.Trace("Xiongmai Driver", "SetDuration: seconds=%ds", val)
 	err := d.client.SetHighlightDelay(val)
 	if err == nil && d.eventBus != nil {
 		st := d.eventBus.GetStatus()
@@ -276,6 +370,7 @@ func (d *Driver) SetDuration(val int) error {
 
 // SetNightlight sets the nightlight brightness (0-50%).
 func (d *Driver) SetNightlight(val int) error {
+	logger.Trace("Xiongmai Driver", "SetNightlight: val=%d%%", val)
 	err := d.client.SetLowlight(val)
 	if err == nil && d.eventBus != nil {
 		st := d.eventBus.GetStatus()
@@ -287,6 +382,7 @@ func (d *Driver) SetNightlight(val int) error {
 
 // SetNightlightDuration sets the nightlight duration mode ("all_night", "4h", "off").
 func (d *Driver) SetNightlightDuration(val string) error {
+	logger.Trace("Xiongmai Driver", "SetNightlightDuration: mode=%q", val)
 	var durInt int
 	valLower := strings.ToLower(strings.TrimSpace(val))
 	switch {
@@ -312,18 +408,18 @@ func (d *Driver) SetNightlightDuration(val string) error {
 	return err
 }
 
-// SetResolution switches between 720p (stream 0) and 360p (stream 1) for the Steinel L 620 CAM.
+// SetResolution switches between 1080p/720p (stream 0) and 360p (stream 1) for the Steinel L 620 CAM.
 func (d *Driver) SetResolution(res string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
 	streamSubtype := 0
-	resNormalized := "720p"
+	resNormalized := "1080p"
 	if strings.EqualFold(res, "360p") {
 		streamSubtype = 1
 		resNormalized = "360p"
-	} else if strings.EqualFold(res, "1080p") {
-		logger.Info("Xiongmai", "ℹ️ Steinel L 620 CAM sensor supports max 720p HD (clamping resolution to 720p)")
+	} else if strings.EqualFold(res, "720p") {
+		streamSubtype = 0
 		resNormalized = "720p"
 	}
 
@@ -355,6 +451,7 @@ func (d *Driver) Close() error {
 		return nil
 	}
 	d.running = false
+	close(d.closeChan)
 
 	if d.talk != nil {
 		_ = d.talk.StopTalk()

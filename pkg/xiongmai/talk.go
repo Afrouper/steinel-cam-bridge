@@ -55,9 +55,13 @@ func (t *TalkClient) SendAudioPacket(pkt *rtp.Packet) error {
 
 	// Wrap audio payload in Sofia talk data message (MsgTalkAudioData = 1432 / 1412)
 	// Xiongmai audio frames contain raw G.711 (PCMA/PCMU) samples
+	channel := byte(0)
+	if t.client.dataEncryptionAES {
+		channel = 1
+	}
 	hdr := Header{
 		Magic:      HeaderMagic,
-		Channel:    0,
+		Channel:    channel,
 		SessionID:  t.client.sessionID,
 		Sequence:   t.client.sequence + 1,
 		MsgID:      MsgTalkAudioData,
@@ -82,6 +86,7 @@ func (t *TalkClient) startTalkLocked() error {
 	}
 
 	logger.Debug("Xiongmai Talk", "🎙️ Claiming audio talk channel (MsgTalkClaimReq)...")
+	logger.Trace("Xiongmai Talk", "Claiming talk channel (SessionID: 0x%08X)...", t.client.sessionID)
 
 	// 1. Claim talk channel (MsgID 1434 / 1410)
 	claimReq := OPTalkReq{
@@ -126,6 +131,7 @@ func (t *TalkClient) StopTalk() error {
 		return nil
 	}
 
+	logger.Trace("Xiongmai Talk", "Stopping talk channel (SessionID: 0x%08X)...", t.client.sessionID)
 	req := OPTalkReq{
 		Name: "OPTalk",
 		OPTalk: OPTalkInfo{

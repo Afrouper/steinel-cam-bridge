@@ -158,8 +158,11 @@ func (c *Client) Start(_ context.Context) error {
 		brightnessCmd := fmt.Sprintf("%s/light/brightness/set", c.baseTopic)
 		client.Subscribe(brightnessCmd, 1, c.handleCommand)
 
-		// 4. Publish Initial Device State
-		c.publishStatus(c.eventBus.GetStatus())
+		// 4. Publish Initial Device State only if already populated with real device telemetry
+		st := c.eventBus.GetStatus()
+		if st.LampMode > 0 || st.Lux >= 2 || st.Highlight > 0 {
+			c.publishStatus(st)
+		}
 	}
 
 	opts.OnConnectionLost = func(_ paho.Client, err error) {

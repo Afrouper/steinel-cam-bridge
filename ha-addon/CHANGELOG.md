@@ -2,6 +2,23 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge** Add-on werden hier dokumentiert.
 
+## 1.4.0
+
+### 🚀 Steinel L 620 CAM Support & Frigate 2-Wege-Audio
+
+- **Vollständige Unterstützung für Steinel L 620 CAM**:
+  - Nativer Treiber für die Xiongmai/Sofia-Plattform mit automatischer Modellerkennung (`auto`).
+  - Umfassende Licht-, PIR-, Dämmerungs- und Nachlaufzeit-Steuerung über Home Assistant & MQTT.
+  - Stabiler H.264-Videostream über RTSP und dynamische ONVIF Profile S/T Einbindung.
+  - Autonomer Reconnect-Supervisor und Dial-Schutz für höchste Zuverlässigkeit bei Neustarts.
+- **Frigate 2-Wege-Audio & Codec-Erweiterungen**:
+  - Volle 2-Wege-Audio-Unterstützung (Talk Backchannel nach ONVIF Profile T) für Frigate, Scrypted und Home Assistant.
+  - Unterstützung und automatische Transkodierung für AAC, G.711 µ-law (PCMU) und A-law (PCMA).
+- **Stabilität & Systemoptimierungen**:
+  - Konfigurierbarer SD-Karten-Sync (periodischer Hintergrund-Sync abschaltbar über `sdcard_sync_interval: 0`).
+  - 100 % Passwort-Maskierung im gesamten Logging (CWE-312 Konformität).
+  - Aktualisierte Abhängigkeiten und Sicherheitsverbesserungen.
+
 ## 1.3.10
 
 ### 🛡️ Autonomer Watchdog-Backoff & mDNS Wake-up Bereinigung
