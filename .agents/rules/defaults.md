@@ -1,8 +1,5 @@
 ---
 trigger: always_on
----
-
----
 description: "Erlaubte Defaults"
 triggers:
   - glob: "**/*"
