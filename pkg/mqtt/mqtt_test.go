@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/Afrouper/steinel-cam-bridge/pkg/storage"
+	"github.com/stretchr/testify/assert"
 )
 
 type mockMessage struct {
@@ -181,4 +182,17 @@ func TestMultiCameraMQTT(t *testing.T) {
 	if cam2LampMode != "off" {
 		t.Errorf("expected cam2 lamp mode 'off', got %q", cam2LampMode)
 	}
+}
+
+func TestFormatDisplayName(t *testing.T) {
+	// 1. Single-camera legacy default (Name is empty) -> Steinel <Model> (<DeviceID>)
+	assert.Equal(t, "Steinel L 625 CAM SC (de-xxxxxxx)", FormatDisplayName("L 625 CAM SC", "de-xxxxxxx", ""))
+	assert.Equal(t, "Steinel L 620 CAM (steinel-l620)", FormatDisplayName("L 620 CAM", "steinel-l620", ""))
+
+	// 2. Custom name without "Steinel" prefix -> "Steinel " + Name
+	assert.Equal(t, "Steinel Einfahrt", FormatDisplayName("L 625 CAM SC", "de-xxxxxxx", "Einfahrt"))
+
+	// 3. Custom name with "Steinel" prefix -> Name preserved without duplication
+	assert.Equal(t, "Steinel Garten", FormatDisplayName("L 620 CAM", "steinel-l620", "Steinel Garten"))
+	assert.Equal(t, "steinel terrasse", FormatDisplayName("L 620 CAM", "steinel-l620", "steinel terrasse"))
 }

@@ -3,6 +3,7 @@ package mqtt
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/Afrouper/steinel-cam-bridge/pkg/logger"
 
@@ -29,13 +30,21 @@ func (c *Client) publishDiscovery(client paho.Client) {
 	}
 }
 
+// FormatDisplayName formats the user-facing device display name for Home Assistant.
+func FormatDisplayName(model, deviceID, name string) string {
+	if name != "" {
+		if strings.HasPrefix(strings.ToLower(name), "steinel") {
+			return name
+		}
+		return fmt.Sprintf("Steinel %s", name)
+	}
+	return fmt.Sprintf("Steinel %s (%s)", model, deviceID)
+}
+
 // publishDeviceDiscovery registers all Home Assistant MQTT Auto-Discovery entities for a specific CameraDevice.
 func (c *Client) publishDeviceDiscovery(client paho.Client, dev *CameraDevice) {
 	availTopic := fmt.Sprintf("%s/availability", dev.baseTopic)
-	displayName := fmt.Sprintf("Steinel %s (%s)", dev.Model, dev.DeviceID)
-	if dev.Name != "" {
-		displayName = fmt.Sprintf("Steinel %s", dev.Name)
-	}
+	displayName := FormatDisplayName(dev.Model, dev.DeviceID, dev.Name)
 
 	devMap := map[string]interface{}{
 		"identifiers":  []string{dev.nodeID},

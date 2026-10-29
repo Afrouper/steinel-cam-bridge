@@ -47,6 +47,7 @@ schema:
       audio_codec: "list(aac|pcmu)?"
       reset_pairing: "bool?"
       nabto_driver: "list(cgo|pure)?"
+  camera_name: "str?"
   camera_ip: "str?"
   camera_mac: "str?"
   camera_type: "list(auto|l625|l620)?"

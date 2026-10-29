@@ -2,6 +2,9 @@ configuration:
   cameras:
     name: "Kameras (Multi-Kamera-Betrieb)"
     description: "Liste mehrerer Steinel Kameras. Ermöglicht den gleichzeitigen Betrieb mehrerer Kameras über eine einzige Bridge-Instanz ohne zusätzliche Ports."
+  camera_name:
+    name: "Kamera-Name"
+    description: "Optionaler benutzerdefinierter Anzeigename der Kamera in Home Assistant (Standard: Steinel <Modell> (<ID>))."
   camera_ip:
     name: "Kamera IP-Adresse"
     description: "Die lokale IPv4-Adresse der Steinel CAM Leuchte im Heimnetzwerk (z. B. 192.168.1.100)."

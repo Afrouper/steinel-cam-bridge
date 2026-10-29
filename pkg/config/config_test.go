@@ -387,3 +387,17 @@ func TestMultiCam_DuplicateValidation(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "duplicate MAC address")
 }
+
+func TestSingleCam_DefaultNameRemainsEmpty(t *testing.T) {
+	cfg := NewDefaultConfig()
+	cfg.NabtoConfig.CameraIP = "192.168.1.50"
+	// CameraName is left empty (standard single-camera behavior)
+
+	err := cfg.Validate()
+	require.NoError(t, err)
+
+	require.Len(t, cfg.Cameras, 1)
+	assert.Equal(t, "", cfg.Cameras[0].Name, "Single camera name must remain empty when not configured to preserve legacy HA device name")
+	assert.Equal(t, "steinel", cfg.Cameras[0].Path)
+	assert.Equal(t, "00:0C:43:00:01:02", cfg.Cameras[0].MAC)
+}

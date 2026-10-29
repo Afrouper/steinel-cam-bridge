@@ -659,7 +659,7 @@ func (c *Config) Validate() error {
 		if cam.Name == "" {
 			if len(c.Cameras) == 1 && c.CameraName != "" {
 				cam.Name = c.CameraName
-			} else {
+			} else if len(c.Cameras) > 1 {
 				cam.Name = fmt.Sprintf("Camera %d", i+1)
 			}
 		}
@@ -669,7 +669,11 @@ func (c *Config) Validate() error {
 			} else {
 				cam.Path = Slugify(cam.Name)
 				if cam.Path == "" {
-					cam.Path = fmt.Sprintf("cam%d", i+1)
+					if len(c.Cameras) == 1 {
+						cam.Path = "steinel"
+					} else {
+						cam.Path = fmt.Sprintf("cam%d", i+1)
+					}
 				}
 			}
 		}
@@ -766,21 +770,25 @@ func (c *Config) Validate() error {
 
 // ProbeCameraModel determines whether a camera is an L 620 CAM (Xiongmai Sofia) or L 625 CAM SC (Nabto Edge).
 func (cam *CameraConfig) ProbeCameraModel() (isL620 bool, modelName string) {
+	tag := cam.Name
+	if tag == "" {
+		tag = cam.IP
+	}
 	switch strings.ToLower(strings.TrimSpace(cam.Type)) {
 	case "l620":
 		isL620 = true
-		logger.Info("Config", "📷 Camera [%s] configured explicitly: Steinel L 620 CAM / XLED CAM 1 (Xiongmai Sofia)", cam.Name)
+		logger.Info("Config", "📷 Camera [%s] configured explicitly: Steinel L 620 CAM / XLED CAM 1 (Xiongmai Sofia)", tag)
 	case "l625":
 		isL620 = false
-		logger.Info("Config", "📷 Camera [%s] configured explicitly: Steinel L 625 CAM SC (Nabto Edge)", cam.Name)
+		logger.Info("Config", "📷 Camera [%s] configured explicitly: Steinel L 625 CAM SC (Nabto Edge)", tag)
 	default: // "auto" or unspecified
-		logger.Info("Config", "🔍 Camera [%s] set to 'auto': Probing %s on Port 34567...", cam.Name, cam.IP)
+		logger.Info("Config", "🔍 Camera [%s] set to 'auto': Probing %s on Port 34567...", tag, cam.IP)
 		if ProbePort(cam.IP, 34567, 1500*time.Millisecond) {
 			isL620 = true
-			logger.Info("Config", "🎯 Camera [%s]: Auto-detected Steinel L 620 CAM / XLED CAM 1 (Port 34567 Xiongmai Sofia is open)", cam.Name)
+			logger.Info("Config", "🎯 Camera [%s]: Auto-detected Steinel L 620 CAM / XLED CAM 1 (Port 34567 Xiongmai Sofia is open)", tag)
 		} else {
 			isL620 = false
-			logger.Info("Config", "🎯 Camera [%s]: Auto-detected Steinel L 625 CAM SC (Port 34567 closed, selecting Nabto Edge driver)", cam.Name)
+			logger.Info("Config", "🎯 Camera [%s]: Auto-detected Steinel L 625 CAM SC (Port 34567 closed, selecting Nabto Edge driver)", tag)
 		}
 	}
 
