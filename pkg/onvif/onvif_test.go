@@ -36,6 +36,7 @@ func TestONVIFServices(t *testing.T) {
 		"L 625 CAM SC",
 		"",
 		"",
+		"",
 		changeRes,
 		nil,
 		setLamp,
@@ -198,7 +199,7 @@ func TestDiscoveryProbe(t *testing.T) {
 }
 
 func TestDeviceHandler_NewActions(t *testing.T) {
-	dh := NewDeviceHandler("device-uuid-test", "product-id-test", "L 625 CAM SC", 8000, 8554, "admin", nil, events.NewBus())
+	dh := NewDeviceHandler("device-uuid-test", "product-id-test", "L 625 CAM SC", 8000, 8554, "admin", "", nil, events.NewBus())
 
 	// 1. GetServiceCapabilities
 	resp, err := dh.Handle("GetServiceCapabilities", "", "192.168.1.50:8000")
@@ -243,7 +244,7 @@ func TestDeviceHandler_NewActions(t *testing.T) {
 }
 
 func TestDeviceHandler_GetServicesCapabilities(t *testing.T) {
-	dh := NewDeviceHandler("device-uuid-test", "product-id-test", "L 625 CAM SC", 8000, 8554, "admin", nil, events.NewBus())
+	dh := NewDeviceHandler("device-uuid-test", "product-id-test", "L 625 CAM SC", 8000, 8554, "admin", "", nil, events.NewBus())
 
 	// Without IncludeCapability
 	respNoCap, err := dh.Handle("GetServices", `<GetServices xmlns="http://www.onvif.org/ver10/device/wsdl"/>`, "192.168.1.50:8000")
@@ -267,7 +268,7 @@ func TestDeviceHandler_GetServicesCapabilities(t *testing.T) {
 }
 
 func TestDeviceHandler_ModelReporting(t *testing.T) {
-	dh620 := NewDeviceHandler("device-620", "product-620", "L 620 CAM", 8000, 8554, "admin", nil, events.NewBus())
+	dh620 := NewDeviceHandler("device-620", "product-620", "L 620 CAM", 8000, 8554, "admin", "", nil, events.NewBus())
 	resp620, err := dh620.Handle("GetDeviceInformation", "", "192.168.1.50:8000")
 	if err != nil {
 		t.Fatalf("GetDeviceInformation failed: %v", err)
@@ -276,12 +277,35 @@ func TestDeviceHandler_ModelReporting(t *testing.T) {
 		t.Errorf("expected model 'L 620 CAM', got: %s", resp620)
 	}
 
-	dh625 := NewDeviceHandler("device-625", "product-625", "L 625 CAM SC", 8000, 8554, "admin", nil, events.NewBus())
+	dh625 := NewDeviceHandler("device-625", "product-625", "L 625 CAM SC", 8000, 8554, "admin", "", nil, events.NewBus())
 	resp625, err := dh625.Handle("GetDeviceInformation", "", "192.168.1.50:8000")
 	if err != nil {
 		t.Fatalf("GetDeviceInformation failed: %v", err)
 	}
 	if !strings.Contains(resp625, "<tds:Model>L 625 CAM SC</tds:Model>") {
 		t.Errorf("expected model 'L 625 CAM SC', got: %s", resp625)
+	}
+}
+
+func TestDeviceHandler_MACAddress(t *testing.T) {
+	// Default fallback MAC
+	dhDefault := NewDeviceHandler("device-uuid", "product-id", "L 625 CAM SC", 8000, 8554, "admin", "", nil, events.NewBus())
+	respDefault, err := dhDefault.Handle("GetNetworkInterfaces", "", "192.168.1.50:8000")
+	if err != nil {
+		t.Fatalf("GetNetworkInterfaces failed: %v", err)
+	}
+	if !strings.Contains(respDefault, "<tt:HwAddress>00:0C:43:00:01:02</tt:HwAddress>") {
+		t.Errorf("expected default MAC 00:0C:43:00:01:02, got: %s", respDefault)
+	}
+
+	// Custom MAC
+	customMAC := "00:0C:43:AB:CD:EF"
+	dhCustom := NewDeviceHandler("device-uuid", "product-id", "L 625 CAM SC", 8000, 8554, "admin", customMAC, nil, events.NewBus())
+	respCustom, err := dhCustom.Handle("GetNetworkInterfaces", "", "192.168.1.50:8000")
+	if err != nil {
+		t.Fatalf("GetNetworkInterfaces failed: %v", err)
+	}
+	if !strings.Contains(respCustom, "<tt:HwAddress>"+customMAC+"</tt:HwAddress>") {
+		t.Errorf("expected custom MAC %s, got: %s", customMAC, respCustom)
 	}
 }

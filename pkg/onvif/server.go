@@ -42,6 +42,7 @@ func NewServer(
 	deviceID string,
 	productID string,
 	model string,
+	macAddress string,
 	authUser string,
 	authPass string,
 	changeResFunc func(res string) error,
@@ -58,7 +59,7 @@ func NewServer(
 		eventBus = events.GlobalBus
 	}
 
-	devHandler := NewDeviceHandler(deviceID, productID, model, port, rtspPort, authUser, rebootFunc, eventBus)
+	devHandler := NewDeviceHandler(deviceID, productID, model, port, rtspPort, authUser, macAddress, rebootFunc, eventBus)
 	medHandler := NewMediaHandler(rtspPort, rtspPath, audioCodec, port, changeResFunc, eventBus)
 	evtHandler := NewEventHandler(port, eventBus)
 	ioHandler := NewDeviceIOHandler(setLampFunc, setSirenFunc)

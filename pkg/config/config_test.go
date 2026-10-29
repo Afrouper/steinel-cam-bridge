@@ -251,3 +251,41 @@ func TestLayer4_CacheFlags(t *testing.T) {
 	assert.Equal(t, 30, cfg.CacheRecordings)
 	assert.Equal(t, "/flag/cache", cfg.CacheDir)
 }
+
+func TestCameraMAC_DefaultAndCustomFlags(t *testing.T) {
+	// 1. Default MAC when no flag/env/option is passed
+	cfgDefault := NewDefaultConfig()
+	cfgDefault.NabtoConfig.CameraIP = "192.168.1.100"
+	err := cfgDefault.Validate()
+	require.NoError(t, err)
+	assert.Equal(t, DefaultCameraMAC, cfgDefault.CameraMAC)
+
+	// 2. Custom MAC via CLI flag (-mac) with normalization
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.String("mac", "", "usage")
+	fs.String("ip", "", "usage")
+	err = fs.Parse([]string{"-ip", "192.168.1.100", "-mac", "00-0c-43-00-01-03"})
+	require.NoError(t, err)
+
+	cfgFlag := Resolve("", fs)
+	assert.Equal(t, "00-0c-43-00-01-03", cfgFlag.CameraMAC)
+	err = cfgFlag.Validate()
+	require.NoError(t, err)
+	assert.Equal(t, "00:0C:43:00:01:03", cfgFlag.CameraMAC)
+
+	// 3. Custom MAC via Env var (CAMERA_MAC)
+	t.Setenv("CAMERA_MAC", "00:0c:43:ab:cd:ef")
+	cfgEnv := Resolve("", nil)
+	cfgEnv.NabtoConfig.CameraIP = "192.168.1.100"
+	err = cfgEnv.Validate()
+	require.NoError(t, err)
+	assert.Equal(t, "00:0C:43:AB:CD:EF", cfgEnv.CameraMAC)
+
+	// 4. Invalid MAC returns validation error
+	cfgInvalid := NewDefaultConfig()
+	cfgInvalid.NabtoConfig.CameraIP = "192.168.1.100"
+	cfgInvalid.CameraMAC = "invalid-mac-address"
+	err = cfgInvalid.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid MAC address")
+}

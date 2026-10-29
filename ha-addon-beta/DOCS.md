@@ -1,4 +1,4 @@
-# Home Assistant Add-on: Steinel CAM Bridge - BETA
+# Home Assistant Add-on: Steinel CAM Bridge
 
 Standalone ONVIF, 2-Way Audio (Gegensprechen) & MQTT Bridge für Steinel CAM Leuchten (**L 625 CAM SC**, **L 620 CAM**, **XLED CAM 1/2**).
 
@@ -27,6 +27,7 @@ Der QR-Code wird initial für das Pairing benötigt. Danach muss er nicht mehr z
 | Option | Typ | Standard | Beschreibung |
 |---|---|---|---|
 | `camera_ip` | String | *(Pflichtfeld)* | Lokale IP-Adresse der Steinel-Kamera im Heimnetz (z. B. `192.168.1.100`) |
+| `camera_mac` | String | `""` | Optional: Benutzerdefinierte MAC-Adresse (Standard: `00:0C:43:00:01:02`). Zur Vermeidung von Home Assistant Unique-ID-Konflikten bei parallelem Betrieb mehrerer Kameras |
 | `camera_type` | Liste | `auto` | Kameramodell: `auto` (automatische Erkennung), `l625` (L 625 CAM SC), `l620` (L 620 CAM / XLED CAM 1) |
 | `camera_user` | String | `admin` | Benutzername für L 620 CAM (Standard: `admin`) |
 | `camera_password` | String | `""` | Geräte-Passwort für L 620 CAM (in der Steinel App vergeben) |

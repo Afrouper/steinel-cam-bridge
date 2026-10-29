@@ -16,12 +16,16 @@ import (
 	"github.com/Afrouper/steinel-cam-bridge/pkg/nabto"
 )
 
+// DefaultCameraMAC is the legacy fallback MAC address for backward compatibility with Home Assistant.
+const DefaultCameraMAC = "00:0C:43:00:01:02"
+
 // Config encapsulates the complete resolved runtime configuration following the 12-Factor App methodology.
 type Config struct {
 	NabtoConfig        *nabto.Config
 	CameraType         string
 	CameraUser         string
 	CameraPassword     string
+	CameraMAC          string
 	Resolution         string
 	AudioCodec         string
 	RTSPPort           int
@@ -97,6 +101,7 @@ func LoadHomeAssistantOptionsFromPath(path string, cfg *Config) {
 		CameraType          string `json:"camera_type"`
 		CameraUser          string `json:"camera_user"`
 		CameraPassword      string `json:"camera_password"`
+		CameraMAC           string `json:"camera_mac"`
 		QRCode              string `json:"qr_code"`
 		Resolution          string `json:"resolution"`
 		AudioCodec          string `json:"audio_codec"`
@@ -139,6 +144,9 @@ func LoadHomeAssistantOptionsFromPath(path string, cfg *Config) {
 	}
 	if opts.CameraPassword != "" {
 		cfg.CameraPassword = opts.CameraPassword
+	}
+	if opts.CameraMAC != "" {
+		cfg.CameraMAC = opts.CameraMAC
 	}
 	if opts.QRCode != "" {
 		nabto.ParseQRCode(opts.QRCode, cfg.NabtoConfig)
@@ -271,6 +279,11 @@ func Resolve(optionsPath string, fs *flag.FlagSet) *Config {
 	if ct := os.Getenv("CAMERA_TYPE"); ct != "" {
 		cfg.CameraType = ct
 	}
+	if mac := os.Getenv("CAMERA_MAC"); mac != "" {
+		cfg.CameraMAC = mac
+	} else if mac := os.Getenv("MAC_ADDRESS"); mac != "" {
+		cfg.CameraMAC = mac
+	}
 	if cu := os.Getenv("CAMERA_USER"); cu != "" {
 		cfg.CameraUser = cu
 	}
@@ -360,6 +373,8 @@ func Resolve(optionsPath string, fs *flag.FlagSet) *Config {
 				cfg.NabtoConfig.CameraIP = f.Value.String()
 			case "type":
 				cfg.CameraType = f.Value.String()
+			case "mac", "camera-mac":
+				cfg.CameraMAC = f.Value.String()
 			case "user":
 				cfg.CameraUser = f.Value.String()
 			case "pass", "password":
@@ -440,6 +455,15 @@ func Resolve(optionsPath string, fs *flag.FlagSet) *Config {
 func (c *Config) Validate() error {
 	if c.NabtoConfig.CameraIP == "" {
 		return errors.New("camera IP address is mandatory! Please configure 'camera_ip' in Home Assistant or supply -ip / CAMERA_IP")
+	}
+	if c.CameraMAC != "" {
+		hw, err := net.ParseMAC(c.CameraMAC)
+		if err != nil {
+			return fmt.Errorf("invalid MAC address: %s (%w)", c.CameraMAC, err)
+		}
+		c.CameraMAC = strings.ToUpper(hw.String())
+	} else {
+		c.CameraMAC = DefaultCameraMAC
 	}
 	if c.RTSPPort <= 0 || c.RTSPPort > 65535 {
 		return fmt.Errorf("invalid RTSP port: %d", c.RTSPPort)

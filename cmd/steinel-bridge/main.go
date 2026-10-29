@@ -18,6 +18,7 @@ var AppVersion = "dev"
 func registerFlags(fs *flag.FlagSet) {
 	fs.String("qr", "", "Steinel camera QR code string (did=...,pid=...,sct=...,pairPwd=...)")
 	fs.String("ip", "", "Steinel camera local IP address")
+	fs.String("mac", "", "Custom MAC address for ONVIF device identification (default: 00:0C:43:00:01:02)")
 	fs.String("type", "", "Camera model type ('auto', 'l625', 'l620')")
 	fs.String("user", "", "Camera authentication username (for L 620 CAM)")
 	fs.String("pass", "", "Camera authentication password (for L 620 CAM)")

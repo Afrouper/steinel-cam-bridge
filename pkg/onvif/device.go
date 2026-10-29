@@ -12,6 +12,7 @@ type DeviceHandler struct {
 	deviceID   string
 	productID  string
 	model      string
+	macAddress string
 	onvifPort  int
 	rtspPort   int
 	authUser   string
@@ -19,17 +20,21 @@ type DeviceHandler struct {
 	eventBus   *events.Bus
 }
 
-func NewDeviceHandler(deviceID, productID, model string, onvifPort, rtspPort int, authUser string, rebootFunc func() error, eventBus *events.Bus) *DeviceHandler {
+func NewDeviceHandler(deviceID, productID, model string, onvifPort, rtspPort int, authUser string, macAddress string, rebootFunc func() error, eventBus *events.Bus) *DeviceHandler {
 	if eventBus == nil {
 		eventBus = events.GlobalBus
 	}
 	if model == "" {
 		model = "L 625 CAM SC"
 	}
+	if macAddress == "" {
+		macAddress = "00:0C:43:00:01:02"
+	}
 	return &DeviceHandler{
 		deviceID:   deviceID,
 		productID:  productID,
 		model:      model,
+		macAddress: macAddress,
 		onvifPort:  onvifPort,
 		rtspPort:   rtspPort,
 		authUser:   authUser,
@@ -400,12 +405,16 @@ func (h *DeviceHandler) getSystemDateAndTime() string {
 }
 
 func (h *DeviceHandler) getNetworkInterfaces() string {
+	mac := h.macAddress
+	if mac == "" {
+		mac = "00:0C:43:00:01:02"
+	}
 	return fmt.Sprintf(`<tds:GetNetworkInterfacesResponse xmlns:tds="%s" xmlns:tt="%s">
   <tds:NetworkInterfaces token="eth0">
     <tt:Enabled>true</tt:Enabled>
     <tt:Info>
       <tt:Name>eth0</tt:Name>
-      <tt:HwAddress>00:0C:43:00:01:02</tt:HwAddress>
+      <tt:HwAddress>%s</tt:HwAddress>
       <tt:MTU>1500</tt:MTU>
     </tt:Info>
     <tt:IPv4>
@@ -419,7 +428,7 @@ func (h *DeviceHandler) getNetworkInterfaces() string {
       </tt:Config>
     </tt:IPv4>
   </tds:NetworkInterfaces>
-</tds:GetNetworkInterfacesResponse>`, NS_TDS, NS_TT)
+</tds:GetNetworkInterfacesResponse>`, NS_TDS, NS_TT, mac)
 }
 
 func (h *DeviceHandler) getUsers() string {

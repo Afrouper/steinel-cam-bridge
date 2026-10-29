@@ -76,6 +76,7 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 	if !isL620 {
 		logger.Info("Config", "Key:    %s", cfg.NabtoConfig.KeyPath)
 	}
+	logger.Info("Config", "MAC:    %s", cfg.CameraMAC)
 	logger.Info("Config", "Ports:  RTSP=%d, ONVIF=%d, WS-Discovery=3702/udp", cfg.RTSPPort, cfg.ONVIFPort)
 	if cfg.BridgeUser != "" {
 		logger.Info("Config", "Auth:   Enabled (User: %s, RTSP/ONVIF/REST protected)", cfg.BridgeUser)
@@ -117,6 +118,7 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 		cfg.NabtoConfig.DeviceID,
 		cfg.NabtoConfig.ProductID,
 		modelName,
+		cfg.CameraMAC,
 		cfg.BridgeUser,
 		cfg.BridgePass,
 		bridgeMgr.SetResolution,

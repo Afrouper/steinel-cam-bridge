@@ -70,10 +70,10 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
 
 - **`pkg/config/`** *(Neu in Milestone 2)*:
   - `config.go`: Zentrales, validiertes Konfigurationsobjekt (`Config`) mit strenger Präzedenz:
-    1. CLI-Flags (`-ip`, `-type`, `-user`, `-pass`, `-bridge-user`, `-bridge-pass`, `-cache-recordings`, `-cache-dir`, `-qr`, `-key`, `-port`, `-path`, `-res`, `-audio-codec`, `-onvif`, `-reset-pairing`, `-mqtt-broker`, `-sync-interval`, `-log-level`, etc.)
-    2. Umgebungsvariablen (`CAMERA_IP`, `CAMERA_TYPE`, `CAMERA_USER`, `CAMERA_PASSWORD`, `BRIDGE_USER`, `BRIDGE_PASS`, `CACHE_RECORDINGS`, `CACHE_DIR`, `QR_CODE`, `KEY_PATH`, `RESOLUTION`, `AUDIO_CODEC`, `RTSP_PORT`, `ONVIF_PORT`, `MQTT_BROKER`, `SDCARD_SYNC_INTERVAL`, `USE_CGO_NABTO`, `LOG_LEVEL`, `LOG_FORMAT`, etc.)
-    3. Home Assistant Add-on Konfigurationsdatei (`/data/options.json` & Home Assistant Supervisor MQTT Auto-Discovery API via `X-Supervisor-Token`)
-    4. Sichere Standardwerte (z. B. `cache_recordings: 5` für die letzten 5 Aufnahmen im lokalen Speicher).
+    1. CLI-Flags (`-ip`, `-mac`, `-type`, `-user`, `-pass`, `-bridge-user`, `-bridge-pass`, `-cache-recordings`, `-cache-dir`, `-qr`, `-key`, `-port`, `-path`, `-res`, `-audio-codec`, `-onvif`, `-reset-pairing`, `-mqtt-broker`, `-sync-interval`, `-log-level`, etc.)
+    2. Umgebungsvariablen (`CAMERA_IP`, `CAMERA_MAC`, `CAMERA_TYPE`, `CAMERA_USER`, `CAMERA_PASSWORD`, `BRIDGE_USER`, `BRIDGE_PASS`, `CACHE_RECORDINGS`, `CACHE_DIR`, `QR_CODE`, `KEY_PATH`, `RESOLUTION`, `AUDIO_CODEC`, `RTSP_PORT`, `ONVIF_PORT`, `MQTT_BROKER`, `SDCARD_SYNC_INTERVAL`, `USE_CGO_NABTO`, `LOG_LEVEL`, `LOG_FORMAT`, etc.)
+    3. Home Assistant Add-on Konfigurationsdatei (`/data/options.json` inkl. `camera_mac` & Home Assistant Supervisor MQTT Auto-Discovery API via `X-Supervisor-Token`)
+    4. Sichere Standardwerte (z. B. `cache_recordings: 5` für die letzten 5 Aufnahmen im lokalen Speicher, `DefaultCameraMAC: 00:0C:43:00:01:02` für 100 % abwärtskompatible Home Assistant ONVIF Unique IDs).
   - `probe.go`: Führt bei `camera_type: "auto"` einen schnellen Non-Blocking TCP-Probe auf Port `34567` durch, um automatisch zwischen `L 620 CAM` (Xiongmai Sofia) und `L 625 CAM SC` (Nabto Edge) zu unterscheiden.
 
 - **`pkg/supervisor/`** *(Neu in Milestone 2)*:
@@ -151,7 +151,7 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
 - **`pkg/onvif/`**:
   - `auth.go`: RFC 2617 HTTP Digest Authentifizierung (zustandsloses HMAC-SHA256 Nonce-Management, MD5 Digest Berechnung mit `qop="auth"` & Legacy-Unterstützung), WS-Security UsernameToken (`PasswordDigest` via SHA-1 Nonce/Timestamp Hash sowie `PasswordText`), HTTP Basic Auth und Timing-Attack-sichere Validierung via `subtle.ConstantTimeCompare`.
   - `discovery.go`: **WS-Discovery Server** auf UDP Multicast `239.255.255.250:3702`.
-  - `device.go`: Device Service (`GetDeviceInformation`, `GetCapabilities`, `GetServices`, `GetSystemDateAndTime`, `GetUsers`, `GetScopes`, `<tt:Security>` Capabilities mit `UsernameToken` und `HttpDigest`).
+  - `device.go`: Device Service (`GetDeviceInformation`, `GetCapabilities`, `GetServices`, `GetSystemDateAndTime`, `GetUsers`, `GetScopes`, `GetNetworkInterfaces` mit konfigurierbarer MAC-Adresse zur Vermeidung von HA Unique-ID-Konflikten bei Multi-Cam/Multi-Container-Setups, `<tt:Security>` Capabilities mit `UsernameToken` und `HttpDigest`).
   - `media.go`: Media Service (`Profile_Main` 1080p, `Profile_Sub` 360p, `GetStreamUri`, `SetVideoEncoderConfiguration`).
   - `events.go`: Event Service (WS-BaseNotification PullPoint für Motion-Events, `SetSynchronizationPoint` & `Subscribe` für Scrypted / ONVIF NVRs).
   - `deviceio.go`: DeviceIO / Relay / Auxiliary Service für Licht- und Sirenensteuerung.
