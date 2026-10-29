@@ -2,6 +2,16 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.5.0-beta.3
+
+### 🐛 Fix Gerätename & 100 % Namens-Abwärtskompatibilität
+
+- **Wiederherstellung des ursprünglichen Home Assistant Gerätenamens**:
+  - Behebt ein Problem aus Beta 2, bei dem bestehende Einzelkamera-Installationen in Home Assistant automatisch in "Steinel Camera 1" umbenannt wurden.
+  - Ohne explizite Namensangabe meldet die Bridge in Home Assistant wie gewohnt den bewährten Namen `Steinel <Modell> (<DeviceID>)` (z. B. `Steinel L 625 CAM SC (de-xxxxxxx)`).
+- **Optionaler `camera_name` Parameter**:
+  - Auch für Einzelkamera-Setups kann nun direkt im Formular ein individueller Anzeigename festgelegt werden (`camera_name: "Einfahrt"` $\rightarrow$ `Steinel Einfahrt`).
+
 ## 1.5.0-beta.2
 
 ### 🚀 Vollwertiger Multi-Kamera-Betrieb (Issue #57)
