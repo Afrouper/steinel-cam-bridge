@@ -2,6 +2,23 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.5.0-beta.2
+
+### 🚀 Vollwertiger Multi-Kamera-Betrieb (Issue #57)
+
+- **Paralleler Betrieb beliebig vieler Kameras über eine einzige Bridge-Instanz**:
+  - Konfiguration mehrerer Steinel-Kameras über den neuen Konfigurationsbereich **`cameras: [...]`** im Home Assistant Add-on.
+  - Jede Kamera kann individuell konfiguriert werden (`name`, `camera_ip`, `camera_type`, `qr_code`, `camera_password`, `camera_user`, `rtsp_path`, etc.).
+- **Keine zusätzlichen Server-Ports erforderlich**:
+  - **RTSP (`:8554`)**: Paralleles Live-Streaming über getrennte URL-Pfade (z. B. `rtsp://<host>:8554/steinel-einfahrt`, `rtsp://<host>:8554/steinel-garten`). Profile T Zwei-Wege-Audio (Gegensprechen) wird zielgerichtet an den Lautsprecher der jeweiligen Kamera geleitet.
+  - **ONVIF Profile S/T/G (`:8000`)**: Standardkonforme Bereitstellung getrennter Videoquellen (`VideoSource_1`, `VideoSource_2`) und Profile (`Profile_<pfad>_Main`, `Profile_<pfad>_Sub`) für NVR-Systeme (Synology Surveillance Station, Scrypted, Frigate, Home Assistant). Motion PullPoint-Events adressieren gezielt die jeweilige Kamera (`VideoSourceConfig_1`, etc.).
+  - **MQTT (`:1883`)**: Auto-Discovery separater Home Assistant Geräte (`Steinel Einfahrt`, `Steinel Garten`) über eine gemeinsame MQTT-Verbindung unter kollisionsfreien Topics (`steinel/<DeviceID>/...`).
+- **100 % Abwärtskompatibilität**:
+  - Bestehende Einzelkamera-Konfigurationen (`camera_ip`, `qr_code`, `camera_mac` etc.) werden ohne manuelle Migration automatisch als primäre Kamera übernommen.
+  - Standard-RTSP-Pfade `/steinel` und `/live` verbleiben als Alias auf Kamera 1.
+- **Isolierte Supervisor-Lifecycles**:
+  - Jede Kamera läuft in einer eigenen autonomen Überwachungs- und Reconnect-Pipeline. Timeouts oder Reboots einer Kamera beeinflussen die anderen Kameras in keiner Weise.
+
 ## 1.5.0-beta.1
 
 ### 🚀 Konfigurierbare ONVIF MAC-Adresse für Multi-Cam & Multi-Container (Issue #57)
