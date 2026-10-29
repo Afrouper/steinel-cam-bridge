@@ -2,6 +2,9 @@ configuration:
   camera_ip:
     name: "Camera IP Address"
     description: "The local IPv4 address of your Steinel CAM light (e.g. 192.168.1.100)."
+  camera_mac:
+    name: "Camera MAC Address"
+    description: "Optional custom hardware/MAC address for ONVIF (default: 00:0C:43:00:01:02). Customize when running multiple camera bridges to prevent unique ID conflicts in Home Assistant."
   camera_type:
     name: "Camera Model"
     description: "Camera model type: 'auto' (automatic port detection), 'l625' (L 625 CAM SC / WebRTC), or 'l620' (L 620 CAM / XLED CAM 1 / Sofia)."

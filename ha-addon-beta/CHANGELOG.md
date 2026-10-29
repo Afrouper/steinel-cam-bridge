@@ -2,6 +2,18 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.5.0-beta.1
+
+### 🚀 Konfigurierbare ONVIF MAC-Adresse für Multi-Cam & Multi-Container (Issue #57)
+
+- **Konfigurierbare Hardware-/MAC-Adresse (`camera_mac` / `-mac` / `CAMERA_MAC`)**:
+  - Ermöglicht das Setzen einer individuellen MAC-Adresse für die ONVIF-Netzwerkschnittstelle (`GetNetworkInterfaces`).
+  - Behebt Issue #57, bei dem mehrere Kamera-Instanzen auf demselben Host in Home Assistant aufgrund identischer MAC-Adressen als "Bereits konfiguriert" abgewiesen wurden.
+  - Automatische Normalisierung und Validierung via `net.ParseMAC` (erlaubt diverse Notationen, Ausgabe erfolgt kanonisch in Großbuchstaben mit Doppelpunkten).
+- **100 % Abwärtskompatibilität**:
+  - Bleibt `camera_mac` bzw. `-mac` ungesetzt, meldet die Bridge wie bisher exakt `00:0C:43:00:01:02`.
+  - Bestehende Einzelkamera-Setups in Home Assistant bleiben unterbrechungsfrei ohne Entity-Änderungen erhalten.
+
 ## 1.4.0
 
 ### 🚀 Steinel L 620 CAM Support & Frigate 2-Wege-Audio
