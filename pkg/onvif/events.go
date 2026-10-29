@@ -186,7 +186,6 @@ func (h *EventHandler) pullMessages(subID string, reqXML string) string {
 		if len(h.subscriptions) == 1 {
 			for _, s := range h.subscriptions {
 				sub = s
-				exists = true
 				break
 			}
 		} else {

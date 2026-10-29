@@ -271,7 +271,7 @@ func (h *MediaHandler) getProfiles() string {
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf(`<trt:GetProfilesResponse xmlns:trt="%s" xmlns:tt="%s">`, NS_TRT, NS_TT))
+	fmt.Fprintf(&sb, `<trt:GetProfilesResponse xmlns:trt="%s" xmlns:tt="%s">`, NS_TRT, NS_TT)
 	for _, ch := range channels {
 		mainToken := fmt.Sprintf("Profile_%s_Main", ch.Path)
 		subToken := fmt.Sprintf("Profile_%s_Sub", ch.Path)
@@ -434,12 +434,12 @@ func (h *MediaHandler) getAudioSources() string {
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf(`<trt:GetAudioSourcesResponse xmlns:trt="%s" xmlns:tt="%s">`, NS_TRT, NS_TT))
+	fmt.Fprintf(&sb, `<trt:GetAudioSourcesResponse xmlns:trt="%s" xmlns:tt="%s">`, NS_TRT, NS_TT)
 	for _, ch := range channels {
-		sb.WriteString(fmt.Sprintf(`
+		fmt.Fprintf(&sb, `
   <trt:AudioSources token="AudioSource_%d">
     <tt:Channels>1</tt:Channels>
-  </trt:AudioSources>`, ch.Index))
+  </trt:AudioSources>`, ch.Index)
 	}
 	sb.WriteString("\n</trt:GetAudioSourcesResponse>")
 	return sb.String()
@@ -454,10 +454,10 @@ func (h *MediaHandler) getAudioOutputs() string {
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf(`<trt:GetAudioOutputsResponse xmlns:trt="%s" xmlns:tt="%s">`, NS_TRT, NS_TT))
+	fmt.Fprintf(&sb, `<trt:GetAudioOutputsResponse xmlns:trt="%s" xmlns:tt="%s">`, NS_TRT, NS_TT)
 	for _, ch := range channels {
-		sb.WriteString(fmt.Sprintf(`
-  <trt:AudioOutputs token="AudioOutput_%d"/>`, ch.Index))
+		fmt.Fprintf(&sb, `
+  <trt:AudioOutputs token="AudioOutput_%d"/>`, ch.Index)
 	}
 	sb.WriteString("\n</trt:GetAudioOutputsResponse>")
 	return sb.String()
@@ -492,13 +492,13 @@ func (h *MediaHandler) getVideoSources() string {
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf(`<trt:GetVideoSourcesResponse xmlns:trt="%s" xmlns:tt="%s">`, NS_TRT, NS_TT))
+	fmt.Fprintf(&sb, `<trt:GetVideoSourcesResponse xmlns:trt="%s" xmlns:tt="%s">`, NS_TRT, NS_TT)
 	for _, ch := range channels {
-		sb.WriteString(fmt.Sprintf(`
+		fmt.Fprintf(&sb, `
   <trt:VideoSources token="VideoSource_%d">
     <tt:Framerate>15.0</tt:Framerate>
     <tt:Resolution><tt:Width>1920</tt:Width><tt:Height>1080</tt:Height></tt:Resolution>
-  </trt:VideoSources>`, ch.Index))
+  </trt:VideoSources>`, ch.Index)
 	}
 	sb.WriteString("\n</trt:GetVideoSourcesResponse>")
 	return sb.String()
@@ -518,15 +518,15 @@ func (h *MediaHandler) getVideoSourceConfigurations() string {
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf(`<trt:GetVideoSourceConfigurationsResponse xmlns:trt="%s" xmlns:tt="%s">`, NS_TRT, NS_TT))
+	fmt.Fprintf(&sb, `<trt:GetVideoSourceConfigurationsResponse xmlns:trt="%s" xmlns:tt="%s">`, NS_TRT, NS_TT)
 	for _, ch := range channels {
-		sb.WriteString(fmt.Sprintf(`
+		fmt.Fprintf(&sb, `
   <trt:Configurations token="VideoSourceConfig_%d">
     <tt:Name>VideoSourceConfig_%d</tt:Name>
     <tt:UseCount>2</tt:UseCount>
     <tt:SourceToken>VideoSource_%d</tt:SourceToken>
     <tt:Bounds x="0" y="0" width="1920" height="1080"/>
-  </trt:Configurations>`, ch.Index, ch.Index, ch.Index))
+  </trt:Configurations>`, ch.Index, ch.Index, ch.Index)
 	}
 	sb.WriteString("\n</trt:GetVideoSourceConfigurationsResponse>")
 	return sb.String()
@@ -545,14 +545,14 @@ func (h *MediaHandler) getAudioSourceConfigurations() string {
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf(`<trt:GetAudioSourceConfigurationsResponse xmlns:trt="%s" xmlns:tt="%s">`, NS_TRT, NS_TT))
+	fmt.Fprintf(&sb, `<trt:GetAudioSourceConfigurationsResponse xmlns:trt="%s" xmlns:tt="%s">`, NS_TRT, NS_TT)
 	for _, ch := range channels {
-		sb.WriteString(fmt.Sprintf(`
+		fmt.Fprintf(&sb, `
   <trt:Configurations token="AudioSourceConfig_%d">
     <tt:Name>AudioSourceConfig_%d</tt:Name>
     <tt:UseCount>2</tt:UseCount>
     <tt:SourceToken>AudioSource_%d</tt:SourceToken>
-  </trt:Configurations>`, ch.Index, ch.Index, ch.Index))
+  </trt:Configurations>`, ch.Index, ch.Index, ch.Index)
 	}
 	sb.WriteString("\n</trt:GetAudioSourceConfigurationsResponse>")
 	return sb.String()
@@ -573,18 +573,17 @@ func (h *MediaHandler) getAudioOutputConfigurations() string {
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf(`<trt:GetAudioOutputConfigurationsResponse xmlns:trt="%s" xmlns:tt="%s">`, NS_TRT, NS_TT))
+	fmt.Fprintf(&sb, `<trt:GetAudioOutputConfigurationsResponse xmlns:trt="%s" xmlns:tt="%s">`, NS_TRT, NS_TT)
 	for _, ch := range channels {
-		sb.WriteString(fmt.Sprintf(`
+		fmt.Fprintf(&sb, `
   <trt:Configurations token="AudioOutputConfig_%d">
     <tt:Name>AudioOutputConfig_%d</tt:Name>
     <tt:UseCount>1</tt:UseCount>
     <tt:OutputToken>AudioOutput_%d</tt:OutputToken>
     <tt:SendPrimacy>www.onvif.org/ver20/HalfDuplex/Server</tt:SendPrimacy>
     <tt:OutputLevel>80</tt:OutputLevel>
-  </trt:Configurations>`, ch.Index, ch.Index, ch.Index))
+  </trt:Configurations>`, ch.Index, ch.Index, ch.Index)
 	}
 	sb.WriteString("\n</trt:GetAudioOutputConfigurationsResponse>")
 	return sb.String()
 }
-

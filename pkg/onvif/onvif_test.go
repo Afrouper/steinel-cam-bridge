@@ -431,4 +431,3 @@ func TestMultiCameraONVIF(t *testing.T) {
 		t.Fatalf("expected motion event for VideoSourceConfig_2: %s", respStr)
 	}
 }
-

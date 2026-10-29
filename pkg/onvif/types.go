@@ -64,15 +64,14 @@ const (
 
 // CameraChannel represents the configuration and callbacks for a single camera channel in ONVIF.
 type CameraChannel struct {
-	Index             int                             `json:"index"` // 1-based channel index (1, 2, ...)
-	Name              string                          `json:"name"`  // Friendly name, e.g. "Einfahrt"
-	Path              string                          `json:"path"`  // RTSP path slug, e.g. "einfahrt"
-	AudioCodec        string                          `json:"audio_codec"`
-	Resolution        string                          `json:"resolution"`
-	ChangeResFunc     func(res string) error          `json:"-"`
-	SetLampFunc       func(mode string) error         `json:"-"`
-	SetSirenFunc      func(on bool) error             `json:"-"`
+	Index             int                              `json:"index"` // 1-based channel index (1, 2, ...)
+	Name              string                           `json:"name"`  // Friendly name, e.g. "Einfahrt"
+	Path              string                           `json:"path"`  // RTSP path slug, e.g. "einfahrt"
+	AudioCodec        string                           `json:"audio_codec"`
+	Resolution        string                           `json:"resolution"`
+	ChangeResFunc     func(res string) error           `json:"-"`
+	SetLampFunc       func(mode string) error          `json:"-"`
+	SetSirenFunc      func(on bool) error              `json:"-"`
 	RecordingProvider func() storage.RecordingProvider `json:"-"`
-	EventBus          *events.Bus                     `json:"-"`
+	EventBus          *events.Bus                      `json:"-"`
 }
-

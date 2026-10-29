@@ -128,4 +128,3 @@ func TestMultiCameraAppRunAndShutdown(t *testing.T) {
 		t.Fatal("Multi-camera App did not shut down gracefully within 5s")
 	}
 }
-

@@ -174,26 +174,26 @@ func LoadHomeAssistantOptionsFromPath(path string, cfg *Config) {
 		QRCode              string         `json:"qr_code"`
 		Cameras             []rawCameraOpt `json:"cameras"`
 		Resolution          string         `json:"resolution"`
-		AudioCodec          string `json:"audio_codec"`
-		RTSPPort            int    `json:"rtsp_port"`
-		ONVIFPort           int    `json:"onvif_port"`
-		ResetPairing        bool   `json:"reset_pairing"`
-		MQTTBroker          string `json:"mqtt_broker"`
-		MQTTHost            string `json:"mqtt_host"`
-		MQTTPort            int    `json:"mqtt_port"`
-		MQTTUser            string `json:"mqtt_user"`
-		MQTTPassword        string `json:"mqtt_password"`
-		MQTTTopicPrefix     string `json:"mqtt_topic_prefix"`
-		MQTTDiscoveryPrefix string `json:"mqtt_discovery_prefix"`
-		LogLevel            string `json:"log_level"`
-		SDCardSyncInterval  *int   `json:"sdcard_sync_interval"`
-		NabtoDriver         string `json:"nabto_driver"`
-		UseCGONabto         bool   `json:"use_cgo_nabto"`
-		BridgeUser          string `json:"bridge_user"`
-		BridgePass          string `json:"bridge_pass"`
-		BridgePassword      string `json:"bridge_password"`
-		CacheRecordings     *int   `json:"cache_recordings"`
-		CacheDir            string `json:"cache_dir"`
+		AudioCodec          string         `json:"audio_codec"`
+		RTSPPort            int            `json:"rtsp_port"`
+		ONVIFPort           int            `json:"onvif_port"`
+		ResetPairing        bool           `json:"reset_pairing"`
+		MQTTBroker          string         `json:"mqtt_broker"`
+		MQTTHost            string         `json:"mqtt_host"`
+		MQTTPort            int            `json:"mqtt_port"`
+		MQTTUser            string         `json:"mqtt_user"`
+		MQTTPassword        string         `json:"mqtt_password"`
+		MQTTTopicPrefix     string         `json:"mqtt_topic_prefix"`
+		MQTTDiscoveryPrefix string         `json:"mqtt_discovery_prefix"`
+		LogLevel            string         `json:"log_level"`
+		SDCardSyncInterval  *int           `json:"sdcard_sync_interval"`
+		NabtoDriver         string         `json:"nabto_driver"`
+		UseCGONabto         bool           `json:"use_cgo_nabto"`
+		BridgeUser          string         `json:"bridge_user"`
+		BridgePass          string         `json:"bridge_pass"`
+		BridgePassword      string         `json:"bridge_password"`
+		CacheRecordings     *int           `json:"cache_recordings"`
+		CacheDir            string         `json:"cache_dir"`
 	}
 
 	if err := json.Unmarshal(data, &opts); err != nil {

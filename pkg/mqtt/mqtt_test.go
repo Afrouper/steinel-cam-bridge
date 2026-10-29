@@ -182,4 +182,3 @@ func TestMultiCameraMQTT(t *testing.T) {
 		t.Errorf("expected cam2 lamp mode 'off', got %q", cam2LampMode)
 	}
 }
-
