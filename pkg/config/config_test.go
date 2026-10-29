@@ -289,3 +289,101 @@ func TestCameraMAC_DefaultAndCustomFlags(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid MAC address")
 }
+
+func TestSlugify(t *testing.T) {
+	assert.Equal(t, "einfahrt", Slugify("Einfahrt"))
+	assert.Equal(t, "einfahrt_vorne", Slugify("Einfahrt Vorne"))
+	assert.Equal(t, "hinter_dem_haus", Slugify("Hinter-dem-Haus"))
+	assert.Equal(t, "cam_1", Slugify("Cam 1"))
+	assert.Equal(t, "garden_gate", Slugify("  Garden @ Gate! "))
+}
+
+func TestDeriveMAC(t *testing.T) {
+	assert.Equal(t, "00:0C:43:00:01:02", DeriveMAC("", 0))
+	assert.Equal(t, "00:0C:43:00:01:03", DeriveMAC("", 1))
+	assert.Equal(t, "00:0C:43:00:01:04", DeriveMAC("", 2))
+	assert.Equal(t, "00:0C:43:00:01:12", DeriveMAC("00:0C:43:00:01:10", 2))
+}
+
+func TestMultiCam_JSONConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	optsFile := filepath.Join(tmpDir, "options.json")
+
+	jsonContent := `{
+		"cameras": [
+			{
+				"name": "Einfahrt",
+				"ip": "192.168.1.101",
+				"type": "l625",
+				"qr_code": "did=de-einfahrt,pid=pr-test,sct=sct1,pairPwd=pwd1"
+			},
+			{
+				"name": "Garten",
+				"ip": "192.168.1.102",
+				"type": "l620",
+				"user": "admin",
+				"password": "secret_garden"
+			}
+		],
+		"rtsp_port": 8554,
+		"onvif_port": 8000
+	}`
+	err := os.WriteFile(optsFile, []byte(jsonContent), 0644)
+	require.NoError(t, err)
+
+	cfg := Resolve(optsFile, nil)
+	require.Len(t, cfg.Cameras, 2)
+
+	err = cfg.Validate()
+	require.NoError(t, err)
+
+	// Verify Camera 1
+	cam1 := cfg.Cameras[0]
+	assert.Equal(t, "Einfahrt", cam1.Name)
+	assert.Equal(t, "192.168.1.101", cam1.IP)
+	assert.Equal(t, "l625", cam1.Type)
+	assert.Equal(t, "einfahrt", cam1.Path)
+	assert.Equal(t, "00:0C:43:00:01:02", cam1.MAC)
+	require.NotNil(t, cam1.Nabto)
+	assert.Equal(t, "de-einfahrt", cam1.Nabto.DeviceID)
+
+	// Verify Camera 2
+	cam2 := cfg.Cameras[1]
+	assert.Equal(t, "Garten", cam2.Name)
+	assert.Equal(t, "192.168.1.102", cam2.IP)
+	assert.Equal(t, "l620", cam2.Type)
+	assert.Equal(t, "garten", cam2.Path)
+	assert.Equal(t, "00:0C:43:00:01:03", cam2.MAC)
+	assert.Equal(t, "secret_garden", cam2.Password)
+
+	// Check model probing
+	isL620_1, model1 := cam1.ProbeCameraModel()
+	assert.False(t, isL620_1)
+	assert.Equal(t, "L 625 CAM SC", model1)
+
+	isL620_2, model2 := cam2.ProbeCameraModel()
+	assert.True(t, isL620_2)
+	assert.Equal(t, "L 620 CAM", model2)
+}
+
+func TestMultiCam_DuplicateValidation(t *testing.T) {
+	// Duplicate path error
+	cfgDupPath := NewDefaultConfig()
+	cfgDupPath.Cameras = []CameraConfig{
+		{Name: "Cam 1", IP: "192.168.1.101", Path: "same_path"},
+		{Name: "Cam 2", IP: "192.168.1.102", Path: "same_path"},
+	}
+	err := cfgDupPath.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "duplicate RTSP stream path 'same_path'")
+
+	// Duplicate MAC error
+	cfgDupMAC := NewDefaultConfig()
+	cfgDupMAC.Cameras = []CameraConfig{
+		{Name: "Cam 1", IP: "192.168.1.101", Path: "cam1", MAC: "00:0C:43:AA:BB:CC"},
+		{Name: "Cam 2", IP: "192.168.1.102", Path: "cam2", MAC: "00:0C:43:AA:BB:CC"},
+	}
+	err = cfgDupMAC.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "duplicate MAC address")
+}

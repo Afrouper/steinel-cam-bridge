@@ -20,6 +20,20 @@ Der QR-Code wird initial für das Pairing benötigt. Danach muss er nicht mehr z
 3. Optional `camera_type: l620` setzen.
 4. Auf **Speichern** und **Starten** klicken!
 
+### C. Multi-Kamera-Betrieb (Mehrere Kameras)
+Wenn Sie mehr als eine Steinel Kamera betreiben, können Sie alle Kameras über die Option **`cameras`** eintragen:
+```yaml
+cameras:
+  - name: "Einfahrt"
+    camera_ip: "192.168.1.100"
+    qr_code: "did=de-xxxxxxx,pid=pr-xxxxx,sct=xxxx,pairPwd=xxxx"
+  - name: "Garten"
+    camera_ip: "192.168.1.101"
+    camera_type: "l620"
+    camera_password: "geheimes_passwort"
+```
+Die Bridge stellt alle Kameras über denselben RTSP-Port (`:8554/einfahrt`, `:8554/garten`) und ONVIF-Port (`:8000`) bereit. In Home Assistant und MQTT erscheinen separate Geräte (`Steinel Einfahrt`, `Steinel Garten`).
+
 ---
 
 ## ⚙️ Konfiguration

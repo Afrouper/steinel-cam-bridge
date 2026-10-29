@@ -26,6 +26,7 @@ type RecordingItem struct {
 	FileName        string    `json:"file_name,omitempty"`
 	ThumbnailURL    string    `json:"thumbnail_url,omitempty"`
 	VideoURL        string    `json:"video_url"`
+	Camera          string    `json:"camera,omitempty"`
 }
 
 // RecordingListResponse represents a paginated list of recording items

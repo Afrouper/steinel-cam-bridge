@@ -27,6 +27,20 @@ func (c *Client) PublishRecordingEvent(item storage.RecordingItem) {
 		return
 	}
 
+	targetBaseTopic := c.baseTopic
+	if item.Camera != "" {
+		c.camerasMu.RLock()
+		for _, dev := range c.cameras {
+			if strings.EqualFold(dev.DeviceID, item.Camera) ||
+				strings.EqualFold(dev.Name, item.Camera) ||
+				strings.EqualFold(dev.nodeID, item.Camera) {
+				targetBaseTopic = dev.baseTopic
+				break
+			}
+		}
+		c.camerasMu.RUnlock()
+	}
+
 	eventType := strings.ToLower(item.EventType)
 	if eventType == "" || (eventType != "manual" && eventType != "alarm" && eventType != "record" && eventType != "plan") {
 		eventType = "motion"
@@ -46,20 +60,33 @@ func (c *Client) PublishRecordingEvent(item storage.RecordingItem) {
 
 	data, err := json.Marshal(payload)
 	if err == nil {
-		logger.Debug("MQTT", "📢 Publishing recording event to %s/event/recording: %s", c.baseTopic, string(data))
+		logger.Debug("MQTT", "📢 Publishing recording event to %s/event/recording: %s", targetBaseTopic, string(data))
 		// 1. Momentary event for automations (non-retained)
-		tokenEvt := cl.Publish(fmt.Sprintf("%s/event/recording", c.baseTopic), 1, false, data)
+		tokenEvt := cl.Publish(fmt.Sprintf("%s/event/recording", targetBaseTopic), 1, false, data)
 		_ = tokenEvt.WaitTimeout(2 * time.Second)
 
 		// 2. Persistent state for dashboards and sensors (retained)
-		logger.Debug("MQTT", "📢 Publishing latest recording state to %s/recording/latest: %s", c.baseTopic, string(data))
-		tokenLatest := cl.Publish(fmt.Sprintf("%s/recording/latest", c.baseTopic), 1, true, data)
+		logger.Debug("MQTT", "📢 Publishing latest recording state to %s/recording/latest: %s", targetBaseTopic, string(data))
+		tokenLatest := cl.Publish(fmt.Sprintf("%s/recording/latest", targetBaseTopic), 1, true, data)
 		_ = tokenLatest.WaitTimeout(2 * time.Second)
 	}
 }
 
-// publishMotion publishes the binary sensor motion state (ON/OFF).
+// publishMotion publishes the binary sensor motion state (ON/OFF) for the primary device.
 func (c *Client) publishMotion(isMotion bool) {
+	c.camerasMu.RLock()
+	dev := c.cameras[c.cfg.DeviceID]
+	c.camerasMu.RUnlock()
+
+	if dev != nil {
+		c.publishDeviceMotion(dev, isMotion)
+	} else {
+		c.publishDeviceMotion(&CameraDevice{baseTopic: c.baseTopic}, isMotion)
+	}
+}
+
+// publishDeviceMotion publishes the binary sensor motion state (ON/OFF) for a specific CameraDevice.
+func (c *Client) publishDeviceMotion(dev *CameraDevice, isMotion bool) {
 	c.mu.RLock()
 	cl := c.client
 	c.mu.RUnlock()
@@ -72,11 +99,24 @@ func (c *Client) publishMotion(isMotion bool) {
 	if isMotion {
 		state = "ON"
 	}
-	cl.Publish(fmt.Sprintf("%s/motion/state", c.baseTopic), 1, false, state)
+	cl.Publish(fmt.Sprintf("%s/motion/state", dev.baseTopic), 1, false, state)
 }
 
-// publishStatus publishes telemetry and device status to Home Assistant.
+// publishStatus publishes telemetry and device status to Home Assistant for the primary device.
 func (c *Client) publishStatus(st events.DeviceStatus) {
+	c.camerasMu.RLock()
+	dev := c.cameras[c.cfg.DeviceID]
+	c.camerasMu.RUnlock()
+
+	if dev != nil {
+		c.publishDeviceStatus(dev, st)
+	} else {
+		c.publishDeviceStatus(&CameraDevice{baseTopic: c.baseTopic}, st)
+	}
+}
+
+// publishDeviceStatus publishes telemetry and device status for a specific CameraDevice.
+func (c *Client) publishDeviceStatus(dev *CameraDevice, st events.DeviceStatus) {
 	c.mu.RLock()
 	cl := c.client
 	c.mu.RUnlock()
@@ -85,10 +125,10 @@ func (c *Client) publishStatus(st events.DeviceStatus) {
 		return
 	}
 
-	logger.Trace("MQTT", "Publishing device status: mode=%d res=%s pir=%v lux=%d", st.LampMode, st.Resolution, st.PIRActive, st.Lux)
+	logger.Trace("MQTT", "Publishing device status for %s: mode=%d res=%s pir=%v lux=%d", dev.baseTopic, st.LampMode, st.Resolution, st.PIRActive, st.Lux)
 
 	pub := func(subTopic string, val string) {
-		cl.Publish(fmt.Sprintf("%s/%s", c.baseTopic, subTopic), 1, true, val)
+		cl.Publish(fmt.Sprintf("%s/%s", dev.baseTopic, subTopic), 1, true, val)
 	}
 
 	// 1. Lamp State & Mode

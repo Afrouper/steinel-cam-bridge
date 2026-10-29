@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Afrouper/steinel-cam-bridge/pkg/events"
@@ -32,6 +33,9 @@ type Server struct {
 	recordingHandler  *RecordingHandler
 	discovery         *DiscoveryServer
 	recordingProvider func() storage.RecordingProvider
+
+	channelsMu sync.RWMutex
+	channels   []CameraChannel
 }
 
 func NewServer(
@@ -85,6 +89,22 @@ func NewServer(
 		recordingProvider: recordingProvider,
 	}
 
+	// Register initial channel
+	s.channels = []CameraChannel{
+		{
+			Index:             1,
+			Name:              "MainStream",
+			Path:              rtspPath,
+			AudioCodec:        audioCodec,
+			Resolution:        "1080p",
+			ChangeResFunc:     changeResFunc,
+			SetLampFunc:       setLampFunc,
+			SetSirenFunc:      setSirenFunc,
+			RecordingProvider: recordingProvider,
+			EventBus:          eventBus,
+		},
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/onvif/device_service", s.handleSOAP)
 	mux.HandleFunc("/onvif/media_service", s.handleSOAP)
@@ -93,6 +113,7 @@ func NewServer(
 	mux.HandleFunc("/onvif/search_service", s.handleSOAP)
 	mux.HandleFunc("/onvif/replay_service", s.handleSOAP)
 	mux.HandleFunc("/onvif/recording_service", s.handleSOAP)
+	mux.HandleFunc("/api/cameras", s.withBasicAuth(s.handleAPICameras))
 	mux.HandleFunc("/api/status", s.withBasicAuth(s.handleAPIStatus))
 	mux.HandleFunc("/api/light", s.withBasicAuth(s.handleAPILight))
 	mux.HandleFunc("/api/sdcard/events", s.withBasicAuth(s.handleAPISDCardEvents))
@@ -136,6 +157,50 @@ func (s *Server) Close() {
 		defer cancel()
 		_ = s.httpServer.Shutdown(ctx)
 	}
+}
+
+// AddChannel registers an additional camera channel on the ONVIF server.
+func (s *Server) AddChannel(ch CameraChannel) {
+	s.channelsMu.Lock()
+	s.channels = append(s.channels, ch)
+	s.channelsMu.Unlock()
+
+	s.mediaHandler.AddChannel(ch)
+	s.eventHandler.AddSource(fmt.Sprintf("VideoSourceConfig_%d", ch.Index), ch.EventBus)
+}
+
+// SetChannels replaces all camera channels on the ONVIF server.
+func (s *Server) SetChannels(channels []CameraChannel) {
+	s.channelsMu.Lock()
+	s.channels = make([]CameraChannel, len(channels))
+	copy(s.channels, channels)
+	s.channelsMu.Unlock()
+
+	s.mediaHandler.SetChannels(channels)
+	for _, ch := range channels {
+		s.eventHandler.AddSource(fmt.Sprintf("VideoSourceConfig_%d", ch.Index), ch.EventBus)
+	}
+}
+
+// Channels returns a copy of all registered camera channels.
+func (s *Server) Channels() []CameraChannel {
+	s.channelsMu.RLock()
+	defer s.channelsMu.RUnlock()
+	res := make([]CameraChannel, len(s.channels))
+	copy(res, s.channels)
+	return res
+}
+
+func (s *Server) findChannel(nameOrPath string) *CameraChannel {
+	s.channelsMu.RLock()
+	defer s.channelsMu.RUnlock()
+	for i := range s.channels {
+		ch := &s.channels[i]
+		if strings.EqualFold(ch.Path, nameOrPath) || strings.EqualFold(ch.Name, nameOrPath) {
+			return ch
+		}
+	}
+	return nil
 }
 
 // isPreAuthAction checks if the SOAP request is an ONVIF Core Spec PRE_AUTH operation.

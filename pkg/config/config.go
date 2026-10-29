@@ -19,8 +19,28 @@ import (
 // DefaultCameraMAC is the legacy fallback MAC address for backward compatibility with Home Assistant.
 const DefaultCameraMAC = "00:0C:43:00:01:02"
 
+// CameraConfig defines the configuration for a single Steinel camera in multicam setups.
+type CameraConfig struct {
+	Name        string        `json:"name"`
+	IP          string        `json:"ip"`
+	Type        string        `json:"type"` // "auto", "l625", "l620"
+	User        string        `json:"user"`
+	Password    string        `json:"password"`
+	QRCode      string        `json:"qr_code"`
+	MAC         string        `json:"mac"`
+	Path        string        `json:"path"` // RTSP stream path (e.g. "einfahrt")
+	Resolution  string        `json:"resolution"`
+	AudioCodec  string        `json:"audio_codec"`
+	ResetPair   bool          `json:"reset_pairing"`
+	NabtoDriver string        `json:"nabto_driver"`
+	KeyPath     string        `json:"key_path"`
+	Nabto       *nabto.Config `json:"-"`
+}
+
 // Config encapsulates the complete resolved runtime configuration following the 12-Factor App methodology.
 type Config struct {
+	Cameras            []CameraConfig
+	CameraName         string
 	NabtoConfig        *nabto.Config
 	CameraType         string
 	CameraUser         string
@@ -86,6 +106,54 @@ func NewDefaultConfig() *Config {
 	}
 }
 
+// ForCamera returns a cloned *Config populated with the parameters of a specific CameraConfig.
+func (c *Config) ForCamera(cam *CameraConfig) *Config {
+	clone := *c
+	clone.CameraName = cam.Name
+	clone.CameraType = cam.Type
+	clone.CameraUser = cam.User
+	clone.CameraPassword = cam.Password
+	clone.CameraMAC = cam.MAC
+	clone.Resolution = cam.Resolution
+	clone.AudioCodec = cam.AudioCodec
+	clone.RTSPPath = cam.Path
+	clone.ResetPairing = cam.ResetPair
+	if cam.NabtoDriver != "" {
+		clone.NabtoDriver = cam.NabtoDriver
+	}
+	if cam.Nabto != nil {
+		clone.NabtoConfig = cam.Nabto
+	} else {
+		clone.NabtoConfig = &nabto.Config{
+			CameraIP: cam.IP,
+			KeyPath:  cam.KeyPath,
+		}
+	}
+	return &clone
+}
+
+type rawCameraOpt struct {
+	Name        string `json:"name"`
+	IP          string `json:"ip"`
+	CameraIP    string `json:"camera_ip"`
+	Type        string `json:"type"`
+	CameraType  string `json:"camera_type"`
+	User        string `json:"user"`
+	CameraUser  string `json:"camera_user"`
+	Password    string `json:"password"`
+	CameraPass  string `json:"camera_password"`
+	QRCode      string `json:"qr_code"`
+	MAC         string `json:"mac"`
+	CameraMAC   string `json:"camera_mac"`
+	Path        string `json:"path"`
+	RTSPPath    string `json:"rtsp_path"`
+	Resolution  string `json:"resolution"`
+	AudioCodec  string `json:"audio_codec"`
+	ResetPair   bool   `json:"reset_pairing"`
+	NabtoDriver string `json:"nabto_driver"`
+	KeyPath     string `json:"key_path"`
+}
+
 // LoadHomeAssistantOptionsFromPath reads and unmarshals options from a JSON file (e.g. /data/options.json).
 func LoadHomeAssistantOptionsFromPath(path string, cfg *Config) {
 	data, err := os.ReadFile(path)
@@ -97,13 +165,15 @@ func LoadHomeAssistantOptionsFromPath(path string, cfg *Config) {
 	}
 
 	var opts struct {
-		CameraIP            string `json:"camera_ip"`
-		CameraType          string `json:"camera_type"`
-		CameraUser          string `json:"camera_user"`
-		CameraPassword      string `json:"camera_password"`
-		CameraMAC           string `json:"camera_mac"`
-		QRCode              string `json:"qr_code"`
-		Resolution          string `json:"resolution"`
+		CameraName          string         `json:"camera_name"`
+		CameraIP            string         `json:"camera_ip"`
+		CameraType          string         `json:"camera_type"`
+		CameraUser          string         `json:"camera_user"`
+		CameraPassword      string         `json:"camera_password"`
+		CameraMAC           string         `json:"camera_mac"`
+		QRCode              string         `json:"qr_code"`
+		Cameras             []rawCameraOpt `json:"cameras"`
+		Resolution          string         `json:"resolution"`
 		AudioCodec          string `json:"audio_codec"`
 		RTSPPort            int    `json:"rtsp_port"`
 		ONVIFPort           int    `json:"onvif_port"`
@@ -133,6 +203,9 @@ func LoadHomeAssistantOptionsFromPath(path string, cfg *Config) {
 
 	logger.Info("HA Addon", "🏠 Loaded configuration from %s", path)
 
+	if opts.CameraName != "" {
+		cfg.CameraName = opts.CameraName
+	}
 	if opts.CameraIP != "" {
 		cfg.NabtoConfig.CameraIP = opts.CameraIP
 	}
@@ -212,6 +285,48 @@ func LoadHomeAssistantOptionsFromPath(path string, cfg *Config) {
 	if opts.CacheDir != "" {
 		cfg.CacheDir = opts.CacheDir
 	}
+
+	for _, raw := range opts.Cameras {
+		ip := raw.IP
+		if ip == "" {
+			ip = raw.CameraIP
+		}
+		camType := raw.Type
+		if camType == "" {
+			camType = raw.CameraType
+		}
+		user := raw.User
+		if user == "" {
+			user = raw.CameraUser
+		}
+		pass := raw.Password
+		if pass == "" {
+			pass = raw.CameraPass
+		}
+		mac := raw.MAC
+		if mac == "" {
+			mac = raw.CameraMAC
+		}
+		path := raw.Path
+		if path == "" {
+			path = raw.RTSPPath
+		}
+		cfg.Cameras = append(cfg.Cameras, CameraConfig{
+			Name:        raw.Name,
+			IP:          ip,
+			Type:        camType,
+			User:        user,
+			Password:    pass,
+			QRCode:      raw.QRCode,
+			MAC:         mac,
+			Path:        path,
+			Resolution:  raw.Resolution,
+			AudioCodec:  raw.AudioCodec,
+			ResetPair:   raw.ResetPair,
+			NabtoDriver: raw.NabtoDriver,
+			KeyPath:     raw.KeyPath,
+		})
+	}
 }
 
 // Resolve resolves configuration following the POSIX / 12-Factor App hierarchy:
@@ -278,6 +393,9 @@ func Resolve(optionsPath string, fs *flag.FlagSet) *Config {
 	}
 	if ct := os.Getenv("CAMERA_TYPE"); ct != "" {
 		cfg.CameraType = ct
+	}
+	if name := os.Getenv("CAMERA_NAME"); name != "" {
+		cfg.CameraName = name
 	}
 	if mac := os.Getenv("CAMERA_MAC"); mac != "" {
 		cfg.CameraMAC = mac
@@ -373,6 +491,8 @@ func Resolve(optionsPath string, fs *flag.FlagSet) *Config {
 				cfg.NabtoConfig.CameraIP = f.Value.String()
 			case "type":
 				cfg.CameraType = f.Value.String()
+			case "name", "camera-name":
+				cfg.CameraName = f.Value.String()
 			case "mac", "camera-mac":
 				cfg.CameraMAC = f.Value.String()
 			case "user":
@@ -448,23 +568,193 @@ func Resolve(optionsPath string, fs *flag.FlagSet) *Config {
 		os.Getenv("BETA") == "true"
 	cfg.NabtoConfig.IsBeta = cfg.IsBeta
 
+	// Synthesize legacy single camera if cameras list was not explicitly configured
+	if len(cfg.Cameras) == 0 && cfg.NabtoConfig.CameraIP != "" {
+		cfg.Cameras = append(cfg.Cameras, CameraConfig{
+			Name:        cfg.CameraName,
+			IP:          cfg.NabtoConfig.CameraIP,
+			Type:        cfg.CameraType,
+			User:        cfg.CameraUser,
+			Password:    cfg.CameraPassword,
+			MAC:         cfg.CameraMAC,
+			Path:        cfg.RTSPPath,
+			Resolution:  cfg.Resolution,
+			AudioCodec:  cfg.AudioCodec,
+			ResetPair:   cfg.ResetPairing,
+			NabtoDriver: cfg.NabtoDriver,
+			KeyPath:     cfg.NabtoConfig.KeyPath,
+			Nabto:       cfg.NabtoConfig,
+		})
+	}
+
 	return cfg
+}
+
+// Slugify converts a string into a URL/path-safe slug (lowercase alphanumeric with underscores).
+func Slugify(s string) string {
+	s = strings.TrimSpace(strings.ToLower(s))
+	var sb strings.Builder
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			sb.WriteRune(r)
+		} else if r == ' ' || r == '-' || r == '_' {
+			if sb.Len() > 0 && sb.String()[sb.Len()-1] != '_' {
+				sb.WriteRune('_')
+			}
+		}
+	}
+	return strings.Trim(sb.String(), "_")
+}
+
+// DeriveMAC calculates a deterministic MAC address from a base MAC and an index.
+func DeriveMAC(baseMAC string, index int) string {
+	if baseMAC == "" {
+		baseMAC = DefaultCameraMAC
+	}
+	hw, err := net.ParseMAC(baseMAC)
+	if err != nil || len(hw) < 6 {
+		hw = net.HardwareAddr{0x00, 0x0C, 0x43, 0x00, 0x01, 0x02}
+	}
+	lastVal := int(hw[len(hw)-1]) + index
+	hw[len(hw)-1] = byte(lastVal % 256)
+	if lastVal > 255 {
+		hw[len(hw)-2] = byte((int(hw[len(hw)-2]) + (lastVal / 256)) % 256)
+	}
+	return strings.ToUpper(hw.String())
 }
 
 // Validate checks that all required configuration parameters are present and valid.
 func (c *Config) Validate() error {
-	if c.NabtoConfig.CameraIP == "" {
+	// Synthesize fallback camera if Cameras slice is empty but legacy IP is set
+	if len(c.Cameras) == 0 && c.NabtoConfig.CameraIP != "" {
+		c.Cameras = append(c.Cameras, CameraConfig{
+			Name:        c.CameraName,
+			IP:          c.NabtoConfig.CameraIP,
+			Type:        c.CameraType,
+			User:        c.CameraUser,
+			Password:    c.CameraPassword,
+			MAC:         c.CameraMAC,
+			Path:        c.RTSPPath,
+			Resolution:  c.Resolution,
+			AudioCodec:  c.AudioCodec,
+			ResetPair:   c.ResetPairing,
+			NabtoDriver: c.NabtoDriver,
+			KeyPath:     c.NabtoConfig.KeyPath,
+			Nabto:       c.NabtoConfig,
+		})
+	}
+
+	if len(c.Cameras) == 0 {
 		return errors.New("camera IP address is mandatory! Please configure 'camera_ip' in Home Assistant or supply -ip / CAMERA_IP")
 	}
-	if c.CameraMAC != "" {
-		hw, err := net.ParseMAC(c.CameraMAC)
-		if err != nil {
-			return fmt.Errorf("invalid MAC address: %s (%w)", c.CameraMAC, err)
+
+	seenPaths := make(map[string]int)
+	seenMACs := make(map[string]int)
+
+	for i := range c.Cameras {
+		cam := &c.Cameras[i]
+		if cam.IP == "" {
+			return fmt.Errorf("camera[%d] IP address is mandatory", i)
 		}
-		c.CameraMAC = strings.ToUpper(hw.String())
-	} else {
-		c.CameraMAC = DefaultCameraMAC
+		if cam.Name == "" {
+			if len(c.Cameras) == 1 && c.CameraName != "" {
+				cam.Name = c.CameraName
+			} else {
+				cam.Name = fmt.Sprintf("Camera %d", i+1)
+			}
+		}
+		if cam.Path == "" {
+			if len(c.Cameras) == 1 && c.RTSPPath != "" {
+				cam.Path = c.RTSPPath
+			} else {
+				cam.Path = Slugify(cam.Name)
+				if cam.Path == "" {
+					cam.Path = fmt.Sprintf("cam%d", i+1)
+				}
+			}
+		}
+		cam.Path = strings.TrimPrefix(cam.Path, "/")
+
+		// Check for duplicate RTSP stream paths
+		if prevIdx, exists := seenPaths[cam.Path]; exists {
+			return fmt.Errorf("duplicate RTSP stream path '%s' between camera[%d] and camera[%d]", cam.Path, prevIdx, i)
+		}
+		seenPaths[cam.Path] = i
+
+		// Derive and validate MAC
+		if cam.MAC == "" {
+			cam.MAC = DeriveMAC(DefaultCameraMAC, i)
+		}
+		hw, err := net.ParseMAC(cam.MAC)
+		if err != nil {
+			return fmt.Errorf("camera[%d] invalid MAC address: %s (%w)", i, cam.MAC, err)
+		}
+		cam.MAC = strings.ToUpper(hw.String())
+
+		// Check for duplicate MAC addresses
+		if prevIdx, exists := seenMACs[cam.MAC]; exists {
+			return fmt.Errorf("duplicate MAC address '%s' between camera[%d] and camera[%d]", cam.MAC, prevIdx, i)
+		}
+		seenMACs[cam.MAC] = i
+
+		// Codec & resolution defaults
+		if cam.Resolution == "" {
+			cam.Resolution = c.Resolution
+			if cam.Resolution == "" {
+				cam.Resolution = "1080p"
+			}
+		}
+		if cam.AudioCodec == "" {
+			cam.AudioCodec = c.AudioCodec
+			if cam.AudioCodec == "" {
+				cam.AudioCodec = "aac"
+			}
+		}
+		if cam.NabtoDriver == "" {
+			cam.NabtoDriver = c.NabtoDriver
+			if cam.NabtoDriver == "" {
+				cam.NabtoDriver = "cgo"
+			}
+		}
+		if cam.Type == "" {
+			cam.Type = "auto"
+		}
+
+		// Setup Nabto config per camera
+		if cam.Nabto == nil {
+			keyPath := cam.KeyPath
+			if keyPath == "" {
+				if i == 0 && c.NabtoConfig.KeyPath != "" {
+					keyPath = c.NabtoConfig.KeyPath
+				} else {
+					keyPath = fmt.Sprintf("data/%s_client.key", cam.Path)
+				}
+			}
+			cam.Nabto = &nabto.Config{
+				CameraIP:   cam.IP,
+				CameraPort: 5592,
+				KeyPath:    keyPath,
+				IsBeta:     c.IsBeta,
+			}
+			if cam.QRCode != "" {
+				nabto.ParseQRCode(cam.QRCode, cam.Nabto)
+			}
+		}
 	}
+
+	// Sync primary camera to top-level legacy fields for 100% backward compatibility
+	if len(c.Cameras) > 0 {
+		c.NabtoConfig = c.Cameras[0].Nabto
+		c.CameraType = c.Cameras[0].Type
+		c.CameraUser = c.Cameras[0].User
+		c.CameraPassword = c.Cameras[0].Password
+		c.CameraMAC = c.Cameras[0].MAC
+		c.CameraName = c.Cameras[0].Name
+		c.Resolution = c.Cameras[0].Resolution
+		c.AudioCodec = c.Cameras[0].AudioCodec
+		c.RTSPPath = c.Cameras[0].Path
+	}
+
 	if c.RTSPPort <= 0 || c.RTSPPort > 65535 {
 		return fmt.Errorf("invalid RTSP port: %d", c.RTSPPort)
 	}
@@ -474,38 +764,59 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// ProbeCameraModel determines whether the camera is an L 620 CAM (Xiongmai Sofia) or L 625 CAM SC (Nabto Edge).
-func (c *Config) ProbeCameraModel() (isL620 bool, modelName string) {
-	switch strings.ToLower(strings.TrimSpace(c.CameraType)) {
+// ProbeCameraModel determines whether a camera is an L 620 CAM (Xiongmai Sofia) or L 625 CAM SC (Nabto Edge).
+func (cam *CameraConfig) ProbeCameraModel() (isL620 bool, modelName string) {
+	switch strings.ToLower(strings.TrimSpace(cam.Type)) {
 	case "l620":
 		isL620 = true
-		logger.Info("Config", "📷 Camera model configured explicitly: Steinel L 620 CAM / XLED CAM 1 (Xiongmai Sofia)")
+		logger.Info("Config", "📷 Camera [%s] configured explicitly: Steinel L 620 CAM / XLED CAM 1 (Xiongmai Sofia)", cam.Name)
 	case "l625":
 		isL620 = false
-		logger.Info("Config", "📷 Camera model configured explicitly: Steinel L 625 CAM SC (Nabto Edge)")
+		logger.Info("Config", "📷 Camera [%s] configured explicitly: Steinel L 625 CAM SC (Nabto Edge)", cam.Name)
 	default: // "auto" or unspecified
-		logger.Info("Config", "🔍 Camera model set to 'auto': Probing %s on Port 34567...", c.NabtoConfig.CameraIP)
-		if ProbePort(c.NabtoConfig.CameraIP, 34567, 1500*time.Millisecond) {
+		logger.Info("Config", "🔍 Camera [%s] set to 'auto': Probing %s on Port 34567...", cam.Name, cam.IP)
+		if ProbePort(cam.IP, 34567, 1500*time.Millisecond) {
 			isL620 = true
-			logger.Info("Config", "🎯 Auto-detected Steinel L 620 CAM / XLED CAM 1 (Port 34567 Xiongmai Sofia is open)")
+			logger.Info("Config", "🎯 Camera [%s]: Auto-detected Steinel L 620 CAM / XLED CAM 1 (Port 34567 Xiongmai Sofia is open)", cam.Name)
 		} else {
 			isL620 = false
-			logger.Info("Config", "🎯 Auto-detected Steinel L 625 CAM SC (Port 34567 closed, selecting Nabto Edge driver)")
+			logger.Info("Config", "🎯 Camera [%s]: Auto-detected Steinel L 625 CAM SC (Port 34567 closed, selecting Nabto Edge driver)", cam.Name)
 		}
 	}
 
 	modelName = "L 625 CAM SC"
 	if isL620 {
 		modelName = "L 620 CAM"
-		if c.NabtoConfig.DeviceID == "" {
-			c.NabtoConfig.DeviceID = "steinel-l620"
-		}
-		if c.NabtoConfig.ProductID == "" {
-			c.NabtoConfig.ProductID = "pr-xiongmai"
+		if cam.Nabto != nil {
+			if cam.Nabto.DeviceID == "" {
+				if cam.Path != "" && cam.Path != "steinel" {
+					cam.Nabto.DeviceID = fmt.Sprintf("steinel-l620-%s", cam.Path)
+				} else {
+					cam.Nabto.DeviceID = "steinel-l620"
+				}
+			}
+			if cam.Nabto.ProductID == "" {
+				cam.Nabto.ProductID = "pr-xiongmai"
+			}
 		}
 	}
 
 	return isL620, modelName
+}
+
+// ProbeCameraModel delegates to primary camera for backward compatibility.
+func (c *Config) ProbeCameraModel() (isL620 bool, modelName string) {
+	if len(c.Cameras) > 0 {
+		return c.Cameras[0].ProbeCameraModel()
+	}
+	cam := CameraConfig{
+		Name:  c.CameraName,
+		IP:    c.NabtoConfig.CameraIP,
+		Type:  c.CameraType,
+		Path:  c.RTSPPath,
+		Nabto: c.NabtoConfig,
+	}
+	return cam.ProbeCameraModel()
 }
 
 // ProbePort checks if a specific TCP port is open and accepting connections within a given timeout.

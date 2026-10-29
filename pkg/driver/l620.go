@@ -24,7 +24,7 @@ type L620Driver struct {
 }
 
 // NewL620Driver creates a new Driver instance for Steinel L 620 CAM.
-func NewL620Driver(cfg *config.Config, rtspServer *rtsp.Server, eventBus *events.Bus) *L620Driver {
+func NewL620Driver(cfg *config.Config, rtspServer rtsp.MediaStream, eventBus *events.Bus) *L620Driver {
 	xm := xiongmai.NewDriver(
 		cfg.NabtoConfig.CameraIP,
 		cfg.CameraUser,

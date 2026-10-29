@@ -3,6 +3,7 @@ package onvif
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http/httptest"
 	"strings"
@@ -309,3 +310,125 @@ func TestDeviceHandler_MACAddress(t *testing.T) {
 		t.Errorf("expected custom MAC %s, got: %s", customMAC, respCustom)
 	}
 }
+
+func TestMultiCameraONVIF(t *testing.T) {
+	bus1 := events.NewBus()
+	bus2 := events.NewBus()
+
+	srv := NewServer(
+		8000, 8554, "einfahrt", "aac",
+		"dev-1", "prod-1", "L 625 CAM SC", "00:0C:43:00:01:02",
+		"", "", nil, nil, nil, nil, nil, bus1,
+	)
+
+	// Configure multiple channels
+	srv.SetChannels([]CameraChannel{
+		{
+			Index:      1,
+			Name:       "Einfahrt",
+			Path:       "einfahrt",
+			AudioCodec: "aac",
+			EventBus:   bus1,
+		},
+		{
+			Index:      2,
+			Name:       "Garten",
+			Path:       "garten",
+			AudioCodec: "pcmu",
+			EventBus:   bus2,
+		},
+	})
+
+	// 1. Check GetProfiles
+	reqBody := `<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
+  <s:Body><GetProfiles xmlns="http://www.onvif.org/ver10/media/wsdl"/></s:Body>
+</s:Envelope>`
+	req := httptest.NewRequest("POST", "/onvif/media_service", bytes.NewBufferString(reqBody))
+	w := httptest.NewRecorder()
+	srv.handleSOAP(w, req)
+	body, _ := io.ReadAll(w.Result().Body)
+	respStr := string(body)
+
+	if !strings.Contains(respStr, "Profile_einfahrt_Main") || !strings.Contains(respStr, "Profile_garten_Main") {
+		t.Fatalf("expected both camera profiles in GetProfiles response: %s", respStr)
+	}
+	if !strings.Contains(respStr, "VideoSource_1") || !strings.Contains(respStr, "VideoSource_2") {
+		t.Fatalf("expected VideoSource_1 and VideoSource_2 in GetProfiles: %s", respStr)
+	}
+
+	// 2. Check GetVideoSources
+	reqBody = `<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
+  <s:Body><GetVideoSources xmlns="http://www.onvif.org/ver10/media/wsdl"/></s:Body>
+</s:Envelope>`
+	req = httptest.NewRequest("POST", "/onvif/media_service", bytes.NewBufferString(reqBody))
+	w = httptest.NewRecorder()
+	srv.handleSOAP(w, req)
+	body, _ = io.ReadAll(w.Result().Body)
+	respStr = string(body)
+
+	if !strings.Contains(respStr, `token="VideoSource_1"`) || !strings.Contains(respStr, `token="VideoSource_2"`) {
+		t.Fatalf("expected both VideoSource_1 and VideoSource_2: %s", respStr)
+	}
+
+	// 3. Check GetStreamUri for each profile
+	for _, tc := range []struct {
+		profileToken string
+		expectedPath string
+	}{
+		{"Profile_einfahrt_Main", "einfahrt"},
+		{"Profile_garten_Main", "garten"},
+		{"Profile_garten_Sub", "garten"},
+		{"Profile_Main", "einfahrt"}, // fallback to primary
+	} {
+		reqBody = fmt.Sprintf(`<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
+  <s:Body><GetStreamUri xmlns="http://www.onvif.org/ver10/media/wsdl"><ProfileToken>%s</ProfileToken></GetStreamUri></s:Body>
+</s:Envelope>`, tc.profileToken)
+		req = httptest.NewRequest("POST", "/onvif/media_service", bytes.NewBufferString(reqBody))
+		w = httptest.NewRecorder()
+		srv.handleSOAP(w, req)
+		body, _ = io.ReadAll(w.Result().Body)
+		expectedURI := fmt.Sprintf("rtsp://example.com:8554/%s", tc.expectedPath)
+		if !strings.Contains(string(body), expectedURI) {
+			t.Errorf("GetStreamUri for %s did not contain %s: %s", tc.profileToken, expectedURI, string(body))
+		}
+	}
+
+	// 4. Check REST API /api/cameras
+	req = httptest.NewRequest("GET", "/api/cameras", nil)
+	w = httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(w, req)
+	body, _ = io.ReadAll(w.Result().Body)
+	if !strings.Contains(string(body), `"einfahrt"`) || !strings.Contains(string(body), `"garten"`) {
+		t.Errorf("/api/cameras response missing cameras: %s", string(body))
+	}
+
+	// 5. Check PullMessages motion routing for Camera 2
+	reqBody = `<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
+  <s:Body><CreatePullPointSubscription xmlns="http://www.onvif.org/ver10/events/wsdl"/></s:Body>
+</s:Envelope>`
+	req = httptest.NewRequest("POST", "/onvif/event_service", bytes.NewBufferString(reqBody))
+	w = httptest.NewRecorder()
+	srv.handleSOAP(w, req)
+
+	// Trigger motion on camera 2
+	bus2.SetMotion(true)
+
+	reqBody = `<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
+  <s:Body><PullMessages xmlns="http://www.onvif.org/ver10/events/wsdl"/></s:Body>
+</s:Envelope>`
+	req = httptest.NewRequest("POST", "/onvif/event_service", bytes.NewBufferString(reqBody))
+	w = httptest.NewRecorder()
+	srv.handleSOAP(w, req)
+	body, _ = io.ReadAll(w.Result().Body)
+	respStr = string(body)
+
+	if !strings.Contains(respStr, `Value="VideoSourceConfig_2"`) || !strings.Contains(respStr, `Value="true"`) {
+		t.Fatalf("expected motion event for VideoSourceConfig_2: %s", respStr)
+	}
+}
+

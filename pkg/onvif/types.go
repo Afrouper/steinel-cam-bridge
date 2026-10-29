@@ -1,6 +1,11 @@
 package onvif
 
-import "encoding/xml"
+import (
+	"encoding/xml"
+
+	"github.com/Afrouper/steinel-cam-bridge/pkg/events"
+	"github.com/Afrouper/steinel-cam-bridge/pkg/storage"
+)
 
 // SOAP 1.2 / ONVIF Envelopes
 
@@ -56,3 +61,18 @@ const (
 	NS_WSNT     = "http://docs.oasis-open.org/wsn/b-2"
 	NS_WSRF_R   = "http://docs.oasis-open.org/wsrf/r-2"
 )
+
+// CameraChannel represents the configuration and callbacks for a single camera channel in ONVIF.
+type CameraChannel struct {
+	Index             int                             `json:"index"` // 1-based channel index (1, 2, ...)
+	Name              string                          `json:"name"`  // Friendly name, e.g. "Einfahrt"
+	Path              string                          `json:"path"`  // RTSP path slug, e.g. "einfahrt"
+	AudioCodec        string                          `json:"audio_codec"`
+	Resolution        string                          `json:"resolution"`
+	ChangeResFunc     func(res string) error          `json:"-"`
+	SetLampFunc       func(mode string) error         `json:"-"`
+	SetSirenFunc      func(on bool) error             `json:"-"`
+	RecordingProvider func() storage.RecordingProvider `json:"-"`
+	EventBus          *events.Bus                     `json:"-"`
+}
+

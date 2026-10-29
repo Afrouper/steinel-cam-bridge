@@ -21,7 +21,7 @@ type Driver struct {
 	user       string
 	password   string
 	resolution string
-	rtspServer *rtsp.Server
+	rtspServer rtsp.MediaStream
 	eventBus   *events.Bus
 	client     *Client
 	ingest     *RTSPIngest
@@ -33,7 +33,7 @@ type Driver struct {
 }
 
 // NewDriver creates a new driver instance for a Steinel L 620 CAM.
-func NewDriver(cameraIP string, user, password string, resolution string, rtspServer *rtsp.Server, eventBus *events.Bus) *Driver {
+func NewDriver(cameraIP string, user, password string, resolution string, rtspServer rtsp.MediaStream, eventBus *events.Bus) *Driver {
 	if user == "" {
 		user = "admin"
 	}

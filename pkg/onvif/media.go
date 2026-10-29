@@ -3,6 +3,7 @@ package onvif
 import (
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/Afrouper/steinel-cam-bridge/pkg/events"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/logger"
@@ -15,6 +16,9 @@ type MediaHandler struct {
 	onvifPort     int
 	changeResFunc func(res string) error
 	eventBus      *events.Bus
+
+	channelsMu sync.RWMutex
+	channels   []CameraChannel
 }
 
 func NewMediaHandler(rtspPort int, rtspPath string, audioCodec string, onvifPort int, changeResFunc func(res string) error, eventBus *events.Bus) *MediaHandler {
@@ -25,7 +29,7 @@ func NewMediaHandler(rtspPort int, rtspPath string, audioCodec string, onvifPort
 	if eventBus == nil {
 		eventBus = events.GlobalBus
 	}
-	return &MediaHandler{
+	h := &MediaHandler{
 		rtspPort:      rtspPort,
 		rtspPath:      rtspPath,
 		audioCodec:    audioCodec,
@@ -33,6 +37,88 @@ func NewMediaHandler(rtspPort int, rtspPath string, audioCodec string, onvifPort
 		changeResFunc: changeResFunc,
 		eventBus:      eventBus,
 	}
+	h.channels = []CameraChannel{
+		{
+			Index:         1,
+			Name:          "MainStream",
+			Path:          rtspPath,
+			AudioCodec:    audioCodec,
+			Resolution:    "1080p",
+			ChangeResFunc: changeResFunc,
+			EventBus:      eventBus,
+		},
+	}
+	return h
+}
+
+func (h *MediaHandler) SetChannels(channels []CameraChannel) {
+	h.channelsMu.Lock()
+	defer h.channelsMu.Unlock()
+	h.channels = make([]CameraChannel, len(channels))
+	copy(h.channels, channels)
+}
+
+func (h *MediaHandler) AddChannel(ch CameraChannel) {
+	h.channelsMu.Lock()
+	defer h.channelsMu.Unlock()
+	h.channels = append(h.channels, ch)
+}
+
+func (h *MediaHandler) Channels() []CameraChannel {
+	h.channelsMu.RLock()
+	defer h.channelsMu.RUnlock()
+	result := make([]CameraChannel, len(h.channels))
+	copy(result, h.channels)
+	return result
+}
+
+func extractXMLTag(xmlStr, tag string) string {
+	startIdx := strings.Index(xmlStr, "<"+tag+">")
+	endTag := "</" + tag + ">"
+	if startIdx != -1 {
+		startIdx += len(tag) + 2
+		endIdx := strings.Index(xmlStr[startIdx:], endTag)
+		if endIdx != -1 {
+			return strings.TrimSpace(xmlStr[startIdx : startIdx+endIdx])
+		}
+	}
+	for _, prefix := range []string{"trt:", "tt:", "tns1:"} {
+		pTag := "<" + prefix + tag + ">"
+		startIdx = strings.Index(xmlStr, pTag)
+		if startIdx != -1 {
+			startIdx += len(pTag)
+			endIdx := strings.Index(xmlStr[startIdx:], "</"+prefix+tag+">")
+			if endIdx != -1 {
+				return strings.TrimSpace(xmlStr[startIdx : startIdx+endIdx])
+			}
+		}
+	}
+	return ""
+}
+
+func extractXMLAttr(xmlStr, tag, attr string) string {
+	idx := strings.Index(xmlStr, "<"+tag)
+	if idx == -1 {
+		idx = strings.Index(xmlStr, "<trt:"+tag)
+	}
+	if idx == -1 {
+		return ""
+	}
+	sub := xmlStr[idx:]
+	endClose := strings.Index(sub, ">")
+	if endClose != -1 {
+		sub = sub[:endClose]
+	}
+	attrKey := attr + `="`
+	aIdx := strings.Index(sub, attrKey)
+	if aIdx != -1 {
+		aIdx += len(attrKey)
+		valEnd := strings.Index(sub[aIdx:], `"`)
+		if valEnd != -1 {
+			return sub[aIdx : aIdx+valEnd]
+		}
+	}
+	return ""
 }
 
 func (h *MediaHandler) Handle(action string, reqXML string, host string) (string, error) {
@@ -43,7 +129,10 @@ func (h *MediaHandler) Handle(action string, reqXML string, host string) (string
 		return h.getProfile(reqXML), nil
 	}
 	if strings.Contains(action, "GetStreamUri") || strings.Contains(reqXML, "GetStreamUri") {
-		return h.getStreamUri(host), nil
+		return h.getStreamUri(host, reqXML), nil
+	}
+	if strings.Contains(action, "GetSnapshotUri") || strings.Contains(reqXML, "GetSnapshotUri") {
+		return h.getSnapshotUri(host, reqXML), nil
 	}
 	if strings.Contains(action, "GetVideoSourceConfigurations") || strings.Contains(reqXML, "GetVideoSourceConfigurations") ||
 		strings.Contains(action, "GetVideoSourceConfiguration") || strings.Contains(reqXML, "GetVideoSourceConfiguration") {
@@ -78,45 +167,58 @@ func (h *MediaHandler) Handle(action string, reqXML string, host string) (string
 	return `<trt:UnknownActionResponse xmlns:trt="http://www.onvif.org/ver10/media/wsdl"/>`, nil
 }
 
-func (h *MediaHandler) getProfiles() string {
+func (h *MediaHandler) formatProfileXML(token, name string, chIndex int, path string, isMain bool, audioCodec string) string {
 	audioEncoding := "AAC"
 	sampleRate := 16
-	if h.audioCodec == "pcmu" {
+	if strings.ToLower(audioCodec) == "pcmu" {
 		audioEncoding = "G711"
 		sampleRate = 8
 	}
 
-	return fmt.Sprintf(`<trt:GetProfilesResponse xmlns:trt="%s" xmlns:tt="%s">
-  <trt:Profiles token="Profile_Main" fixed="true">
-    <tt:Name>MainStream 1080p</tt:Name>
-    <tt:VideoSourceConfiguration token="VideoSourceConfig_1">
-      <tt:Name>VideoSourceConfig_1</tt:Name>
+	width, height, quality, bitrate, fps := 1920, 1080, "5.0", 2048, 15
+	h264Profile := "High"
+	encSuffix := "Main"
+	if !isMain {
+		width, height, quality, bitrate, fps = 640, 360, "3.0", 512, 10
+		h264Profile = "Baseline"
+		encSuffix = "Sub"
+	}
+
+	encToken := fmt.Sprintf("VideoEncoderConfig_%s", encSuffix)
+	if chIndex > 1 {
+		encToken = fmt.Sprintf("VideoEncoderConfig_%s_%s", path, encSuffix)
+	}
+
+	return fmt.Sprintf(`  <trt:Profiles token="%s" fixed="true">
+    <tt:Name>%s</tt:Name>
+    <tt:VideoSourceConfiguration token="VideoSourceConfig_%d">
+      <tt:Name>VideoSourceConfig_%d</tt:Name>
       <tt:UseCount>2</tt:UseCount>
-      <tt:SourceToken>VideoSource_1</tt:SourceToken>
-      <tt:Bounds x="0" y="0" width="1920" height="1080"/>
+      <tt:SourceToken>VideoSource_%d</tt:SourceToken>
+      <tt:Bounds x="0" y="0" width="%d" height="%d"/>
     </tt:VideoSourceConfiguration>
-    <tt:AudioSourceConfiguration token="AudioSourceConfig_1">
-      <tt:Name>AudioSourceConfig_1</tt:Name>
+    <tt:AudioSourceConfiguration token="AudioSourceConfig_%d">
+      <tt:Name>AudioSourceConfig_%d</tt:Name>
       <tt:UseCount>2</tt:UseCount>
-      <tt:SourceToken>AudioSource_1</tt:SourceToken>
+      <tt:SourceToken>AudioSource_%d</tt:SourceToken>
     </tt:AudioSourceConfiguration>
-    <tt:VideoEncoderConfiguration token="VideoEncoderConfig_Main">
-      <tt:Name>VideoEncoderConfig_Main</tt:Name>
+    <tt:VideoEncoderConfiguration token="%s">
+      <tt:Name>%s</tt:Name>
       <tt:UseCount>1</tt:UseCount>
       <tt:Encoding>H264</tt:Encoding>
       <tt:Resolution>
-        <tt:Width>1920</tt:Width>
-        <tt:Height>1080</tt:Height>
+        <tt:Width>%d</tt:Width>
+        <tt:Height>%d</tt:Height>
       </tt:Resolution>
-      <tt:Quality>5.0</tt:Quality>
+      <tt:Quality>%s</tt:Quality>
       <tt:RateControl>
-        <tt:FrameRateLimit>15</tt:FrameRateLimit>
+        <tt:FrameRateLimit>%d</tt:FrameRateLimit>
         <tt:EncodingInterval>1</tt:EncodingInterval>
-        <tt:BitrateLimit>2048</tt:BitrateLimit>
+        <tt:BitrateLimit>%d</tt:BitrateLimit>
       </tt:RateControl>
       <tt:H264>
-        <tt:GovLength>45</tt:GovLength>
-        <tt:H264Profile>High</tt:H264Profile>
+        <tt:GovLength>%d</tt:GovLength>
+        <tt:H264Profile>%s</tt:H264Profile>
       </tt:H264>
       <tt:Multicast>
         <tt:Address><tt:Type>IPv4</tt:Type><tt:IPv4Address>0.0.0.0</tt:IPv4Address></tt:Address>
@@ -126,80 +228,92 @@ func (h *MediaHandler) getProfiles() string {
       </tt:Multicast>
       <tt:SessionTimeout>PT60S</tt:SessionTimeout>
     </tt:VideoEncoderConfiguration>
-    <tt:AudioEncoderConfiguration token="AudioEncoderConfig_1">
-      <tt:Name>AudioEncoderConfig_1</tt:Name>
+    <tt:AudioEncoderConfiguration token="AudioEncoderConfig_%d">
+      <tt:Name>AudioEncoderConfig_%d</tt:Name>
       <tt:UseCount>2</tt:UseCount>
       <tt:Encoding>%s</tt:Encoding>
       <tt:Bitrate>64</tt:Bitrate>
       <tt:SampleRate>%d</tt:SampleRate>
       <tt:SessionTimeout>PT60S</tt:SessionTimeout>
     </tt:AudioEncoderConfiguration>
-    <tt:AudioOutputConfiguration token="AudioOutputConfig_1">
-      <tt:Name>AudioOutputConfig_1</tt:Name>
+    <tt:AudioOutputConfiguration token="AudioOutputConfig_%d">
+      <tt:Name>AudioOutputConfig_%d</tt:Name>
       <tt:UseCount>1</tt:UseCount>
-      <tt:OutputToken>AudioOutput_1</tt:OutputToken>
+      <tt:OutputToken>AudioOutput_%d</tt:OutputToken>
       <tt:SendPrimacy>www.onvif.org/ver20/HalfDuplex/Server</tt:SendPrimacy>
       <tt:OutputLevel>80</tt:OutputLevel>
     </tt:AudioOutputConfiguration>
-  </trt:Profiles>
-  <trt:Profiles token="Profile_Sub" fixed="true">
-    <tt:Name>SubStream 360p</tt:Name>
-    <tt:VideoSourceConfiguration token="VideoSourceConfig_1">
-      <tt:Name>VideoSourceConfig_1</tt:Name>
-      <tt:UseCount>2</tt:UseCount>
-      <tt:SourceToken>VideoSource_1</tt:SourceToken>
-      <tt:Bounds x="0" y="0" width="640" height="360"/>
-    </tt:VideoSourceConfiguration>
-    <tt:AudioSourceConfiguration token="AudioSourceConfig_1">
-      <tt:Name>AudioSourceConfig_1</tt:Name>
-      <tt:UseCount>2</tt:UseCount>
-      <tt:SourceToken>AudioSource_1</tt:SourceToken>
-    </tt:AudioSourceConfiguration>
-    <tt:VideoEncoderConfiguration token="VideoEncoderConfig_Sub">
-      <tt:Name>VideoEncoderConfig_Sub</tt:Name>
-      <tt:UseCount>1</tt:UseCount>
-      <tt:Encoding>H264</tt:Encoding>
-      <tt:Resolution>
-        <tt:Width>640</tt:Width>
-        <tt:Height>360</tt:Height>
-      </tt:Resolution>
-      <tt:Quality>3.0</tt:Quality>
-      <tt:RateControl>
-        <tt:FrameRateLimit>10</tt:FrameRateLimit>
-        <tt:EncodingInterval>1</tt:EncodingInterval>
-        <tt:BitrateLimit>512</tt:BitrateLimit>
-      </tt:RateControl>
-      <tt:H264>
-        <tt:GovLength>30</tt:GovLength>
-        <tt:H264Profile>Baseline</tt:H264Profile>
-      </tt:H264>
-      <tt:Multicast>
-        <tt:Address><tt:Type>IPv4</tt:Type><tt:IPv4Address>0.0.0.0</tt:IPv4Address></tt:Address>
-        <tt:Port>0</tt:Port>
-        <tt:TTL>1</tt:TTL>
-        <tt:AutoStart>false</tt:AutoStart>
-      </tt:Multicast>
-      <tt:SessionTimeout>PT60S</tt:SessionTimeout>
-    </tt:VideoEncoderConfiguration>
-    <tt:AudioEncoderConfiguration token="AudioEncoderConfig_1">
-      <tt:Name>AudioEncoderConfig_1</tt:Name>
-      <tt:UseCount>2</tt:UseCount>
-      <tt:Encoding>%s</tt:Encoding>
-      <tt:Bitrate>64</tt:Bitrate>
-      <tt:SampleRate>%d</tt:SampleRate>
-      <tt:SessionTimeout>PT60S</tt:SessionTimeout>
-    </tt:AudioEncoderConfiguration>
-  </trt:Profiles>
-</trt:GetProfilesResponse>`, NS_TRT, NS_TT, audioEncoding, sampleRate, audioEncoding, sampleRate)
+  </trt:Profiles>`,
+		token, name,
+		chIndex, chIndex, chIndex, width, height,
+		chIndex, chIndex, chIndex,
+		encToken, encToken,
+		width, height, quality, fps, bitrate,
+		fps*3, h264Profile,
+		chIndex, chIndex, audioEncoding, sampleRate,
+		chIndex, chIndex, chIndex)
+}
+
+func (h *MediaHandler) getProfiles() string {
+	channels := h.Channels()
+	if len(channels) <= 1 {
+		codec := h.audioCodec
+		if len(channels) == 1 && channels[0].AudioCodec != "" {
+			codec = channels[0].AudioCodec
+		}
+		pMain := h.formatProfileXML("Profile_Main", "MainStream 1080p", 1, h.rtspPath, true, codec)
+		pSub := h.formatProfileXML("Profile_Sub", "SubStream 360p", 1, h.rtspPath, false, codec)
+
+		return fmt.Sprintf(`<trt:GetProfilesResponse xmlns:trt="%s" xmlns:tt="%s">
+%s
+%s
+</trt:GetProfilesResponse>`, NS_TRT, NS_TT, pMain, pSub)
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf(`<trt:GetProfilesResponse xmlns:trt="%s" xmlns:tt="%s">`, NS_TRT, NS_TT))
+	for _, ch := range channels {
+		mainToken := fmt.Sprintf("Profile_%s_Main", ch.Path)
+		subToken := fmt.Sprintf("Profile_%s_Sub", ch.Path)
+		mainName := fmt.Sprintf("%s MainStream 1080p", ch.Name)
+		subName := fmt.Sprintf("%s SubStream 360p", ch.Name)
+
+		sb.WriteString("\n")
+		sb.WriteString(h.formatProfileXML(mainToken, mainName, ch.Index, ch.Path, true, ch.AudioCodec))
+		sb.WriteString("\n")
+		sb.WriteString(h.formatProfileXML(subToken, subName, ch.Index, ch.Path, false, ch.AudioCodec))
+	}
+	sb.WriteString("\n</trt:GetProfilesResponse>")
+	return sb.String()
 }
 
 func (h *MediaHandler) getProfile(reqXML string) string {
 	return h.getProfiles()
 }
 
-func (h *MediaHandler) getStreamUri(host string) string {
+func (h *MediaHandler) getStreamUri(host string, reqXML string) string {
 	ip := extractHostIP(host)
-	rtspURL := fmt.Sprintf("rtsp://%s:%d/%s", ip, h.rtspPort, h.rtspPath)
+	channels := h.Channels()
+
+	reqToken := extractXMLTag(reqXML, "ProfileToken")
+
+	selectedPath := h.rtspPath
+	if len(channels) > 0 {
+		selectedPath = channels[0].Path
+	}
+
+	for _, ch := range channels {
+		if reqToken != "" {
+			if reqToken == fmt.Sprintf("Profile_%s_Main", ch.Path) ||
+				reqToken == fmt.Sprintf("Profile_%s_Sub", ch.Path) ||
+				strings.Contains(reqToken, ch.Path) {
+				selectedPath = ch.Path
+				break
+			}
+		}
+	}
+
+	rtspURL := fmt.Sprintf("rtsp://%s:%d/%s", ip, h.rtspPort, selectedPath)
 
 	return fmt.Sprintf(`<trt:GetStreamUriResponse xmlns:trt="%s" xmlns:tt="%s">
   <trt:MediaUri>
@@ -209,6 +323,39 @@ func (h *MediaHandler) getStreamUri(host string) string {
     <tt:Timeout>PT60S</tt:Timeout>
   </trt:MediaUri>
 </trt:GetStreamUriResponse>`, NS_TRT, NS_TT, rtspURL)
+}
+
+func (h *MediaHandler) getSnapshotUri(host string, reqXML string) string {
+	ip := extractHostIP(host)
+	channels := h.Channels()
+
+	reqToken := extractXMLTag(reqXML, "ProfileToken")
+	selectedPath := h.rtspPath
+	if len(channels) > 0 {
+		selectedPath = channels[0].Path
+	}
+
+	for _, ch := range channels {
+		if reqToken != "" {
+			if reqToken == fmt.Sprintf("Profile_%s_Main", ch.Path) ||
+				reqToken == fmt.Sprintf("Profile_%s_Sub", ch.Path) ||
+				strings.Contains(reqToken, ch.Path) {
+				selectedPath = ch.Path
+				break
+			}
+		}
+	}
+
+	snapshotURL := fmt.Sprintf("http://%s:%d/api/sdcard/events/latest/snapshot.jpg?camera=%s", ip, h.onvifPort, selectedPath)
+
+	return fmt.Sprintf(`<trt:GetSnapshotUriResponse xmlns:trt="%s" xmlns:tt="%s">
+  <trt:MediaUri>
+    <tt:Uri>%s</tt:Uri>
+    <tt:InvalidAfterConnect>false</tt:InvalidAfterConnect>
+    <tt:InvalidAfterReboot>false</tt:InvalidAfterReboot>
+    <tt:Timeout>PT60S</tt:Timeout>
+  </trt:MediaUri>
+</trt:GetSnapshotUriResponse>`, NS_TRT, NS_TT, snapshotURL)
 }
 
 func (h *MediaHandler) getVideoEncoderConfigurationOptions() string {
@@ -237,30 +384,83 @@ func (h *MediaHandler) setVideoEncoderConfiguration(reqXML string) string {
 		targetRes = "360p"
 	}
 
-	logger.Info("ONVIF", "🔄 Received SetVideoEncoderConfiguration -> applying %s", targetRes)
-	if h.changeResFunc != nil {
-		_ = h.changeResFunc(targetRes)
+	token := extractXMLAttr(reqXML, "Configuration", "token")
+	logger.Info("ONVIF", "🔄 Received SetVideoEncoderConfiguration -> applying %s (token: %s)", targetRes, token)
+
+	channels := h.Channels()
+	var targetCh *CameraChannel
+	for i := range channels {
+		ch := &channels[i]
+		if token != "" && (strings.Contains(token, ch.Path) || token == fmt.Sprintf("VideoEncoderConfig_%d", ch.Index)) {
+			targetCh = ch
+			break
+		}
+	}
+	if targetCh == nil && len(channels) > 0 {
+		targetCh = &channels[0]
 	}
 
-	st := h.eventBus.GetStatus()
-	st.Resolution = targetRes
-	h.eventBus.UpdateStatus(st)
+	if targetCh != nil {
+		if targetCh.ChangeResFunc != nil {
+			_ = targetCh.ChangeResFunc(targetRes)
+		}
+		if targetCh.EventBus != nil {
+			st := targetCh.EventBus.GetStatus()
+			st.Resolution = targetRes
+			targetCh.EventBus.UpdateStatus(st)
+		}
+	} else {
+		if h.changeResFunc != nil {
+			_ = h.changeResFunc(targetRes)
+		}
+		if h.eventBus != nil {
+			st := h.eventBus.GetStatus()
+			st.Resolution = targetRes
+			h.eventBus.UpdateStatus(st)
+		}
+	}
 
 	return fmt.Sprintf(`<trt:SetVideoEncoderConfigurationResponse xmlns:trt="%s"/>`, NS_TRT)
 }
 
 func (h *MediaHandler) getAudioSources() string {
-	return fmt.Sprintf(`<trt:GetAudioSourcesResponse xmlns:trt="%s" xmlns:tt="%s">
+	channels := h.Channels()
+	if len(channels) <= 1 {
+		return fmt.Sprintf(`<trt:GetAudioSourcesResponse xmlns:trt="%s" xmlns:tt="%s">
   <trt:AudioSources token="AudioSource_1">
     <tt:Channels>1</tt:Channels>
   </trt:AudioSources>
 </trt:GetAudioSourcesResponse>`, NS_TRT, NS_TT)
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf(`<trt:GetAudioSourcesResponse xmlns:trt="%s" xmlns:tt="%s">`, NS_TRT, NS_TT))
+	for _, ch := range channels {
+		sb.WriteString(fmt.Sprintf(`
+  <trt:AudioSources token="AudioSource_%d">
+    <tt:Channels>1</tt:Channels>
+  </trt:AudioSources>`, ch.Index))
+	}
+	sb.WriteString("\n</trt:GetAudioSourcesResponse>")
+	return sb.String()
 }
 
 func (h *MediaHandler) getAudioOutputs() string {
-	return fmt.Sprintf(`<trt:GetAudioOutputsResponse xmlns:trt="%s" xmlns:tt="%s">
+	channels := h.Channels()
+	if len(channels) <= 1 {
+		return fmt.Sprintf(`<trt:GetAudioOutputsResponse xmlns:trt="%s" xmlns:tt="%s">
   <trt:AudioOutputs token="AudioOutput_1"/>
 </trt:GetAudioOutputsResponse>`, NS_TRT, NS_TT)
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf(`<trt:GetAudioOutputsResponse xmlns:trt="%s" xmlns:tt="%s">`, NS_TRT, NS_TT))
+	for _, ch := range channels {
+		sb.WriteString(fmt.Sprintf(`
+  <trt:AudioOutputs token="AudioOutput_%d"/>`, ch.Index))
+	}
+	sb.WriteString("\n</trt:GetAudioOutputsResponse>")
+	return sb.String()
 }
 
 func (h *MediaHandler) getAudioEncoderConfigurationOptions() string {
@@ -281,16 +481,33 @@ func (h *MediaHandler) getAudioEncoderConfigurationOptions() string {
 }
 
 func (h *MediaHandler) getVideoSources() string {
-	return fmt.Sprintf(`<trt:GetVideoSourcesResponse xmlns:trt="%s" xmlns:tt="%s">
+	channels := h.Channels()
+	if len(channels) <= 1 {
+		return fmt.Sprintf(`<trt:GetVideoSourcesResponse xmlns:trt="%s" xmlns:tt="%s">
   <trt:VideoSources token="VideoSource_1">
     <tt:Framerate>15.0</tt:Framerate>
     <tt:Resolution><tt:Width>1920</tt:Width><tt:Height>1080</tt:Height></tt:Resolution>
   </trt:VideoSources>
 </trt:GetVideoSourcesResponse>`, NS_TRT, NS_TT)
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf(`<trt:GetVideoSourcesResponse xmlns:trt="%s" xmlns:tt="%s">`, NS_TRT, NS_TT))
+	for _, ch := range channels {
+		sb.WriteString(fmt.Sprintf(`
+  <trt:VideoSources token="VideoSource_%d">
+    <tt:Framerate>15.0</tt:Framerate>
+    <tt:Resolution><tt:Width>1920</tt:Width><tt:Height>1080</tt:Height></tt:Resolution>
+  </trt:VideoSources>`, ch.Index))
+	}
+	sb.WriteString("\n</trt:GetVideoSourcesResponse>")
+	return sb.String()
 }
 
 func (h *MediaHandler) getVideoSourceConfigurations() string {
-	return fmt.Sprintf(`<trt:GetVideoSourceConfigurationsResponse xmlns:trt="%s" xmlns:tt="%s">
+	channels := h.Channels()
+	if len(channels) <= 1 {
+		return fmt.Sprintf(`<trt:GetVideoSourceConfigurationsResponse xmlns:trt="%s" xmlns:tt="%s">
   <trt:Configurations token="VideoSourceConfig_1">
     <tt:Name>VideoSourceConfig_1</tt:Name>
     <tt:UseCount>2</tt:UseCount>
@@ -298,20 +515,53 @@ func (h *MediaHandler) getVideoSourceConfigurations() string {
     <tt:Bounds x="0" y="0" width="1920" height="1080"/>
   </trt:Configurations>
 </trt:GetVideoSourceConfigurationsResponse>`, NS_TRT, NS_TT)
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf(`<trt:GetVideoSourceConfigurationsResponse xmlns:trt="%s" xmlns:tt="%s">`, NS_TRT, NS_TT))
+	for _, ch := range channels {
+		sb.WriteString(fmt.Sprintf(`
+  <trt:Configurations token="VideoSourceConfig_%d">
+    <tt:Name>VideoSourceConfig_%d</tt:Name>
+    <tt:UseCount>2</tt:UseCount>
+    <tt:SourceToken>VideoSource_%d</tt:SourceToken>
+    <tt:Bounds x="0" y="0" width="1920" height="1080"/>
+  </trt:Configurations>`, ch.Index, ch.Index, ch.Index))
+	}
+	sb.WriteString("\n</trt:GetVideoSourceConfigurationsResponse>")
+	return sb.String()
 }
 
 func (h *MediaHandler) getAudioSourceConfigurations() string {
-	return fmt.Sprintf(`<trt:GetAudioSourceConfigurationsResponse xmlns:trt="%s" xmlns:tt="%s">
+	channels := h.Channels()
+	if len(channels) <= 1 {
+		return fmt.Sprintf(`<trt:GetAudioSourceConfigurationsResponse xmlns:trt="%s" xmlns:tt="%s">
   <trt:Configurations token="AudioSourceConfig_1">
     <tt:Name>AudioSourceConfig_1</tt:Name>
     <tt:UseCount>2</tt:UseCount>
     <tt:SourceToken>AudioSource_1</tt:SourceToken>
   </trt:Configurations>
 </trt:GetAudioSourceConfigurationsResponse>`, NS_TRT, NS_TT)
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf(`<trt:GetAudioSourceConfigurationsResponse xmlns:trt="%s" xmlns:tt="%s">`, NS_TRT, NS_TT))
+	for _, ch := range channels {
+		sb.WriteString(fmt.Sprintf(`
+  <trt:Configurations token="AudioSourceConfig_%d">
+    <tt:Name>AudioSourceConfig_%d</tt:Name>
+    <tt:UseCount>2</tt:UseCount>
+    <tt:SourceToken>AudioSource_%d</tt:SourceToken>
+  </trt:Configurations>`, ch.Index, ch.Index, ch.Index))
+	}
+	sb.WriteString("\n</trt:GetAudioSourceConfigurationsResponse>")
+	return sb.String()
 }
 
 func (h *MediaHandler) getAudioOutputConfigurations() string {
-	return fmt.Sprintf(`<trt:GetAudioOutputConfigurationsResponse xmlns:trt="%s" xmlns:tt="%s">
+	channels := h.Channels()
+	if len(channels) <= 1 {
+		return fmt.Sprintf(`<trt:GetAudioOutputConfigurationsResponse xmlns:trt="%s" xmlns:tt="%s">
   <trt:Configurations token="AudioOutputConfig_1">
     <tt:Name>AudioOutputConfig_1</tt:Name>
     <tt:UseCount>1</tt:UseCount>
@@ -320,4 +570,21 @@ func (h *MediaHandler) getAudioOutputConfigurations() string {
     <tt:OutputLevel>80</tt:OutputLevel>
   </trt:Configurations>
 </trt:GetAudioOutputConfigurationsResponse>`, NS_TRT, NS_TT)
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf(`<trt:GetAudioOutputConfigurationsResponse xmlns:trt="%s" xmlns:tt="%s">`, NS_TRT, NS_TT))
+	for _, ch := range channels {
+		sb.WriteString(fmt.Sprintf(`
+  <trt:Configurations token="AudioOutputConfig_%d">
+    <tt:Name>AudioOutputConfig_%d</tt:Name>
+    <tt:UseCount>1</tt:UseCount>
+    <tt:OutputToken>AudioOutput_%d</tt:OutputToken>
+    <tt:SendPrimacy>www.onvif.org/ver20/HalfDuplex/Server</tt:SendPrimacy>
+    <tt:OutputLevel>80</tt:OutputLevel>
+  </trt:Configurations>`, ch.Index, ch.Index, ch.Index))
+	}
+	sb.WriteString("\n</trt:GetAudioOutputConfigurationsResponse>")
+	return sb.String()
 }
+

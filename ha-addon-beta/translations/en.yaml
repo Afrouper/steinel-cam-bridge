@@ -1,4 +1,7 @@
 configuration:
+  cameras:
+    name: "Cameras (Multi-Camera Mode)"
+    description: "List of multiple Steinel cameras. Allows running multiple cameras simultaneously through a single bridge instance without extra network ports."
   camera_ip:
     name: "Camera IP Address"
     description: "The local IPv4 address of your Steinel CAM light (e.g. 192.168.1.100)."

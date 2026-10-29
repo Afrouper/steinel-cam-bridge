@@ -126,3 +126,60 @@ func TestPublishRecordingEvent(t *testing.T) {
 	c.PublishRecordingEvent(storage.RecordingItem{ID: ""})
 	c.PublishRecordingEvent(storage.RecordingItem{ID: "123", StartTime: time.Time{}})
 }
+
+func TestMultiCameraMQTT(t *testing.T) {
+	var cam1LampMode string
+	var cam2LampMode string
+
+	cb1 := Callbacks{
+		SetLampMode: func(mode string) error {
+			cam1LampMode = mode
+			return nil
+		},
+	}
+	cb2 := Callbacks{
+		SetLampMode: func(mode string) error {
+			cam2LampMode = mode
+			return nil
+		},
+	}
+
+	c := NewClient(Config{
+		TopicPrefix: "steinel",
+		DeviceID:    "de-cam1",
+	}, cb1, nil)
+
+	// Register camera 2
+	c.RegisterCamera(CameraDevice{
+		Name:      "Garten",
+		DeviceID:  "de-cam2",
+		Model:     "L 620 CAM",
+		Callbacks: cb2,
+	})
+
+	// Send command to Camera 1
+	msg1 := &mockMessage{
+		topic:   "steinel/de-cam1/light/set",
+		payload: []byte("ON"),
+	}
+	c.handleCommand(nil, msg1)
+
+	if cam1LampMode != "on" {
+		t.Errorf("expected cam1 lamp mode 'on', got %q", cam1LampMode)
+	}
+	if cam2LampMode != "" {
+		t.Errorf("expected cam2 lamp mode unaffected, got %q", cam2LampMode)
+	}
+
+	// Send command to Camera 2
+	msg2 := &mockMessage{
+		topic:   "steinel/de-cam2/light/set",
+		payload: []byte("OFF"),
+	}
+	c.handleCommand(nil, msg2)
+
+	if cam2LampMode != "off" {
+		t.Errorf("expected cam2 lamp mode 'off', got %q", cam2LampMode)
+	}
+}
+

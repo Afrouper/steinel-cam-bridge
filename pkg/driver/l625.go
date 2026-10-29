@@ -25,7 +25,7 @@ var _ CameraDriver = (*L625Driver)(nil)
 // L625Driver implements CameraDriver for Steinel L 625 CAM SC (Generation 2, Nabto Edge & WebRTC architecture).
 type L625Driver struct {
 	cfg                *config.Config
-	rtspServer         *rtsp.Server
+	rtspServer         rtsp.MediaStream
 	eventBus           *events.Bus
 	onDeviceDiscovered func(deviceID, productID string)
 	activeBridge       *webrtc.Bridge
@@ -33,7 +33,7 @@ type L625Driver struct {
 }
 
 // NewL625Driver creates a new Driver instance for Steinel L 625 CAM SC.
-func NewL625Driver(cfg *config.Config, rtspServer *rtsp.Server, eventBus *events.Bus, onDeviceDiscovered func(deviceID, productID string)) *L625Driver {
+func NewL625Driver(cfg *config.Config, rtspServer rtsp.MediaStream, eventBus *events.Bus, onDeviceDiscovered func(deviceID, productID string)) *L625Driver {
 	return &L625Driver{
 		cfg:                cfg,
 		rtspServer:         rtspServer,

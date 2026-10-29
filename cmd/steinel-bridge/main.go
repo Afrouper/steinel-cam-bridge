@@ -18,6 +18,7 @@ var AppVersion = "dev"
 func registerFlags(fs *flag.FlagSet) {
 	fs.String("qr", "", "Steinel camera QR code string (did=...,pid=...,sct=...,pairPwd=...)")
 	fs.String("ip", "", "Steinel camera local IP address")
+	fs.String("name", "", "Steinel camera display name (e.g. Einfahrt)")
 	fs.String("mac", "", "Custom MAC address for ONVIF device identification (default: 00:0C:43:00:01:02)")
 	fs.String("type", "", "Camera model type ('auto', 'l625', 'l620')")
 	fs.String("user", "", "Camera authentication username (for L 620 CAM)")
@@ -43,6 +44,7 @@ func registerFlags(fs *flag.FlagSet) {
 	fs.String("nabto-driver", "cgo", "Nabto Edge driver engine ('cgo' for C-SDK, default; 'pure' for native Go)")
 	fs.Bool("use-cgo", true, "Use C-SDK libnabto_client wrapper (default: true)")
 	fs.String("log-level", "info", "Log level (trace, debug, info, warn, error)")
+	fs.String("config", "", "Path to JSON configuration file (e.g. /data/options.json or config.json)")
 	fs.Bool("beta", false, "Identify as beta instance for IAM registration")
 }
 
@@ -50,8 +52,13 @@ func main() {
 	registerFlags(flag.CommandLine)
 	flag.Parse()
 
+	optionsFile := "/data/options.json"
+	if customConfig := flag.CommandLine.Lookup("config"); customConfig != nil && customConfig.Value.String() != "" {
+		optionsFile = customConfig.Value.String()
+	}
+
 	// 1. Resolve configuration following 12-Factor App hierarchy
-	cfg := config.Resolve("/data/options.json", flag.CommandLine)
+	cfg := config.Resolve(optionsFile, flag.CommandLine)
 	if AppVersion != "dev" && cfg.AppVersion == "dev" {
 		cfg.AppVersion = AppVersion
 	}

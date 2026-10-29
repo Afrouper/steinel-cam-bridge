@@ -11,12 +11,17 @@ import (
 	"github.com/google/uuid"
 )
 
+type motionEventItem struct {
+	sourceToken string
+	isMotion    bool
+}
+
 type Subscription struct {
 	ID         string
 	CreatedAt  time.Time
 	ExpiresAt  time.Time
-	LastMotion bool
-	EventChan  chan bool
+	LastMotion map[string]bool
+	EventChan  chan motionEventItem
 }
 
 type EventHandler struct {
@@ -24,6 +29,8 @@ type EventHandler struct {
 	eventBus      *events.Bus
 	subscriptions map[string]*Subscription
 	mu            sync.Mutex
+	sourcesMu     sync.RWMutex
+	sources       map[string]*events.Bus
 }
 
 func NewEventHandler(onvifPort int, eventBus *events.Bus) *EventHandler {
@@ -34,34 +41,49 @@ func NewEventHandler(onvifPort int, eventBus *events.Bus) *EventHandler {
 		onvifPort:     onvifPort,
 		eventBus:      eventBus,
 		subscriptions: make(map[string]*Subscription),
+		sources:       make(map[string]*events.Bus),
 	}
 
-	// Hook into Event Bus
-	h.eventBus.Subscribe(func(evt events.EventType, data interface{}) {
-		if evt == events.EventMotion {
-			if m, ok := data.(events.MotionEvent); ok {
-				h.broadcastMotionEvent(m.IsMotion)
-			}
-		}
-	})
-
+	h.AddSource("VideoSourceConfig_1", eventBus)
 	return h
 }
 
-func (h *EventHandler) broadcastMotionEvent(isMotion bool) {
+func (h *EventHandler) AddSource(sourceToken string, bus *events.Bus) {
+	if bus == nil {
+		return
+	}
+	h.sourcesMu.Lock()
+	h.sources[sourceToken] = bus
+	h.sourcesMu.Unlock()
+
+	bus.Subscribe(func(evt events.EventType, data interface{}) {
+		if evt == events.EventMotion {
+			if m, ok := data.(events.MotionEvent); ok {
+				h.broadcastMotionEvent(sourceToken, m.IsMotion)
+			}
+		}
+	})
+}
+
+func (h *EventHandler) broadcastMotionEvent(sourceToken string, isMotion bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
+	item := motionEventItem{
+		sourceToken: sourceToken,
+		isMotion:    isMotion,
+	}
+
 	for _, sub := range h.subscriptions {
 		select {
-		case sub.EventChan <- isMotion:
+		case sub.EventChan <- item:
 		default:
 			// Queue full, drain and replace
 			select {
 			case <-sub.EventChan:
 			default:
 			}
-			sub.EventChan <- isMotion
+			sub.EventChan <- item
 		}
 	}
 }
@@ -96,7 +118,11 @@ func (h *EventHandler) Handle(action string, reqXML string, host string, subID s
 }
 
 func (h *EventHandler) setSynchronizationPoint() string {
-	h.broadcastMotionEvent(h.eventBus.GetStatus().IsMotion)
+	h.sourcesMu.RLock()
+	defer h.sourcesMu.RUnlock()
+	for token, bus := range h.sources {
+		h.broadcastMotionEvent(token, bus.GetStatus().IsMotion)
+	}
 	return fmt.Sprintf(`<tev:SetSynchronizationPointResponse xmlns:tev="%s"/>`, NS_TEV)
 }
 
@@ -122,12 +148,19 @@ func (h *EventHandler) createPullPointSubscription(host string) string {
 	now := time.Now().UTC()
 	expires := now.Add(10 * time.Minute)
 
+	lastMotion := make(map[string]bool)
+	h.sourcesMu.RLock()
+	for token, bus := range h.sources {
+		lastMotion[token] = bus.GetStatus().IsMotion
+	}
+	h.sourcesMu.RUnlock()
+
 	sub := &Subscription{
 		ID:         subID,
 		CreatedAt:  now,
 		ExpiresAt:  expires,
-		EventChan:  make(chan bool, 10),
-		LastMotion: h.eventBus.GetStatus().IsMotion,
+		EventChan:  make(chan motionEventItem, 20),
+		LastMotion: lastMotion,
 	}
 
 	h.mu.Lock()
@@ -149,40 +182,53 @@ func (h *EventHandler) pullMessages(subID string, reqXML string) string {
 	h.mu.Lock()
 	sub, exists := h.subscriptions[subID]
 	if !exists {
-		// Create temporary default sub if client didn't supply subID in URL
-		subID = "default"
-		if s, ok := h.subscriptions[subID]; ok {
-			sub = s
-		} else {
-			sub = &Subscription{
-				ID:        subID,
-				CreatedAt: time.Now().UTC(),
-				ExpiresAt: time.Now().UTC().Add(10 * time.Minute),
-				EventChan: make(chan bool, 10),
+		// If only one active subscription exists, bind to it (e.g. client using generic subID)
+		if len(h.subscriptions) == 1 {
+			for _, s := range h.subscriptions {
+				sub = s
+				exists = true
+				break
 			}
-			h.subscriptions[subID] = sub
+		} else {
+			subID = "default"
+			if s, ok := h.subscriptions[subID]; ok {
+				sub = s
+			} else {
+				sub = &Subscription{
+					ID:         subID,
+					CreatedAt:  time.Now().UTC(),
+					ExpiresAt:  time.Now().UTC().Add(10 * time.Minute),
+					EventChan:  make(chan motionEventItem, 20),
+					LastMotion: make(map[string]bool),
+				}
+				h.subscriptions[subID] = sub
+			}
 		}
 	}
 	h.mu.Unlock()
 
 	now := time.Now().UTC()
 
-	// Wait up to 3 seconds for motion state change or send current state
-	var isMotion bool
+	var item motionEventItem
 	hasNewEvent := false
 
 	select {
-	case m := <-sub.EventChan:
-		isMotion = m
+	case it := <-sub.EventChan:
+		item = it
 		hasNewEvent = true
-		sub.LastMotion = m
+		sub.LastMotion[it.sourceToken] = it.isMotion
 	case <-time.After(3 * time.Second):
-		isMotion = h.eventBus.GetStatus().IsMotion
-		// If status is different from last recorded, send it
-		if isMotion != sub.LastMotion {
-			hasNewEvent = true
-			sub.LastMotion = isMotion
+		h.sourcesMu.RLock()
+		for token, bus := range h.sources {
+			curr := bus.GetStatus().IsMotion
+			if sub.LastMotion[token] != curr {
+				item = motionEventItem{sourceToken: token, isMotion: curr}
+				hasNewEvent = true
+				sub.LastMotion[token] = curr
+				break
+			}
 		}
+		h.sourcesMu.RUnlock()
 	}
 
 	if !hasNewEvent {
@@ -193,8 +239,12 @@ func (h *EventHandler) pullMessages(subID string, reqXML string) string {
 	}
 
 	motionStr := "false"
-	if isMotion {
+	if item.isMotion {
 		motionStr = "true"
+	}
+	sourceToken := item.sourceToken
+	if sourceToken == "" {
+		sourceToken = "VideoSourceConfig_1"
 	}
 
 	return fmt.Sprintf(`<tev:PullMessagesResponse xmlns:tev="%s" xmlns:wsnt="%s" xmlns:tt="%s">
@@ -205,7 +255,7 @@ func (h *EventHandler) pullMessages(subID string, reqXML string) string {
     <wsnt:Message>
       <tt:Message UtcTime="%s" PropertyOperation="Changed">
         <tt:Source>
-          <tt:SimpleItem Name="VideoSourceConfigurationToken" Value="VideoSourceConfig_1"/>
+          <tt:SimpleItem Name="VideoSourceConfigurationToken" Value="%s"/>
         </tt:Source>
         <tt:Data>
           <tt:SimpleItem Name="IsMotion" Value="%s"/>
@@ -213,7 +263,7 @@ func (h *EventHandler) pullMessages(subID string, reqXML string) string {
       </tt:Message>
     </wsnt:Message>
   </wsnt:NotificationMessage>
-</tev:PullMessagesResponse>`, NS_TEV, NS_WSNT, NS_TT, now.Format(time.RFC3339), sub.ExpiresAt.Format(time.RFC3339), now.Format(time.RFC3339), motionStr)
+</tev:PullMessagesResponse>`, NS_TEV, NS_WSNT, NS_TT, now.Format(time.RFC3339), sub.ExpiresAt.Format(time.RFC3339), now.Format(time.RFC3339), sourceToken, motionStr)
 }
 
 func (h *EventHandler) renew(subID string) string {

@@ -72,3 +72,60 @@ func TestAppRunAndGracefulShutdown(t *testing.T) {
 		t.Fatal("App did not shut down gracefully within 5s")
 	}
 }
+
+func TestMultiCameraAppRunAndShutdown(t *testing.T) {
+	cfg := config.NewDefaultConfig()
+	cfg.RTSPPort = 8576
+	cfg.ONVIFPort = 8026
+	cfg.Cameras = []config.CameraConfig{
+		{
+			Name:       "Einfahrt",
+			IP:         "127.0.0.1",
+			Path:       "einfahrt",
+			Type:       "l625",
+			Resolution: "1080p",
+			AudioCodec: "aac",
+			MAC:        "00:0C:43:00:01:02",
+		},
+		{
+			Name:       "Garten",
+			IP:         "127.0.0.1",
+			Path:       "garten",
+			Type:       "l625",
+			Resolution: "720p",
+			AudioCodec: "pcmu",
+			MAC:        "00:0C:43:00:01:03",
+		},
+	}
+
+	app, err := New(cfg, "test-multicam")
+	require.NoError(t, err)
+	assert.Equal(t, 2, len(app.cameras))
+
+	// Verify RTSP streams registered
+	assert.NotNil(t, app.rtspServer.GetStream("einfahrt"))
+	assert.NotNil(t, app.rtspServer.GetStream("garten"))
+
+	// Verify ONVIF channels
+	channels := app.onvifServer.Channels()
+	assert.Equal(t, 2, len(channels))
+	assert.Equal(t, "Einfahrt", channels[0].Name)
+	assert.Equal(t, "Garten", channels[1].Name)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- app.Run(ctx)
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-errCh:
+		assert.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Multi-camera App did not shut down gracefully within 5s")
+	}
+}
+
