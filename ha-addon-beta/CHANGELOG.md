@@ -2,6 +2,15 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.5.0-beta.5
+
+### 🐛 Fix Doppelter MQTT Auto-Discovery Publish beim Start
+
+- **Pruning von unkonfigurierten Platzhalter-Geräten**:
+  - Behebt ein Problem, bei dem auf Einzelkamera-Setups beim Verbindungsaufbau zum MQTT-Broker die Auto-Discovery Entities doppelt publiziert wurden.
+  - Wenn die `DeviceID` bereits aus dem QR-Code bekannt war, verblieb ein anfänglicher Platzhalter mit technischer ID neben der regulär registrierten Kamera in der Geräte-Map.
+  - Durch explizite Kennzeichnung und zuverlässige Bereinigung wird das Auto-Discovery beim Start nun garantiert exakt einmal pro Kamera publiziert.
+
 ## 1.5.0-beta.4
 
 ### 🐛 Stabilitäts-Fixes für den Multi-Kamera-Betrieb (Issue #57)
