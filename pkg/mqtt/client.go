@@ -42,15 +42,16 @@ type Callbacks struct {
 
 // CameraDevice represents an individual camera's metadata, control hooks, and event bus for MQTT.
 type CameraDevice struct {
-	Path      string // Unique camera path identifier, e.g. "steinel-hinterhof"
-	Name      string // Friendly name, e.g. "Einfahrt" or "Garten"
-	DeviceID  string // Immutable technical ID, e.g. "de-m4yfowbr"
-	ProductID string // e.g. "pr-qtatbtbi"
-	Model     string // e.g. "L 625 CAM SC"
-	Callbacks Callbacks
-	EventBus  *events.Bus
-	nodeID    string
-	baseTopic string
+	Path          string // Unique camera path identifier, e.g. "steinel-hinterhof"
+	Name          string // Friendly name, e.g. "Einfahrt" or "Garten"
+	DeviceID      string // Immutable technical ID, e.g. "de-m4yfowbr"
+	ProductID     string // e.g. "pr-qtatbtbi"
+	Model         string // e.g. "L 625 CAM SC"
+	Callbacks     Callbacks
+	EventBus      *events.Bus
+	isPlaceholder bool
+	nodeID        string
+	baseTopic     string
 }
 
 // Key returns the internal map lookup key for the camera.
@@ -120,36 +121,22 @@ func NewClient(cfg Config, cb Callbacks, eventBus *events.Bus) *Client {
 		cameras:   make(map[string]*CameraDevice),
 	}
 
-	key := cfg.DeviceID
-	if key == "" {
-		key = "primary"
-	}
+	isPlaceholder := cb.SetLampMode == nil && cb.SetHighlight == nil && cb.SetSiren == nil && cb.SetResolution == nil
 	primaryDev := &CameraDevice{
-		Path:      key,
-		Name:      "",
-		DeviceID:  cfg.DeviceID,
-		ProductID: cfg.ProductID,
-		Model:     cfg.Model,
-		Callbacks: cb,
-		EventBus:  eventBus,
-		nodeID:    nodeID,
-		baseTopic: fullBaseTopic,
+		Path:          "",
+		Name:          "",
+		DeviceID:      cfg.DeviceID,
+		ProductID:     cfg.ProductID,
+		Model:         cfg.Model,
+		Callbacks:     cb,
+		EventBus:      eventBus,
+		isPlaceholder: isPlaceholder,
+		nodeID:        nodeID,
+		baseTopic:     fullBaseTopic,
 	}
-	c.cameras[key] = primaryDev
+	c.cameras["primary"] = primaryDev
 
 	return c
-}
-
-func isPlaceholderDevice(dev *CameraDevice) bool {
-	if dev == nil {
-		return false
-	}
-	return (dev.Path == "primary" || dev.Path == "") &&
-		dev.Name == "" &&
-		dev.Callbacks.SetLampMode == nil &&
-		dev.Callbacks.SetHighlight == nil &&
-		dev.Callbacks.SetSiren == nil &&
-		dev.Callbacks.SetResolution == nil
 }
 
 // RegisterCamera registers an additional camera device on the MQTT client.
@@ -180,13 +167,10 @@ func (c *Client) RegisterCamera(dev CameraDevice) {
 	camKey := dev.Key()
 
 	c.camerasMu.Lock()
-	// If the cameras map only contains the unconfigured placeholder from NewClient,
-	// clean it up so we don't have a zombie device.
-	if len(c.cameras) == 1 {
-		for k, existing := range c.cameras {
-			if isPlaceholderDevice(existing) {
-				delete(c.cameras, k)
-			}
+	// Clean up any unconfigured placeholder from NewClient so we don't have duplicate devices
+	for k, existing := range c.cameras {
+		if existing.isPlaceholder {
+			delete(c.cameras, k)
 		}
 	}
 	c.cameras[camKey] = &camCopy
@@ -278,6 +262,13 @@ func (c *Client) UpdateCameraDeviceInfo(cameraPath, deviceID, productID string) 
 		if dev, ok := c.cameras[primaryDID]; ok {
 			targetDev = dev
 			targetKey = primaryDID
+		}
+		if targetDev == nil {
+			for k, dev := range c.cameras {
+				targetDev = dev
+				targetKey = k
+				break
+			}
 		}
 	}
 

@@ -280,3 +280,31 @@ func TestUpdateCameraDeviceInfo_MultiCam(t *testing.T) {
 	assert.Equal(t, "Steinel Haustür", FormatDisplayName(cam3.Model, cam3.DeviceID, cam3.Name))
 	c.camerasMu.RUnlock()
 }
+
+func TestSingleCamera_NoDuplicateDiscovery(t *testing.T) {
+	// Replicates the exact initialization in app.go for a single camera with known DeviceID
+	c := NewClient(Config{
+		TopicPrefix: "steinel",
+		DeviceID:    "de-m4yfowbr",
+	}, Callbacks{}, nil)
+
+	// In app.go, camera 0 is registered via RegisterCamera with its path (e.g. "steinel")
+	c.RegisterCamera(CameraDevice{
+		Path:      "steinel",
+		Name:      "",
+		DeviceID:  "de-m4yfowbr",
+		Model:     "L 625 CAM SC",
+		Callbacks: Callbacks{SetLampMode: func(string) error { return nil }},
+	})
+
+	// Must contain exactly 1 camera, NOT 2 (prevent duplicate discovery on connect)
+	c.camerasMu.RLock()
+	assert.Equal(t, 1, len(c.cameras), "Expected exactly 1 camera device in map, got %d", len(c.cameras))
+	cam := c.cameras["steinel"]
+	c.camerasMu.RUnlock()
+
+	assert.NotNil(t, cam)
+	assert.Equal(t, "de-m4yfowbr", cam.DeviceID)
+	assert.Equal(t, "steinel_de_m4yfowbr", cam.nodeID)
+	assert.Equal(t, "steinel/de-m4yfowbr", cam.baseTopic)
+}
