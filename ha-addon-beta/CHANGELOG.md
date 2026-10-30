@@ -2,6 +2,20 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.5.0-beta.6
+
+### 🚀 Nativer Sofia Video Ingest über Port 34567 für Steinel L 620 CAM (Issue #56)
+
+- **Natives H.264 Video-Streaming über Port 34567**:
+  - Direkter Empfang des Videostroms über das native Xiongmai Sofia/NetIP-Protokoll (`OPMonitor` MsgID 1410 / 1412).
+  - Vollständige Unabhängigkeit vom internen Kamera-RTSP-Port 554, der auf älteren Steinel L 620 CAM Firmware-Ständen (z. B. 2019er `V4.03.R12`) dauerhaft geschlossen ist.
+  - Zuverlässiges Demuxing von I-Frames (`00 00 01 FC`), P-Frames (`00 00 01 FD`) und Fortsetzungs-Chunks sowie RFC 6184 konforme RTP-Packetierung.
+- **Behebung des RSA-Login-Fehlers 124**:
+  - Korrektur der Authentifizierung via `LoginType: "DVRIP-Xm030"` mit Plaintext-Outer-JSON und RSA-PKCS#1-v1.5-Verschlüsselung des 8-stelligen Sofia-Hashes (`PassWord`) sowie des 16-stelligen Sitzungsschlüssels (`CommunicateKey`).
+- **Stabiler Dauerbetrieb & Bereinigung**:
+  - Heartbeat-Intervall auf 15 Sekunden angepasst (für das 20-Sekunden `AliveInterval` der Kamera).
+  - Entfernung überflüssiger `NetWork.RTSP` (1042) Aktivierungsbefehle beim Verbindungsaufbau.
+
 ## 1.5.0-beta.5
 
 ### 🐛 Fix Doppelter MQTT Auto-Discovery Publish beim Start
