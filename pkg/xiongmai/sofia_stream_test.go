@@ -166,7 +166,7 @@ func TestSofiaStreamLifecycle(t *testing.T) {
 
 								// 1. Send I-Frame Packet: 16-byte record header + SPS + PPS + IDR
 								var iFramePayload []byte
-								iFramePayload = append(iFramePayload, MarkerIFrame...) // 4 bytes
+								iFramePayload = append(iFramePayload, MarkerIFrame...)     // 4 bytes
 								iFramePayload = append(iFramePayload, make([]byte, 12)...) // 12 bytes pad -> 16 bytes total
 								iFramePayload = append(iFramePayload, spsNalu...)
 								iFramePayload = append(iFramePayload, ppsNalu...)
@@ -198,7 +198,7 @@ func TestSofiaStreamLifecycle(t *testing.T) {
 
 								// 3. Send P-Frame Packet: 8-byte record header + P-frame NALU (flushes the I-frame)
 								var pFramePayload []byte
-								pFramePayload = append(pFramePayload, MarkerPFrame...) // 4 bytes
+								pFramePayload = append(pFramePayload, MarkerPFrame...)    // 4 bytes
 								pFramePayload = append(pFramePayload, make([]byte, 4)...) // 4 bytes pad -> 8 bytes total
 								pFramePayload = append(pFramePayload, pNalu...)
 
