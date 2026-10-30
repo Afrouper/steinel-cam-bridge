@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Afrouper/steinel-cam-bridge/pkg/audio/internal/aac"
 	"github.com/bluenviron/mediacommon/pkg/codecs/mpeg4audio"
-	"github.com/gen2brain/aac-go"
 )
 
 const (

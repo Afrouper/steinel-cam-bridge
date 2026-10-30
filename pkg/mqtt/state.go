@@ -32,6 +32,7 @@ func (c *Client) PublishRecordingEvent(item storage.RecordingItem) {
 		c.camerasMu.RLock()
 		for _, dev := range c.cameras {
 			if strings.EqualFold(dev.DeviceID, item.Camera) ||
+				strings.EqualFold(dev.Path, item.Camera) ||
 				strings.EqualFold(dev.Name, item.Camera) ||
 				strings.EqualFold(dev.nodeID, item.Camera) {
 				targetBaseTopic = dev.baseTopic
@@ -76,6 +77,12 @@ func (c *Client) PublishRecordingEvent(item storage.RecordingItem) {
 func (c *Client) publishMotion(isMotion bool) {
 	c.camerasMu.RLock()
 	dev := c.cameras[c.cfg.DeviceID]
+	if dev == nil {
+		for _, d := range c.cameras {
+			dev = d
+			break
+		}
+	}
 	c.camerasMu.RUnlock()
 
 	if dev != nil {
@@ -106,6 +113,12 @@ func (c *Client) publishDeviceMotion(dev *CameraDevice, isMotion bool) {
 func (c *Client) publishStatus(st events.DeviceStatus) {
 	c.camerasMu.RLock()
 	dev := c.cameras[c.cfg.DeviceID]
+	if dev == nil {
+		for _, d := range c.cameras {
+			dev = d
+			break
+		}
+	}
 	c.camerasMu.RUnlock()
 
 	if dev != nil {

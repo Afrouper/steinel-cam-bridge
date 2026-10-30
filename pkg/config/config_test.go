@@ -388,6 +388,20 @@ func TestMultiCam_DuplicateValidation(t *testing.T) {
 	assert.Contains(t, err.Error(), "duplicate MAC address")
 }
 
+func TestMultiCam_DerivedKeyPath(t *testing.T) {
+	cfg := NewDefaultConfig()
+	cfg.NabtoConfig.KeyPath = "/data/client.key"
+	cfg.Cameras = []CameraConfig{
+		{Name: "Cam 1", IP: "192.168.1.101", Path: "cam1"},
+		{Name: "Cam 2", IP: "192.168.1.102", Path: "cam2"},
+	}
+	err := cfg.Validate()
+	require.NoError(t, err)
+
+	assert.Equal(t, "/data/client.key", cfg.Cameras[0].Nabto.KeyPath)
+	assert.Equal(t, "/data/cam2_client.key", cfg.Cameras[1].Nabto.KeyPath)
+}
+
 func TestSingleCam_DefaultNameRemainsEmpty(t *testing.T) {
 	cfg := NewDefaultConfig()
 	cfg.NabtoConfig.CameraIP = "192.168.1.50"

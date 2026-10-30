@@ -10,26 +10,6 @@ import (
 	paho "github.com/eclipse/paho.mqtt.golang"
 )
 
-// publishDiscovery registers all Home Assistant MQTT Auto-Discovery entities for the primary device.
-func (c *Client) publishDiscovery(client paho.Client) {
-	c.camerasMu.RLock()
-	primaryDev := c.cameras[c.cfg.DeviceID]
-	c.camerasMu.RUnlock()
-
-	if primaryDev != nil {
-		c.publishDeviceDiscovery(client, primaryDev)
-	} else {
-		dev := &CameraDevice{
-			Name:      "",
-			DeviceID:  c.cfg.DeviceID,
-			Model:     c.cfg.Model,
-			nodeID:    c.nodeID,
-			baseTopic: c.baseTopic,
-		}
-		c.publishDeviceDiscovery(client, dev)
-	}
-}
-
 // FormatDisplayName formats the user-facing device display name for Home Assistant.
 func FormatDisplayName(model, deviceID, name string) string {
 	if name != "" {

@@ -42,6 +42,7 @@ type Callbacks struct {
 
 // CameraDevice represents an individual camera's metadata, control hooks, and event bus for MQTT.
 type CameraDevice struct {
+	Path      string // Unique camera path identifier, e.g. "steinel-hinterhof"
 	Name      string // Friendly name, e.g. "Einfahrt" or "Garten"
 	DeviceID  string // Immutable technical ID, e.g. "de-m4yfowbr"
 	ProductID string // e.g. "pr-qtatbtbi"
@@ -50,6 +51,17 @@ type CameraDevice struct {
 	EventBus  *events.Bus
 	nodeID    string
 	baseTopic string
+}
+
+// Key returns the internal map lookup key for the camera.
+func (d *CameraDevice) Key() string {
+	if d.Path != "" {
+		return d.Path
+	}
+	if d.DeviceID != "" {
+		return d.DeviceID
+	}
+	return "primary"
 }
 
 // Client manages the MQTT connection, Home Assistant discovery, state publishing, and command reception.
@@ -108,7 +120,12 @@ func NewClient(cfg Config, cb Callbacks, eventBus *events.Bus) *Client {
 		cameras:   make(map[string]*CameraDevice),
 	}
 
+	key := cfg.DeviceID
+	if key == "" {
+		key = "primary"
+	}
 	primaryDev := &CameraDevice{
+		Path:      key,
 		Name:      "",
 		DeviceID:  cfg.DeviceID,
 		ProductID: cfg.ProductID,
@@ -118,9 +135,21 @@ func NewClient(cfg Config, cb Callbacks, eventBus *events.Bus) *Client {
 		nodeID:    nodeID,
 		baseTopic: fullBaseTopic,
 	}
-	c.cameras[cfg.DeviceID] = primaryDev
+	c.cameras[key] = primaryDev
 
 	return c
+}
+
+func isPlaceholderDevice(dev *CameraDevice) bool {
+	if dev == nil {
+		return false
+	}
+	return (dev.Path == "primary" || dev.Path == "") &&
+		dev.Name == "" &&
+		dev.Callbacks.SetLampMode == nil &&
+		dev.Callbacks.SetHighlight == nil &&
+		dev.Callbacks.SetSiren == nil &&
+		dev.Callbacks.SetResolution == nil
 }
 
 // RegisterCamera registers an additional camera device on the MQTT client.
@@ -128,25 +157,39 @@ func (c *Client) RegisterCamera(dev CameraDevice) {
 	if dev.Model == "" {
 		dev.Model = "L 625 CAM SC"
 	}
-	cleanDID := strings.ReplaceAll(dev.DeviceID, "-", "_")
-	if cleanDID == "" {
-		cleanDID = "camera"
-	}
-	dev.nodeID = fmt.Sprintf("steinel_%s", cleanDID)
 
 	basePrefix := strings.TrimSuffix(c.cfg.TopicPrefix, "/")
 	if basePrefix == "" {
 		basePrefix = "steinel"
 	}
+
 	if dev.DeviceID != "" {
+		cleanDID := strings.ReplaceAll(dev.DeviceID, "-", "_")
+		dev.nodeID = fmt.Sprintf("steinel_%s", cleanDID)
 		dev.baseTopic = fmt.Sprintf("%s/%s", basePrefix, dev.DeviceID)
+	} else if dev.Path != "" {
+		cleanPath := strings.ReplaceAll(dev.Path, "-", "_")
+		dev.nodeID = fmt.Sprintf("steinel_%s", cleanPath)
+		dev.baseTopic = fmt.Sprintf("%s/%s", basePrefix, dev.Path)
 	} else {
-		dev.baseTopic = fmt.Sprintf("%s/%s", basePrefix, cleanDID)
+		dev.nodeID = "steinel_camera"
+		dev.baseTopic = fmt.Sprintf("%s/camera", basePrefix)
 	}
 
 	camCopy := dev
+	camKey := dev.Key()
+
 	c.camerasMu.Lock()
-	c.cameras[dev.DeviceID] = &camCopy
+	// If the cameras map only contains the unconfigured placeholder from NewClient,
+	// clean it up so we don't have a zombie device.
+	if len(c.cameras) == 1 {
+		for k, existing := range c.cameras {
+			if isPlaceholderDevice(existing) {
+				delete(c.cameras, k)
+			}
+		}
+	}
+	c.cameras[camKey] = &camCopy
 	c.camerasMu.Unlock()
 
 	c.mu.RLock()
@@ -194,48 +237,124 @@ func (c *Client) RegisterCamera(dev CameraDevice) {
 	}
 }
 
-// UpdateDeviceInfo updates the device identifiers and re-publishes discovery & availability.
-func (c *Client) UpdateDeviceInfo(deviceID, productID string) {
-	c.mu.Lock()
-	if deviceID == "" || c.cfg.DeviceID == deviceID {
-		c.mu.Unlock()
+// UpdateCameraDeviceInfo updates the device identifiers for a specific camera (identified by cameraPath or deviceID)
+// and re-publishes discovery & availability for that camera only.
+func (c *Client) UpdateCameraDeviceInfo(cameraPath, deviceID, productID string) {
+	if deviceID == "" {
 		return
 	}
-	oldID := c.cfg.DeviceID
-	logger.Info("MQTT", "🔄 Updating DeviceID: '%s' -> '%s'", oldID, deviceID)
-	c.cfg.DeviceID = deviceID
+
+	c.camerasMu.Lock()
+	defer c.camerasMu.Unlock()
+
+	var targetDev *CameraDevice
+	var targetKey string
+
+	// 1. Try finding by cameraPath
+	if cameraPath != "" {
+		if dev, ok := c.cameras[cameraPath]; ok {
+			targetDev = dev
+			targetKey = cameraPath
+		}
+	}
+
+	// 2. Fallback search by Path, DeviceID, or Name
+	if targetDev == nil {
+		for k, dev := range c.cameras {
+			if (cameraPath != "" && (dev.Path == cameraPath || dev.DeviceID == cameraPath || dev.Name == cameraPath)) ||
+				(cameraPath == "" && len(c.cameras) == 1) {
+				targetDev = dev
+				targetKey = k
+				break
+			}
+		}
+	}
+
+	// 3. Fallback to primary camera if still not found and cameraPath matches primary or is empty
+	if targetDev == nil && (cameraPath == "" || cameraPath == "primary") {
+		c.mu.RLock()
+		primaryDID := c.cfg.DeviceID
+		c.mu.RUnlock()
+		if dev, ok := c.cameras[primaryDID]; ok {
+			targetDev = dev
+			targetKey = primaryDID
+		}
+	}
+
+	if targetDev == nil {
+		logger.Warn("MQTT", "⚠️ Cannot update DeviceID '%s': camera '%s' not found", deviceID, cameraPath)
+		return
+	}
+
+	// If already up to date, nothing to do
+	if targetDev.DeviceID == deviceID && (productID == "" || targetDev.ProductID == productID) {
+		return
+	}
+
+	oldDID := targetDev.DeviceID
+	oldBaseTopic := targetDev.baseTopic
+	camName := targetDev.Name
+	if camName == "" {
+		camName = targetDev.Path
+	}
+	logger.Info("MQTT", "🔄 Updating DeviceID for '%s' (%s): '%s' -> '%s'", camName, targetDev.Path, oldDID, deviceID)
+
+	targetDev.DeviceID = deviceID
 	if productID != "" {
-		c.cfg.ProductID = productID
+		targetDev.ProductID = productID
 	}
 	cleanDID := strings.ReplaceAll(deviceID, "-", "_")
-	c.nodeID = fmt.Sprintf("steinel_%s", cleanDID)
+	targetDev.nodeID = fmt.Sprintf("steinel_%s", cleanDID)
+
 	basePrefix := strings.TrimSuffix(c.cfg.TopicPrefix, "/")
 	if basePrefix == "" {
 		basePrefix = "steinel"
 	}
-	c.baseTopic = fmt.Sprintf("%s/%s", basePrefix, deviceID)
+	targetDev.baseTopic = fmt.Sprintf("%s/%s", basePrefix, deviceID)
+
+	// Update client-level identifiers if this is the primary camera
+	c.mu.Lock()
+	if c.cfg.DeviceID == "" || c.cfg.DeviceID == oldDID || c.cfg.DeviceID == targetKey {
+		c.cfg.DeviceID = deviceID
+		if productID != "" {
+			c.cfg.ProductID = productID
+		}
+		c.nodeID = targetDev.nodeID
+		c.baseTopic = targetDev.baseTopic
+	}
 	cl := c.client
 	c.mu.Unlock()
 
-	c.camerasMu.Lock()
-	if dev, ok := c.cameras[oldID]; ok {
-		delete(c.cameras, oldID)
-		dev.DeviceID = deviceID
-		if productID != "" {
-			dev.ProductID = productID
-		}
-		dev.nodeID = c.nodeID
-		dev.baseTopic = c.baseTopic
-		c.cameras[deviceID] = dev
-	}
-	c.camerasMu.Unlock()
-
+	// If connected, update MQTT subscriptions and publish discovery
 	if cl != nil && cl.IsConnected() {
-		availTopic := fmt.Sprintf("%s/availability", c.baseTopic)
+		if oldBaseTopic != "" && oldBaseTopic != targetDev.baseTopic {
+			cl.Unsubscribe(fmt.Sprintf("%s/+/set", oldBaseTopic), fmt.Sprintf("%s/light/brightness/set", oldBaseTopic))
+			cl.Publish(fmt.Sprintf("%s/availability", oldBaseTopic), 1, true, "offline")
+		}
+
+		availTopic := fmt.Sprintf("%s/availability", targetDev.baseTopic)
 		cl.Publish(availTopic, 1, true, "online")
-		c.publishDiscovery(cl)
-		c.publishStatus(c.eventBus.GetStatus())
+
+		c.publishDeviceDiscovery(cl, targetDev)
+
+		cmdFilter := fmt.Sprintf("%s/+/set", targetDev.baseTopic)
+		cl.Subscribe(cmdFilter, 1, c.handleCommand)
+		brightnessCmd := fmt.Sprintf("%s/light/brightness/set", targetDev.baseTopic)
+		cl.Subscribe(brightnessCmd, 1, c.handleCommand)
+
+		if targetDev.EventBus != nil {
+			st := targetDev.EventBus.GetStatus()
+			if st.LampMode > 0 || st.Lux >= 2 || st.Highlight > 0 {
+				c.publishDeviceStatus(targetDev, st)
+			}
+		}
 	}
+}
+
+// UpdateDeviceInfo updates the primary camera device identifiers and re-publishes discovery & availability.
+// Maintained for backward compatibility.
+func (c *Client) UpdateDeviceInfo(deviceID, productID string) {
+	c.UpdateCameraDeviceInfo("", deviceID, productID)
 }
 
 // Start connects to the MQTT broker, configures LWT, subscribes to commands, and publishes initial discovery & state.

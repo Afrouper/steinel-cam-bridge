@@ -15,6 +15,7 @@ import (
 	"math/big"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -98,6 +99,9 @@ func (c *Client) LoadOrGenerateKey() (*ecdsa.PrivateKey, bool, error) {
 			Type:  "EC PRIVATE KEY",
 			Bytes: der,
 		})
+		if dir := filepath.Dir(c.cfg.KeyPath); dir != "" && dir != "." {
+			_ = os.MkdirAll(dir, 0755)
+		}
 		_ = os.WriteFile(c.cfg.KeyPath, pemBytes, 0600)
 	}
 

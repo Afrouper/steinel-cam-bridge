@@ -731,7 +731,11 @@ func (c *Config) Validate() error {
 				if i == 0 && c.NabtoConfig.KeyPath != "" {
 					keyPath = c.NabtoConfig.KeyPath
 				} else {
-					keyPath = fmt.Sprintf("data/%s_client.key", cam.Path)
+					baseDir := "data"
+					if c.NabtoConfig != nil && c.NabtoConfig.KeyPath != "" {
+						baseDir = filepath.Dir(c.NabtoConfig.KeyPath)
+					}
+					keyPath = filepath.Join(baseDir, fmt.Sprintf("%s_client.key", cam.Path))
 				}
 			}
 			cam.Nabto = &nabto.Config{

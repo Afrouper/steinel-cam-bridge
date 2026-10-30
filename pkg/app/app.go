@@ -170,7 +170,7 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 		// Recording Syncer
 		var onNewRec func(storage.RecordingItem)
 		if mqttClient != nil {
-			camID := cam.Name
+			camID := cam.Path
 			if cam.Nabto != nil && cam.Nabto.DeviceID != "" {
 				camID = cam.Nabto.DeviceID
 			}
@@ -203,6 +203,7 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 				camPID = cam.Nabto.ProductID
 			}
 			mqttClient.RegisterCamera(mqtt.CameraDevice{
+				Path:      cam.Path,
 				Name:      cam.Name,
 				DeviceID:  camDID,
 				ProductID: camPID,
@@ -224,9 +225,10 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 
 		// Camera Driver
 		camCfg := cfg.ForCamera(cam)
+		camPath := cam.Path
 		onDeviceDiscovered := func(deviceID, productID string) {
 			if mqttClient != nil {
-				mqttClient.UpdateDeviceInfo(deviceID, productID)
+				mqttClient.UpdateCameraDeviceInfo(camPath, deviceID, productID)
 			}
 		}
 

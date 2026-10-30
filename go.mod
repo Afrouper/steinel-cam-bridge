@@ -6,7 +6,6 @@ require (
 	github.com/bluenviron/gortsplib/v4 v4.11.2
 	github.com/bluenviron/mediacommon v1.13.1
 	github.com/eclipse/paho.mqtt.golang v1.5.1
-	github.com/gen2brain/aac-go v0.0.0-20230119102159-ef1e76509d21
 	github.com/google/uuid v1.6.0
 	github.com/pion/dtls/v3 v3.1.15
 	github.com/pion/rtcp v1.2.19

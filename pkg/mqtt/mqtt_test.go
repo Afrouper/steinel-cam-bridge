@@ -196,3 +196,87 @@ func TestFormatDisplayName(t *testing.T) {
 	assert.Equal(t, "Steinel Garten", FormatDisplayName("L 620 CAM", "steinel-l620", "Steinel Garten"))
 	assert.Equal(t, "steinel terrasse", FormatDisplayName("L 620 CAM", "steinel-l620", "steinel terrasse"))
 }
+
+func TestUpdateCameraDeviceInfo_MultiCam(t *testing.T) {
+	c := NewClient(Config{
+		TopicPrefix: "steinel",
+	}, Callbacks{}, nil)
+
+	// Register 3 cameras with empty DeviceID (before Nabto P2P discovery)
+	c.RegisterCamera(CameraDevice{
+		Path:  "steinel-hinterhof",
+		Name:  "Hinterhof",
+		Model: "L 625 CAM SC",
+	})
+	c.RegisterCamera(CameraDevice{
+		Path:  "steinel-einfahrt",
+		Name:  "Einfahrt",
+		Model: "L 625 CAM SC",
+	})
+	c.RegisterCamera(CameraDevice{
+		Path:  "steinel-haustuer",
+		Name:  "Haustür",
+		Model: "L 625 CAM SC",
+	})
+
+	// Verify all 3 cameras are registered independently in the map
+	c.camerasMu.RLock()
+	assert.Equal(t, 3, len(c.cameras))
+	cam1 := c.cameras["steinel-hinterhof"]
+	cam2 := c.cameras["steinel-einfahrt"]
+	cam3 := c.cameras["steinel-haustuer"]
+	c.camerasMu.RUnlock()
+
+	assert.NotNil(t, cam1)
+	assert.NotNil(t, cam2)
+	assert.NotNil(t, cam3)
+	assert.Equal(t, "Hinterhof", cam1.Name)
+	assert.Equal(t, "Einfahrt", cam2.Name)
+	assert.Equal(t, "Haustür", cam3.Name)
+
+	// Update Camera 1
+	c.UpdateCameraDeviceInfo("steinel-hinterhof", "de-tq8d2vve", "pr-qtatbtbi")
+
+	// Verify Camera 1 updated, but Camera 2 and Camera 3 remain untouched
+	c.camerasMu.RLock()
+	assert.Equal(t, "de-tq8d2vve", cam1.DeviceID)
+	assert.Equal(t, "steinel_de_tq8d2vve", cam1.nodeID)
+	assert.Equal(t, "steinel/de-tq8d2vve", cam1.baseTopic)
+	assert.Equal(t, "Hinterhof", cam1.Name)
+
+	assert.Equal(t, "", cam2.DeviceID)
+	assert.Equal(t, "Einfahrt", cam2.Name)
+	assert.Equal(t, "", cam3.DeviceID)
+	assert.Equal(t, "Haustür", cam3.Name)
+	c.camerasMu.RUnlock()
+
+	// Update Camera 2
+	c.UpdateCameraDeviceInfo("steinel-einfahrt", "de-z5f8hvyx", "pr-qtatbtbi")
+
+	c.camerasMu.RLock()
+	assert.Equal(t, "de-z5f8hvyx", cam2.DeviceID)
+	assert.Equal(t, "steinel_de_z5f8hvyx", cam2.nodeID)
+	assert.Equal(t, "steinel/de-z5f8hvyx", cam2.baseTopic)
+	assert.Equal(t, "Einfahrt", cam2.Name)
+
+	// Ensure Camera 1 was NOT overwritten by Camera 2
+	assert.Equal(t, "de-tq8d2vve", cam1.DeviceID)
+	assert.Equal(t, "steinel/de-tq8d2vve", cam1.baseTopic)
+	assert.Equal(t, "Hinterhof", cam1.Name)
+	c.camerasMu.RUnlock()
+
+	// Update Camera 3
+	c.UpdateCameraDeviceInfo("steinel-haustuer", "de-e3dftz9a", "pr-qtatbtbi")
+
+	c.camerasMu.RLock()
+	assert.Equal(t, "de-e3dftz9a", cam3.DeviceID)
+	assert.Equal(t, "steinel_de_e3dftz9a", cam3.nodeID)
+	assert.Equal(t, "steinel/de-e3dftz9a", cam3.baseTopic)
+	assert.Equal(t, "Haustür", cam3.Name)
+
+	// Check display names
+	assert.Equal(t, "Steinel Hinterhof", FormatDisplayName(cam1.Model, cam1.DeviceID, cam1.Name))
+	assert.Equal(t, "Steinel Einfahrt", FormatDisplayName(cam2.Model, cam2.DeviceID, cam2.Name))
+	assert.Equal(t, "Steinel Haustür", FormatDisplayName(cam3.Model, cam3.DeviceID, cam3.Name))
+	c.camerasMu.RUnlock()
+}
