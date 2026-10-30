@@ -5,7 +5,6 @@ triggers:
   - glob: "**/*"
 permissions:
   allow:
-    # --- Go & CGO Befehle (direkt ohne Env-Variablen) ---
     - "command(regex:^go (test|build|run|doc|version|vet|get|list|clean|tool|env).*)"
     - "command(regex:^go mod (tidy|download|verify|vendor|graph|why|edit).*)"
     - "command(regex:^go mod.*)"
@@ -13,13 +12,9 @@ permissions:
     - "command(gofmt)"
     - "command(regex:^gofmt .*)"
     - "command(regex:^golangci-lint.*)"
-
-    # --- Go Befehle mit vorangestelltem Library-Pfad (DYLD_LIBRARY_PATH, DYNLIB_PATH, LD_LIBRARY_PATH) ---
     - "command(regex:^(DYLD_LIBRARY_PATH|DYNLIB_PATH|LD_LIBRARY_PATH)=.+go (test|build|run|doc|version|vet|get|list).*)"
-    - "command(regex:^(DYLD_LIBRARY_PATH|DYNLIB_PATH|LD_LIBRARY_PATH)="(\$\(pwd\)|\`pwd\`|[^\s"]+)"\s+go (test|build|run|doc|version|vet|get|list).*)"
-
-    # --- Go Befehle mit CGO-Flags oder kombinierten Umgebungsvariablen ---
-    - "command(regex:^(env\s+)?([A-Za-z0-9_]+=[^\s]+\s+)*go (test|build|run|doc|version|vet|get|list|mod|fmt).*)"
+    - 'command(regex:^(DYLD_LIBRARY_PATH|DYNLIB_PATH|LD_LIBRARY_PATH)="(\$(pwd)|`pwd`|[^\s"]+)"\s+go (test|build|run|doc|version|vet|get|list).*)'
+    - 'command(regex:^(env\s+)?([A-Za-z0-9_]+=[^\s]+\s+)*go (test|build|run|doc|version|vet|get|list|mod|fmt).*)'
     - "command(regex:^.*go (test|build|doc|version|vet|get|list|run).*)"
 ---
 
