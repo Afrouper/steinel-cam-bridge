@@ -17,20 +17,20 @@ import (
 
 // Driver implements the Steinel Camera Driver for Generation 1 devices (Steinel L 620 CAM / XLED CAM 1).
 type Driver struct {
-	cameraIP   string
-	user       string
-	password   string
-	resolution string
-	rtspServer *rtsp.Server
-	eventBus   *events.Bus
+	cameraIP    string
+	user        string
+	password    string
+	resolution  string
+	rtspServer  *rtsp.Server
+	eventBus    *events.Bus
 	client      *Client
 	sofiaStream *SofiaStream
 	ingest      *RTSPIngest
 	talk        *TalkClient
-	sdcard     *SDCardManager
-	mu         sync.Mutex
-	running    bool
-	closeChan  chan struct{}
+	sdcard      *SDCardManager
+	mu          sync.Mutex
+	running     bool
+	closeChan   chan struct{}
 }
 
 // NewDriver creates a new driver instance for a Steinel L 620 CAM.

@@ -443,9 +443,9 @@ func (c *Client) loginRSALocked(claim *MonitorClaimResp) error {
 				MsgLoginReq, MsgLoginReq, c.sequence+1, i+1, len(pwdCandidates), cand.label, cleanUser, cand.loginType)
 			respData, respHdr, err = c.sendRawPacketWithHeaderLocked(MsgLoginReq, 0x00, 0x00, 0x00000000, innerJSON)
 		} else {
-			ciphertext, err := encryptAES128CBC([]byte(DefaultSofiaAESKey), innerJSON)
-			if err != nil {
-				return fmt.Errorf("failed to AES encrypt login payload: %w", err)
+			ciphertext, encErr := encryptAES128CBC([]byte(DefaultSofiaAESKey), innerJSON)
+			if encErr != nil {
+				return fmt.Errorf("failed to AES encrypt login payload: %w", encErr)
 			}
 			b64Payload := []byte(base64.StdEncoding.EncodeToString(ciphertext))
 			logger.Trace("Xiongmai", "-> Sofia MsgID: %d (0x%04X), Seq: %d [RSA Candidate #%d/%d: %s (User: %s, LoginType: %s, AES Outer)]",
