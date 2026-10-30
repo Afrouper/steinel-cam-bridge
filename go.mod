@@ -10,7 +10,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/pion/dtls/v3 v3.1.15
 	github.com/pion/rtcp v1.2.19
-	github.com/pion/rtp v1.10.5
+	github.com/pion/rtp v1.10.6
 	github.com/pion/webrtc/v4 v4.2.24
 	github.com/stretchr/testify v1.12.1
 	github.com/zaf/g711 v1.4.0
