@@ -738,23 +738,28 @@ func TestAdaptiveRSALogin(t *testing.T) {
 				_, _ = conn.Write(append(respHdr.Encode(), respPayloadWithTerm...))
 
 			case MsgLoginReq: // 1000
-				cleanB64 := strings.TrimRight(string(payload), "\x00\r\n ")
-				cipherBytes, decErr := base64.StdEncoding.DecodeString(cleanB64)
-				if decErr != nil {
-					return
-				}
-				plainJSON, decErr := decryptAES128CBC([]byte(DefaultSofiaAESKey), cipherBytes)
-				if decErr != nil {
-					return
-				}
-
 				var req LoginReq
-				if err := json.Unmarshal(plainJSON, &req); err != nil {
-					return
+				cleanPayload := strings.TrimRight(string(payload), "\x00\r\n ")
+				if strings.HasPrefix(cleanPayload, "{") {
+					if err := json.Unmarshal([]byte(cleanPayload), &req); err != nil {
+						return
+					}
+				} else {
+					cipherBytes, decErr := base64.StdEncoding.DecodeString(cleanPayload)
+					if decErr != nil {
+						return
+					}
+					plainJSON, decErr := decryptAES128CBC([]byte(DefaultSofiaAESKey), cipherBytes)
+					if decErr != nil {
+						return
+					}
+					if err := json.Unmarshal(plainJSON, &req); err != nil {
+						return
+					}
 				}
 
-				// Validate that request uses RSA-encrypted fields and LoginType DVRIP-FutureHome
-				if req.LoginType != "DVRIP-FutureHome" || req.EncryptType != "MD5" {
+				// Validate that request uses RSA-encrypted fields and LoginType DVRIP-FutureHome or DVRIP-Xm030
+				if (req.LoginType != "DVRIP-FutureHome" && req.LoginType != "DVRIP-Xm030") || req.EncryptType != "MD5" {
 					return
 				}
 
@@ -920,19 +925,24 @@ func TestAdaptiveRSALoginCandidatesFallback(t *testing.T) {
 				_, _ = conn.Write(append(respHdr.Encode(), respPayloadWithTerm...))
 
 			case MsgLoginReq: // 1000
-				cleanB64 := strings.TrimRight(string(payload), "\x00\r\n ")
-				cipherBytes, decErr := base64.StdEncoding.DecodeString(cleanB64)
-				if decErr != nil {
-					return
-				}
-				plainJSON, decErr := decryptAES128CBC([]byte(DefaultSofiaAESKey), cipherBytes)
-				if decErr != nil {
-					return
-				}
-
 				var req LoginReq
-				if err := json.Unmarshal(plainJSON, &req); err != nil {
-					return
+				cleanPayload := strings.TrimRight(string(payload), "\x00\r\n ")
+				if strings.HasPrefix(cleanPayload, "{") {
+					if err := json.Unmarshal([]byte(cleanPayload), &req); err != nil {
+						return
+					}
+				} else {
+					cipherBytes, decErr := base64.StdEncoding.DecodeString(cleanPayload)
+					if decErr != nil {
+						return
+					}
+					plainJSON, decErr := decryptAES128CBC([]byte(DefaultSofiaAESKey), cipherBytes)
+					if decErr != nil {
+						return
+					}
+					if err := json.Unmarshal(plainJSON, &req); err != nil {
+						return
+					}
 				}
 
 				// Decrypt CommunicateKey and verify it is a 16-char alphanumeric string
@@ -1173,11 +1183,14 @@ func TestEncryptedPostLoginControlMessages(t *testing.T) {
 				_, _ = conn.Write(append(respHdr.Encode(), respPayloadWithTerm...))
 
 			case MsgLoginReq: // 1000
-				cipherBytes, _ := base64.StdEncoding.DecodeString(cleanPayload)
-				plainJSON, _ := decryptAES128CBC([]byte(DefaultSofiaAESKey), cipherBytes)
-
 				var req LoginReq
-				_ = json.Unmarshal(plainJSON, &req)
+				if strings.HasPrefix(cleanPayload, "{") {
+					_ = json.Unmarshal([]byte(cleanPayload), &req)
+				} else {
+					cipherBytes, _ := base64.StdEncoding.DecodeString(cleanPayload)
+					plainJSON, _ := decryptAES128CBC([]byte(DefaultSofiaAESKey), cipherBytes)
+					_ = json.Unmarshal(plainJSON, &req)
+				}
 
 				commCipher, _ := hex.DecodeString(req.CommunicateKey)
 				//nolint:staticcheck // Mock server decrypting RSA_V1.5 in test

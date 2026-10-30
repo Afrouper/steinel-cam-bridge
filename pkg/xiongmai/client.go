@@ -394,20 +394,24 @@ func (c *Client) loginRSALocked(claim *MonitorClaimResp) error {
 	}
 
 	type rsaCand struct {
-		label string
-		val   string
+		label          string
+		val            string
+		loginType      string
+		plaintextOuter bool
 	}
 	var pwdCandidates []rsaCand
 	if cleanPwd != "" {
 		pwdCandidates = append(pwdCandidates,
-			rsaCand{label: "Sofia 8-char hash", val: HashPassword(cleanPwd)},
-			rsaCand{label: "Plaintext", val: cleanPwd},
-			rsaCand{label: "Standard 32-char Hex MD5 (lowercase)", val: HashMD5Hex(cleanPwd)},
-			rsaCand{label: "Standard 32-char Hex MD5 (uppercase)", val: strings.ToUpper(HashMD5Hex(cleanPwd))},
+			rsaCand{label: "Sofia 8-char hash (DVRIP-Xm030, plaintext)", val: HashPassword(cleanPwd), loginType: "DVRIP-Xm030", plaintextOuter: true},
+			rsaCand{label: "Plaintext (DVRIP-Xm030, plaintext)", val: cleanPwd, loginType: "DVRIP-Xm030", plaintextOuter: true},
+			rsaCand{label: "Sofia 8-char hash (DVRIP-FutureHome, AES outer)", val: HashPassword(cleanPwd), loginType: "DVRIP-FutureHome", plaintextOuter: false},
+			rsaCand{label: "Standard 32-char Hex MD5 (lowercase)", val: HashMD5Hex(cleanPwd), loginType: "DVRIP-Xm030", plaintextOuter: true},
+			rsaCand{label: "Standard 32-char Hex MD5 (uppercase)", val: strings.ToUpper(HashMD5Hex(cleanPwd)), loginType: "DVRIP-Xm030", plaintextOuter: true},
 		)
 	} else {
 		pwdCandidates = append(pwdCandidates,
-			rsaCand{label: "Empty password", val: ""},
+			rsaCand{label: "Empty password (DVRIP-Xm030, plaintext)", val: "", loginType: "DVRIP-Xm030", plaintextOuter: true},
+			rsaCand{label: "Empty password (DVRIP-FutureHome, AES outer)", val: "", loginType: "DVRIP-FutureHome", plaintextOuter: false},
 		)
 	}
 
@@ -420,10 +424,11 @@ func (c *Client) loginRSALocked(claim *MonitorClaimResp) error {
 
 		loginReq := LoginReq{
 			EncryptType:    "MD5",
-			LoginType:      "DVRIP-FutureHome",
+			LoginType:      cand.loginType,
 			UserName:       encUserHex,
 			PassWord:       encPassHex,
 			CommunicateKey: encCommHex,
+			UserAgent:      "",
 		}
 
 		innerJSON, err := json.Marshal(loginReq)
@@ -431,17 +436,22 @@ func (c *Client) loginRSALocked(claim *MonitorClaimResp) error {
 			return err
 		}
 
-		ciphertext, err := encryptAES128CBC([]byte(DefaultSofiaAESKey), innerJSON)
-		if err != nil {
-			return fmt.Errorf("failed to AES encrypt login payload: %w", err)
+		var respData []byte
+		var respHdr *Header
+		if cand.plaintextOuter {
+			logger.Trace("Xiongmai", "-> Sofia MsgID: %d (0x%04X), Seq: %d [RSA Candidate #%d/%d: %s (User: %s, LoginType: %s, Plaintext Outer)]",
+				MsgLoginReq, MsgLoginReq, c.sequence+1, i+1, len(pwdCandidates), cand.label, cleanUser, cand.loginType)
+			respData, respHdr, err = c.sendRawPacketWithHeaderLocked(MsgLoginReq, 0x00, 0x00, 0x00000000, innerJSON)
+		} else {
+			ciphertext, encErr := encryptAES128CBC([]byte(DefaultSofiaAESKey), innerJSON)
+			if encErr != nil {
+				return fmt.Errorf("failed to AES encrypt login payload: %w", encErr)
+			}
+			b64Payload := []byte(base64.StdEncoding.EncodeToString(ciphertext))
+			logger.Trace("Xiongmai", "-> Sofia MsgID: %d (0x%04X), Seq: %d [RSA Candidate #%d/%d: %s (User: %s, LoginType: %s, AES Outer)]",
+				MsgLoginReq, MsgLoginReq, c.sequence+1, i+1, len(pwdCandidates), cand.label, cleanUser, cand.loginType)
+			respData, respHdr, err = c.sendRawPacketWithHeaderLocked(MsgLoginReq, 0x01, 0x63, 0x00000000, b64Payload)
 		}
-
-		b64Payload := []byte(base64.StdEncoding.EncodeToString(ciphertext))
-
-		logger.Trace("Xiongmai", "-> Sofia MsgID: %d (0x%04X), Seq: %d [RSA Candidate #%d/%d: %s (User: %s, LoginType: DVRIP-FutureHome)]",
-			MsgLoginReq, MsgLoginReq, c.sequence+1, i+1, len(pwdCandidates), cand.label, cleanUser)
-
-		respData, respHdr, err := c.sendRawPacketWithHeaderLocked(MsgLoginReq, 0x01, 0x63, 0x00000000, b64Payload)
 		if err != nil {
 			return err
 		}
@@ -636,65 +646,10 @@ func (c *Client) GetSessionID() uint32 {
 	return c.sessionID
 }
 
-// EnableRTSP ensures that the internal RTSP server on port 554 is activated on the camera.
+// EnableRTSP is deprecated and kept as a no-op for backwards compatibility.
+// Xiongmai video is streamed natively via Sofia NetIP port 34567 (MsgID 1410/1412),
+// completely eliminating the need for RTSP port 554 on the camera.
 func (c *Client) EnableRTSP() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	sessionHex := fmt.Sprintf("0x%08X", c.sessionID)
-
-	// 1. Query current RTSP config (MsgConfigGetReq 1040)
-	getReq := map[string]interface{}{
-		"Name":      "NetWork.RTSP",
-		"SessionID": sessionHex,
-	}
-	if getPayload, err := json.Marshal(getReq); err == nil {
-		logger.Debug("Xiongmai", "📡 Querying RTSP server status on camera...")
-		if resp, err := c.sendPacketLocked(MsgConfigGetReq, getPayload); err == nil {
-			var getResp struct {
-				Ret         int `json:"Ret"`
-				NetWorkRTSP struct {
-					IsServer bool `json:"IsServer"`
-				} `json:"NetWork.RTSP"`
-			}
-			if err := json.Unmarshal(resp, &getResp); err == nil && getResp.Ret == 100 {
-				if getResp.NetWorkRTSP.IsServer {
-					logger.Info("Xiongmai", "🎥 RTSP server already active on camera port %d", RTSPPort)
-					return nil
-				}
-			}
-		}
-	}
-
-	// 2. Enable RTSP server (MsgConfigSetReq 1042)
-	req := RTSPConfigReq{
-		Name:      "NetWork.RTSP",
-		SessionID: sessionHex,
-		NetWorkRTSP: RTSPServer{
-			IsServer: true,
-		},
-	}
-
-	payload, err := json.Marshal(req)
-	if err != nil {
-		return err
-	}
-
-	logger.Debug("Xiongmai", "📡 Enabling RTSP server on camera...")
-	respPayload, err := c.sendPacketLocked(MsgConfigSetReq, payload)
-	if err != nil {
-		return fmt.Errorf("failed to enable RTSP server: %w", err)
-	}
-
-	var setResp struct {
-		Ret int `json:"Ret"`
-	}
-	if err := json.Unmarshal(respPayload, &setResp); err == nil && setResp.Ret != 100 {
-		logger.Warn("Xiongmai", "⚠️ Enabling RTSP server returned code %d (response: %s)", setResp.Ret, string(respPayload))
-		return fmt.Errorf("camera returned code %d for NetWork.RTSP enable", setResp.Ret)
-	}
-
-	logger.Info("Xiongmai", "🎥 RTSP server enabled on camera port %d", RTSPPort)
 	return nil
 }
 
@@ -968,14 +923,12 @@ func (c *Client) sendRawPacketWithHeaderLocked(msgID uint16, channel byte, total
 	}
 
 	c.sequence++
-	// Sofia payloads typically end with a null terminator or newline.
-	// NetIP protocol (Channel == 0x01) uses a single 0x00 terminator,
-	// while legacy DVRIP (Channel == 0x00) uses 0x0A, 0x00.
+	// Sofia/NetIP payloads require a single 0x00 null terminator.
 	var dataWithTerminator []byte
-	if channel == 0x01 {
-		dataWithTerminator = append(payload, 0x00)
+	if len(payload) > 0 && payload[len(payload)-1] == 0x00 {
+		dataWithTerminator = payload
 	} else {
-		dataWithTerminator = append(payload, 0x0A, 0x00)
+		dataWithTerminator = append(payload, 0x00)
 	}
 
 	hdr := Header{

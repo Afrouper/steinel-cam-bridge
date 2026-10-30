@@ -39,6 +39,9 @@ const (
 	MsgTalkClaimReq      uint16 = 1410
 	MsgTalkClaimResp     uint16 = 1411
 	MsgTalkSendData      uint16 = 1412
+	MsgMonitorStartReq   uint16 = 1410
+	MsgMonitorStartResp  uint16 = 1411
+	MsgMonitorData       uint16 = 1412
 	MsgMonitorClaimReq   uint16 = 1413
 	MsgMonitorClaimResp  uint16 = 1414
 	MsgTalkControlReq    uint16 = 1430
@@ -120,6 +123,7 @@ type LoginReq struct {
 	UserName       string `json:"UserName"`
 	PassWord       string `json:"PassWord"`
 	CommunicateKey string `json:"CommunicateKey,omitempty"`
+	UserAgent      string `json:"User-Agent"`
 }
 
 // Login JSON Response
@@ -277,4 +281,33 @@ type OPTransReq struct {
 type OPTransInfo struct {
 	Action   string `json:"Action"`   // "Start", "Stop"
 	CommName string `json:"CommName"` // "RS232"
+}
+
+// Media Markers within Xiongmai MsgID 1412 Payloads
+var (
+	MarkerIFrame = []byte{0x00, 0x00, 0x01, 0xFC}
+	MarkerPFrame = []byte{0x00, 0x00, 0x01, 0xFD}
+	MarkerAudio  = []byte{0x00, 0x00, 0x01, 0xFA}
+)
+
+// OPMonitorParam holds stream configuration parameters.
+type OPMonitorParam struct {
+	Channel    int    `json:"Channel"`
+	CombinMode string `json:"CombinMode"`
+	StreamType string `json:"StreamType"`
+	TransMode  string `json:"TransMode"`
+}
+
+// OPMonitorInfo defines the inner OPMonitor object for media claim (MsgID 1413) and start/stop (MsgID 1410).
+type OPMonitorInfo struct {
+	Action    string          `json:"Action"`
+	Action1   string          `json:"Action1,omitempty"`
+	Parameter *OPMonitorParam `json:"Parameter,omitempty"`
+}
+
+// OPMonitorReq represents the complete OPMonitor JSON structure.
+type OPMonitorReq struct {
+	Name      string        `json:"Name"`
+	OPMonitor OPMonitorInfo `json:"OPMonitor"`
+	SessionID string        `json:"SessionID"`
 }
