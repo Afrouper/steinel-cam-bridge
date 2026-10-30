@@ -2,6 +2,20 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.5.0-beta.4
+
+### 🐛 Stabilitäts-Fixes für den Multi-Kamera-Betrieb (Issue #57)
+
+- **Instanzsicherer AAC-Audiotranscoder (`pkg/audio/internal/aac`)**:
+  - Behebt einen `SIGSEGV` Absturz beim parallelen Kodieren von Audio-Streams mehrerer Kameras.
+  - Die bisherige Abhängigkeit nutzte ein globales CGo-Handle (`C.VO_HANDLE`), das bei mehreren Kameras überschrieben wurde. Der neue Encoder kapselt das Handle strikt pro Instanz und ist vollständig nebenläufig und thread-sicher.
+- **Zuverlässige Schlüssel-Pfade & `os.MkdirAll`**:
+  - Behebt Warnungen (`no such file or directory`) beim Speichern neuer Schlüsseldateien für nachgelagerte Kameras (`data/<path>_client.key`).
+  - Automatische Erstellung des Zielverzeichnisses (`os.MkdirAll`) vor dem Schreiben und konsistente Ableitung absoluter Pfade (`/data/<path>_client.key`).
+- **Gezielte MQTT-Device-Aktualisierung pro Kamera**:
+  - Behebt ein Problem, bei dem alle Kameras nach der Nabto P2P DeviceID-Erkennung mit dem Namen und den Topics der ersten Kamera überschrieben wurden.
+  - Jede Kamera wird unter ihrem eindeutigen Pfad (`cam.Path`) registriert und bei der Erkennung isoliert aktualisiert. Name, Topics (`steinel/<DeviceID>/...`) und Entitäten in Home Assistant bleiben für jede Kamera exakt erhalten.
+
 ## 1.5.0-beta.3
 
 ### 🐛 Fix Gerätename & 100 % Namens-Abwärtskompatibilität
