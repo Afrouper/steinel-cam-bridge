@@ -23,9 +23,10 @@ type Driver struct {
 	resolution string
 	rtspServer *rtsp.Server
 	eventBus   *events.Bus
-	client     *Client
-	ingest     *RTSPIngest
-	talk       *TalkClient
+	client      *Client
+	sofiaStream *SofiaStream
+	ingest      *RTSPIngest
+	talk        *TalkClient
 	sdcard     *SDCardManager
 	mu         sync.Mutex
 	running    bool
@@ -52,22 +53,24 @@ func NewDriver(cameraIP string, user, password string, resolution string, rtspSe
 	}
 
 	client := NewClient(cameraIP, DefaultPort, user, password)
+	sofiaStream := NewSofiaStream(cameraIP, DefaultPort, client, rtspServer)
 	talk := NewTalkClient(client)
 	ingest := NewRTSPIngest(cameraIP, RTSPPort, user, password, streamSubtype, rtspServer)
 	sdcard := NewSDCardManager(client, cameraIP, user, password)
 
 	return &Driver{
-		cameraIP:   cameraIP,
-		user:       user,
-		password:   password,
-		resolution: resNormalized,
-		rtspServer: rtspServer,
-		eventBus:   eventBus,
-		client:     client,
-		talk:       talk,
-		ingest:     ingest,
-		sdcard:     sdcard,
-		closeChan:  make(chan struct{}),
+		cameraIP:    cameraIP,
+		user:        user,
+		password:    password,
+		resolution:  resNormalized,
+		rtspServer:  rtspServer,
+		eventBus:    eventBus,
+		client:      client,
+		sofiaStream: sofiaStream,
+		talk:        talk,
+		ingest:      ingest,
+		sdcard:      sdcard,
+		closeChan:   make(chan struct{}),
 	}
 }
 
@@ -94,40 +97,48 @@ func (d *Driver) Start(ctx context.Context) error {
 	})
 
 	// Step 1: Connect & Login on Sofia port 34567
+	var sofiaStreamStarted bool
 	if err := d.client.Connect(ctx); err != nil {
 		logger.Warn("Xiongmai Driver", "⚠️ Sofia port %d connection error (%v) — starting in resilient RTSP mode with background reconnect", DefaultPort, err)
 	} else if d.client.IsLoggedIn() {
-		// Step 2: Zero-Touch RTSP Enablement
-		if err := d.client.EnableRTSP(); err != nil {
-			logger.Warn("Xiongmai Driver", "⚠️ Zero-touch RTSP enablement result: %v", err)
-		}
-
-		// Step 2b: Query video encode config & ensure H.264
+		// Step 2: Query video encode config & ensure H.264
 		if err := d.client.EnsureH264Encoding(); err != nil {
 			logger.Warn("Xiongmai Driver", "⚠️ Video encode check result: %v", err)
 		}
 
 		// Step 3: Query initial light and MCU states
 		d.syncInitialState()
+
+		// Step 4: Start native Sofia video stream (Port 34567)
+		if d.sofiaStream != nil {
+			if err := d.sofiaStream.Start(ctx); err != nil {
+				logger.Warn("Xiongmai Driver", "⚠️ Failed to start native Sofia stream (%v), falling back to RTSP ingest", err)
+			} else {
+				sofiaStreamStarted = true
+				logger.Info("Xiongmai Driver", "🎥 Native Sofia video stream active on port %d", DefaultPort)
+			}
+		}
 	}
 
-	// Step 3b: Always launch autonomous background supervisor for Sofia control connection
+	// Step 5: Always launch autonomous background supervisor for Sofia control connection
 	go d.superviseSofiaLoop(ctx)
 
-	// Step 4: Start RTSP Ingest with effective password or configured password
-	effectivePwd := d.client.GetEffectivePassword()
-	if effectivePwd == "" && d.password != "" {
-		effectivePwd = d.password
-	}
-	streamSubtype := 0
-	if d.resolution == "360p" {
-		streamSubtype = 1
-	}
-	logger.Trace("Xiongmai Driver", "Starting RTSP Ingest: IP=%s, Port=%d, User=%s, PwdMasked=%s, FallbackPwdMasked=%s",
-		d.cameraIP, RTSPPort, d.user, MaskPassword(effectivePwd), MaskPassword(d.password))
-	d.ingest = NewRTSPIngest(d.cameraIP, RTSPPort, d.user, effectivePwd, streamSubtype, d.rtspServer, d.password)
-	if err := d.ingest.Start(ctx); err != nil {
-		logger.Warn("Xiongmai Driver", "⚠️ Failed to start RTSP Ingest: %v", err)
+	// Step 6: Fallback to RTSP Ingest only if native Sofia stream is not active
+	if !sofiaStreamStarted {
+		effectivePwd := d.client.GetEffectivePassword()
+		if effectivePwd == "" && d.password != "" {
+			effectivePwd = d.password
+		}
+		streamSubtype := 0
+		if d.resolution == "360p" {
+			streamSubtype = 1
+		}
+		logger.Trace("Xiongmai Driver", "Starting RTSP Ingest fallback: IP=%s, Port=%d, User=%s, PwdMasked=%s",
+			d.cameraIP, RTSPPort, d.user, MaskPassword(effectivePwd))
+		d.ingest = NewRTSPIngest(d.cameraIP, RTSPPort, d.user, effectivePwd, streamSubtype, d.rtspServer, d.password)
+		if err := d.ingest.Start(ctx); err != nil {
+			logger.Warn("Xiongmai Driver", "⚠️ Failed to start RTSP Ingest fallback: %v", err)
+		}
 	}
 
 	d.running = true
@@ -193,7 +204,7 @@ func (d *Driver) syncInitialState() {
 }
 
 func (d *Driver) superviseSofiaLoop(ctx context.Context) {
-	ticker := time.NewTicker(20 * time.Second)
+	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 
 	reconnectBackoff := 5 * time.Second
@@ -222,9 +233,19 @@ func (d *Driver) superviseSofiaLoop(ctx context.Context) {
 				reconnectBackoff = 5 * time.Second
 				firstAttempt = false
 
-				_ = d.client.EnableRTSP()
 				_ = d.client.EnsureH264Encoding()
 				d.syncInitialState()
+
+				if d.sofiaStream != nil && !d.sofiaStream.IsRunning() {
+					go func() {
+						if err := d.sofiaStream.Start(ctx); err == nil {
+							logger.Info("Xiongmai Driver", "🎥 Native Sofia video stream resumed on port %d", DefaultPort)
+							if d.ingest != nil {
+								_ = d.ingest.Close()
+							}
+						}
+					}()
+				}
 			} else {
 				logger.Debug("Xiongmai Driver", "ℹ️ Sofia reconnect attempt failed: %v (retrying in %v)", err, reconnectBackoff)
 				if reconnectBackoff < 60*time.Second {
@@ -453,6 +474,9 @@ func (d *Driver) Close() error {
 	d.running = false
 	close(d.closeChan)
 
+	if d.sofiaStream != nil {
+		_ = d.sofiaStream.Stop()
+	}
 	if d.talk != nil {
 		_ = d.talk.StopTalk()
 	}
