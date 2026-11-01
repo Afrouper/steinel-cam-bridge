@@ -176,9 +176,12 @@ func (s *SofiaStream) Start(ctx context.Context) error {
 		_ = conn.Close()
 		return fmt.Errorf("failed to marshal OPMonitor Start JSON: %w", err)
 	}
-	startPayload = append(startPayload, 0x00)
 
-	logger.Debug("Xiongmai Stream", "📡 Sending encrypted OPMonitor Start (MsgID 1410) on control socket...")
+	if s.client.IsDataEncryptionAES() {
+		logger.Debug("Xiongmai Stream", "📡 Sending encrypted OPMonitor Start (MsgID 1410, AES-128-CBC) on control socket...")
+	} else {
+		logger.Debug("Xiongmai Stream", "📡 Sending OPMonitor Start (MsgID 1410) on control socket...")
+	}
 	_, err = s.client.SendPacket(MsgMonitorStartReq, startPayload)
 	if err != nil {
 		_ = conn.Close()
@@ -375,7 +378,6 @@ func (s *SofiaStream) Stop() error {
 			SessionID: sessionHex,
 		}
 		if stopPayload, err := json.Marshal(stopReq); err == nil {
-			stopPayload = append(stopPayload, 0x00)
 			logger.Debug("Xiongmai Stream", "⏹️ Sending OPMonitor Stop on control socket...")
 			_, _ = s.client.SendPacket(MsgMonitorStartReq, stopPayload)
 		}

@@ -1,6 +1,7 @@
 package xiongmai
 
 import (
+	"bytes"
 	"context"
 	"crypto/md5"
 	"encoding/base64"
@@ -74,6 +75,11 @@ func (c *Client) initNotEncryptMsgIDs(ids []int) {
 func (c *Client) shouldEncrypt(msgID uint16) bool {
 	if !c.dataEncryptionAES || len(c.communicateKey) != 16 {
 		return false
+	}
+	// MsgMonitorStartReq (1410) and MsgKeepAliveReq (1006) must ALWAYS be encrypted
+	// when communicateKey is active, even if the camera omits or misreports NotEncryptMsgID.
+	if msgID == MsgMonitorStartReq || msgID == MsgKeepAliveReq {
+		return true
 	}
 	if c.notEncryptMsgIDs == nil {
 		return !defaultNotEncryptMsgIDs[msgID]
@@ -490,9 +496,11 @@ func (c *Client) loginRSALocked(claim *MonitorClaimResp) error {
 			c.sessionID = parsedSessionID
 			c.effectivePassword = cand.val
 			c.isLoggedIn = true
-			if claim != nil && (claim.DataEncryptionType["AES"] || claim.DataEncryptionType["AESV2"]) {
+			if len(c.communicateKey) == 16 || (claim != nil && (claim.DataEncryptionType["AES"] || claim.DataEncryptionType["AESV2"])) {
 				c.dataEncryptionAES = true
-				c.initNotEncryptMsgIDs(claim.NotEncryptMsgID)
+				if claim != nil && len(claim.NotEncryptMsgID) > 0 {
+					c.initNotEncryptMsgIDs(claim.NotEncryptMsgID)
+				}
 				logger.Debug("Xiongmai", "🔐 Activated session payload encryption via AES-128-CBC (CommunicateKey, %d unencrypted MsgIDs whitelisted)",
 					len(c.notEncryptMsgIDs))
 			}
@@ -1075,13 +1083,16 @@ func (c *Client) sendRawPacketLocked(msgID uint16, payload []byte) ([]byte, *Hea
 
 	if c.shouldEncrypt(msgID) {
 		channel = 0x01
-		ciphertext, err := encryptAES128CBC(c.communicateKey, payload)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to AES encrypt MsgID %d payload: %w", msgID, err)
+		clean := bytes.TrimRight(payload, "\x00\r\n ")
+		if len(clean) > 0 {
+			ciphertext, err := encryptAES128CBC(c.communicateKey, clean)
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to AES encrypt MsgID %d payload: %w", msgID, err)
+			}
+			actualPayload = []byte(base64.StdEncoding.EncodeToString(ciphertext))
+			logger.Trace("Xiongmai", "🔒 Encrypted MsgID %d (0x%04X) payload via AES-128-CBC (%d -> %d b64 bytes)",
+				msgID, msgID, len(clean), len(actualPayload))
 		}
-		actualPayload = []byte(base64.StdEncoding.EncodeToString(ciphertext))
-		logger.Trace("Xiongmai", "🔒 Encrypted MsgID %d (0x%04X) payload via AES-128-CBC (%d -> %d b64 bytes)",
-			msgID, msgID, len(payload), len(actualPayload))
 	} else if c.dataEncryptionAES {
 		channel = 0x01
 	}
@@ -1123,6 +1134,45 @@ func (c *Client) SendPacket(msgID uint16, data []byte) ([]byte, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.sendPacketLocked(msgID, data)
+}
+
+// EncryptSessionPayload encrypts plaintext JSON using AES-128-CBC with the session's
+// CommunicateKey, 16 zero-bytes IV, PKCS#7 padding, standard Base64 encoding, and a trailing NUL byte.
+func (c *Client) EncryptSessionPayload(plaintext []byte) ([]byte, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.communicateKey) != 16 {
+		return nil, errors.New("communicate key is not 16 bytes")
+	}
+	clean := bytes.TrimRight(plaintext, "\x00\r\n ")
+	ciphertext, err := encryptAES128CBC(c.communicateKey, clean)
+	if err != nil {
+		return nil, fmt.Errorf("AES encryption failed: %w", err)
+	}
+	b64 := base64.StdEncoding.EncodeToString(ciphertext)
+	return append([]byte(b64), 0x00), nil
+}
+
+// DecryptSessionPayload decrypts a Base64-encoded, AES-128-CBC encrypted payload with CommunicateKey.
+func (c *Client) DecryptSessionPayload(cipherText []byte) ([]byte, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.communicateKey) != 16 {
+		return nil, errors.New("communicate key is not 16 bytes")
+	}
+	clean := bytes.TrimRight(cipherText, "\x00\r\n ")
+	cipherBytes, err := base64.StdEncoding.DecodeString(string(clean))
+	if err != nil {
+		return nil, fmt.Errorf("base64 decode failed: %w", err)
+	}
+	return decryptAES128CBC(c.communicateKey, cipherBytes)
+}
+
+// IsDataEncryptionAES returns true if AES session payload encryption is active.
+func (c *Client) IsDataEncryptionAES() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.dataEncryptionAES && len(c.communicateKey) == 16
 }
 
 // Close gracefully logs out and closes the connection.

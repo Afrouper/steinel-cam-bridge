@@ -3,7 +3,12 @@ package xiongmai
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"strings"
@@ -338,4 +343,269 @@ func TestSofiaStreamMediaMarkersDemuxing(t *testing.T) {
 
 	// Now frameBuf should hold the new P-frame
 	assert.Equal(t, len(pNalu), frameBuf.Len())
+}
+
+func TestSofiaStreamLifecycle_EncryptedAES(t *testing.T) {
+	// Generate mock RSA key pair for testing
+	privKey, err := rsa.GenerateKey(rand.Reader, 1024)
+	require.NoError(t, err)
+
+	modHex := fmt.Sprintf("%0256X", privKey.N)
+	mockPubKeyStr := fmt.Sprintf("%s,010001", modHex)
+
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer func() { _ = l.Close() }()
+
+	port := l.Addr().(*net.TCPAddr).Port
+
+	var capturedCommKey []byte
+	var claimReceived atomic.Bool
+	var startReceivedEncrypted atomic.Bool
+	var stopReceivedEncrypted atomic.Bool
+
+	spsNalu := []byte{0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0x00, 0x1f, 0x96, 0x35, 0x40}
+	ppsNalu := []byte{0x00, 0x00, 0x00, 0x01, 0x68, 0xce, 0x3c, 0x80}
+	idrNalu := []byte{0x00, 0x00, 0x00, 0x01, 0x65, 0x88, 0x84, 0x00, 0x10, 0xff}
+	pNalu := []byte{0x00, 0x00, 0x00, 0x01, 0x41, 0x9a, 0x01, 0x02, 0x03}
+
+	var mediaConn net.Conn
+	var mediaConnMu sync.Mutex
+
+	go func() {
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				return
+			}
+
+			go func(c net.Conn) {
+				defer func() { _ = c.Close() }()
+				hdrBuf := make([]byte, HeaderLength)
+
+				for {
+					if _, err := io.ReadFull(c, hdrBuf); err != nil {
+						return
+					}
+					hdr, err := DecodeHeader(hdrBuf)
+					if err != nil {
+						return
+					}
+					payload := make([]byte, hdr.DataLength)
+					if _, err := io.ReadFull(c, payload); err != nil {
+						return
+					}
+					cleanPayload := strings.TrimRight(string(payload), "\x00\r\n ")
+
+					switch hdr.MsgID {
+					case MsgMonitorClaimReq: // 1413
+						if strings.Contains(cleanPayload, `"Action":"Claim"`) && strings.Contains(cleanPayload, `"Action1":"Start"`) {
+							// Media socket claim
+							claimReceived.Store(true)
+							mediaConnMu.Lock()
+							mediaConn = c
+							mediaConnMu.Unlock()
+
+							resp := map[string]interface{}{
+								"Name":      "OPMonitor",
+								"Ret":       100,
+								"SessionID": "0x000000007b",
+							}
+							respData, _ := json.Marshal(resp)
+							respTerm := append(respData, 0x00)
+							rHdr := Header{
+								Magic:      HeaderMagic,
+								Channel:    0,
+								SessionID:  0x7b,
+								Sequence:   hdr.Sequence,
+								MsgID:      MsgMonitorClaimResp, // 1414
+								DataLength: uint32(len(respTerm)),
+							}
+							_, _ = c.Write(append(rHdr.Encode(), respTerm...))
+						} else {
+							// Security claim probing RSA
+							claimResp := MonitorClaimResp{
+								Ret:         100,
+								Bits:        1024,
+								EncryptAlgo: "RSA_V1.5",
+								PublicKey:   mockPubKeyStr,
+								LoginEncryptionType: LoginEncryptionType{
+									RSA: true,
+								},
+							}
+							respBytes, _ := json.Marshal(claimResp)
+							respTerm := append(respBytes, 0x00)
+							rHdr := Header{
+								Magic:      HeaderMagic,
+								Channel:    1,
+								SessionID:  0x0001869F,
+								Sequence:   hdr.Sequence,
+								MsgID:      MsgMonitorClaimResp,
+								DataLength: uint32(len(respTerm)),
+							}
+							_, _ = c.Write(append(rHdr.Encode(), respTerm...))
+						}
+
+					case MsgLoginReq: // 1000
+						var loginReq struct {
+							CommunicateKey string `json:"CommunicateKey"`
+							LoginType      string `json:"LoginType"`
+						}
+						_ = json.Unmarshal([]byte(cleanPayload), &loginReq)
+						if loginReq.CommunicateKey != "" {
+							encBytes, _ := hex.DecodeString(loginReq.CommunicateKey)
+							//nolint:staticcheck // Mandated by Xiongmai hardware protocol specification (EncryptAlgo: RSA_V1.5)
+							decKey, decErr := rsa.DecryptPKCS1v15(rand.Reader, privKey, encBytes)
+							if decErr == nil {
+								capturedCommKey = decKey
+							}
+						}
+
+						resp := LoginResp{
+							Name:          "OPUserLogin",
+							Ret:           100,
+							SessionID:     "0x0000007b",
+							AliveInterval: 20,
+							DeviceType:    "IPC",
+						}
+						respData, _ := json.Marshal(resp)
+						respTerm := append(respData, 0x00)
+						rHdr := Header{
+							Magic:      HeaderMagic,
+							Channel:    0,
+							SessionID:  0x7b,
+							Sequence:   hdr.Sequence,
+							MsgID:      MsgLoginResp,
+							DataLength: uint32(len(respTerm)),
+						}
+						_, _ = c.Write(append(rHdr.Encode(), respTerm...))
+
+					case MsgMonitorStartReq: // 1410
+						// Assert that channel is 1 (encrypted) and payload is AES-128-CBC Base64
+						if hdr.Channel == 1 && len(cleanPayload) > 0 && cleanPayload[0] != '{' && len(capturedCommKey) == 16 {
+							decB64, err := base64.StdEncoding.DecodeString(cleanPayload)
+							if err == nil {
+								plain, decErr := decryptAES128CBC(capturedCommKey, decB64)
+								if decErr == nil {
+									plainStr := string(plain)
+									if strings.Contains(plainStr, `"Action":"Start"`) {
+										startReceivedEncrypted.Store(true)
+									} else if strings.Contains(plainStr, `"Action":"Stop"`) {
+										stopReceivedEncrypted.Store(true)
+									}
+								}
+							}
+						}
+
+						resp := map[string]interface{}{
+							"Name": "OPMonitor",
+							"Ret":  100,
+						}
+						respData, _ := json.Marshal(resp)
+						respTerm := append(respData, 0x00)
+						rHdr := Header{
+							Magic:      HeaderMagic,
+							Channel:    hdr.Channel,
+							SessionID:  0x7b,
+							Sequence:   hdr.Sequence,
+							MsgID:      MsgMonitorStartResp,
+							DataLength: uint32(len(respTerm)),
+						}
+						_, _ = c.Write(append(rHdr.Encode(), respTerm...))
+
+						// Stream video packets
+						if startReceivedEncrypted.Load() && !stopReceivedEncrypted.Load() {
+							go func() {
+								time.Sleep(50 * time.Millisecond)
+								mediaConnMu.Lock()
+								mConn := mediaConn
+								mediaConnMu.Unlock()
+								if mConn == nil {
+									return
+								}
+
+								// I-Frame
+								var iFramePayload []byte
+								iFramePayload = append(iFramePayload, MarkerIFrame...)
+								iFramePayload = append(iFramePayload, make([]byte, 12)...)
+								iFramePayload = append(iFramePayload, spsNalu...)
+								iFramePayload = append(iFramePayload, ppsNalu...)
+								iFramePayload = append(iFramePayload, idrNalu...)
+
+								vHdr1 := Header{
+									Magic:      HeaderMagic,
+									Channel:    1,
+									SessionID:  0x7b,
+									Sequence:   1,
+									MsgID:      MsgMonitorData,
+									DataLength: uint32(len(iFramePayload)),
+								}
+								_, _ = mConn.Write(append(vHdr1.Encode(), iFramePayload...))
+
+								time.Sleep(10 * time.Millisecond)
+
+								// P-Frame
+								var pFramePayload []byte
+								pFramePayload = append(pFramePayload, MarkerPFrame...)
+								pFramePayload = append(pFramePayload, make([]byte, 4)...)
+								pFramePayload = append(pFramePayload, pNalu...)
+
+								vHdr2 := Header{
+									Magic:      HeaderMagic,
+									Channel:    1,
+									SessionID:  0x7b,
+									Sequence:   2,
+									MsgID:      MsgMonitorData,
+									DataLength: uint32(len(pFramePayload)),
+								}
+								_, _ = mConn.Write(append(vHdr2.Encode(), pFramePayload...))
+							}()
+						}
+
+					default:
+						respPayload := []byte(`{"Ret":100}`)
+						respTerm := append(respPayload, 0x00)
+						respHdr := &Header{
+							Magic:      HeaderMagic,
+							Channel:    hdr.Channel,
+							SessionID:  hdr.SessionID,
+							Sequence:   hdr.Sequence,
+							MsgID:      hdr.MsgID + 1,
+							DataLength: uint32(len(respTerm)),
+						}
+						_, _ = c.Write(append(respHdr.Encode(), respTerm...))
+					}
+				}
+			}(conn)
+		}
+	}()
+
+	client := NewClient("127.0.0.1", port, "admin", "testpwd")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err = client.Connect(ctx)
+	require.NoError(t, err)
+	require.True(t, client.IsLoggedIn())
+	assert.True(t, client.IsDataEncryptionAES(), "client should have activated AES encryption after RSA login")
+
+	mockStream := &mockMediaStream{}
+	sofiaStream := NewSofiaStream("127.0.0.1", port, client, mockStream)
+
+	err = sofiaStream.Start(ctx)
+	require.NoError(t, err)
+	assert.True(t, sofiaStream.IsRunning())
+
+	assert.Eventually(t, func() bool {
+		return claimReceived.Load() && startReceivedEncrypted.Load()
+	}, 2*time.Second, 50*time.Millisecond, "expected encrypted OPMonitor Start to be received")
+
+	assert.Eventually(t, func() bool {
+		return len(mockStream.getPackets()) > 0
+	}, 2*time.Second, 50*time.Millisecond, "expected RTP packets from video stream")
+
+	err = sofiaStream.Stop()
+	require.NoError(t, err)
+	assert.False(t, sofiaStream.IsRunning())
+	assert.True(t, stopReceivedEncrypted.Load(), "expected encrypted OPMonitor Stop to be received")
 }

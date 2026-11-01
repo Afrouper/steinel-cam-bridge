@@ -622,6 +622,29 @@ func TestAES128CBC(t *testing.T) {
 	}
 }
 
+func TestEncryptDecryptSessionPayload(t *testing.T) {
+	c := &Client{
+		communicateKey: []byte("0123456789abcdef"),
+	}
+	plainJSON := []byte(`{"Name":"OPMonitor","OPMonitor":{"Action":"Start","Parameter":{"Channel":0,"CombinMode":"NONE","StreamType":"Main","TransMode":"TCP"}},"SessionID":"0x000000007b"}`)
+
+	enc, err := c.EncryptSessionPayload(plainJSON)
+	if err != nil {
+		t.Fatalf("EncryptSessionPayload failed: %v", err)
+	}
+	if len(enc) == 0 || enc[len(enc)-1] != 0x00 {
+		t.Fatalf("expected trailing null byte, got len=%d", len(enc))
+	}
+
+	dec, err := c.DecryptSessionPayload(enc)
+	if err != nil {
+		t.Fatalf("DecryptSessionPayload failed: %v", err)
+	}
+	if string(dec) != string(plainJSON) {
+		t.Fatalf("decrypted JSON mismatch: got %q, want %q", string(dec), string(plainJSON))
+	}
+}
+
 func TestRSACrypto(t *testing.T) {
 	privKey, err := rsa.GenerateKey(rand.Reader, 1024)
 	if err != nil {
