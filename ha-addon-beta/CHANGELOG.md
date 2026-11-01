@@ -2,6 +2,22 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.5.0-beta.7
+
+### Multi-Kamera-Betrieb & L 620 CAM Anpassungen
+
+- **Multi-Kamera-Unterstützung (Issue #57)**:
+  - Paralleler Betrieb mehrerer Kameras über eine gemeinsame Bridge-Instanz (`cameras: [...]`).
+  - Isolierte Event-Busse und Supervisor-Instanzen pro Kamera.
+  - Streaming über getrennte RTSP-Pfade und ONVIF-Kanäle.
+- **L 620 CAM – Video-Ingest & Stabilität (Issue #56)**:
+  - AES-128-CBC Sitzungsverschlüsselung für `OPMonitor Start/Stop` und KeepAlive bei DVRIP-Xm030.
+  - Behebung von Panics beim Verbindungsabbruch und TCP-Desynchronisationen bei SD-Karten-Abfragen (`OPFileQuery`).
+- **L 620 CAM – Zwei-Wege-Audio / Gegensprechen (Issue #63)**:
+  - Automatische Transkodierung von PCMU (µ-law) zu PCMA (A-law) für den Lautsprecher der L 620.
+  - Fix für Audiodaten-Framing (Channel 0 für unverschlüsselte Audiodaten) und thread-sichere Socket-Übertragung.
+  - Dynamische Aushandlung des Audioformats über `MsgTalkClaimV2Req`.
+
 ## 1.5.0-beta.6
 
 ### 🚀 Nativer Sofia Video Ingest über Port 34567 für Steinel L 620 CAM (Issue #56)
