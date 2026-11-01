@@ -3,6 +3,7 @@ package onvif
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http/httptest"
 	"strings"
@@ -34,6 +35,7 @@ func TestONVIFServices(t *testing.T) {
 		"de-xxxxxxx",
 		"pr-xxxxx",
 		"L 625 CAM SC",
+		"",
 		"",
 		"",
 		changeRes,
@@ -198,7 +200,7 @@ func TestDiscoveryProbe(t *testing.T) {
 }
 
 func TestDeviceHandler_NewActions(t *testing.T) {
-	dh := NewDeviceHandler("device-uuid-test", "product-id-test", "L 625 CAM SC", 8000, 8554, "admin", nil, events.NewBus())
+	dh := NewDeviceHandler("device-uuid-test", "product-id-test", "L 625 CAM SC", 8000, 8554, "admin", "", nil, events.NewBus())
 
 	// 1. GetServiceCapabilities
 	resp, err := dh.Handle("GetServiceCapabilities", "", "192.168.1.50:8000")
@@ -243,7 +245,7 @@ func TestDeviceHandler_NewActions(t *testing.T) {
 }
 
 func TestDeviceHandler_GetServicesCapabilities(t *testing.T) {
-	dh := NewDeviceHandler("device-uuid-test", "product-id-test", "L 625 CAM SC", 8000, 8554, "admin", nil, events.NewBus())
+	dh := NewDeviceHandler("device-uuid-test", "product-id-test", "L 625 CAM SC", 8000, 8554, "admin", "", nil, events.NewBus())
 
 	// Without IncludeCapability
 	respNoCap, err := dh.Handle("GetServices", `<GetServices xmlns="http://www.onvif.org/ver10/device/wsdl"/>`, "192.168.1.50:8000")
@@ -267,7 +269,7 @@ func TestDeviceHandler_GetServicesCapabilities(t *testing.T) {
 }
 
 func TestDeviceHandler_ModelReporting(t *testing.T) {
-	dh620 := NewDeviceHandler("device-620", "product-620", "L 620 CAM", 8000, 8554, "admin", nil, events.NewBus())
+	dh620 := NewDeviceHandler("device-620", "product-620", "L 620 CAM", 8000, 8554, "admin", "", nil, events.NewBus())
 	resp620, err := dh620.Handle("GetDeviceInformation", "", "192.168.1.50:8000")
 	if err != nil {
 		t.Fatalf("GetDeviceInformation failed: %v", err)
@@ -276,12 +278,418 @@ func TestDeviceHandler_ModelReporting(t *testing.T) {
 		t.Errorf("expected model 'L 620 CAM', got: %s", resp620)
 	}
 
-	dh625 := NewDeviceHandler("device-625", "product-625", "L 625 CAM SC", 8000, 8554, "admin", nil, events.NewBus())
+	dh625 := NewDeviceHandler("device-625", "product-625", "L 625 CAM SC", 8000, 8554, "admin", "", nil, events.NewBus())
 	resp625, err := dh625.Handle("GetDeviceInformation", "", "192.168.1.50:8000")
 	if err != nil {
 		t.Fatalf("GetDeviceInformation failed: %v", err)
 	}
 	if !strings.Contains(resp625, "<tds:Model>L 625 CAM SC</tds:Model>") {
 		t.Errorf("expected model 'L 625 CAM SC', got: %s", resp625)
+	}
+}
+
+func TestDeviceHandler_MACAddress(t *testing.T) {
+	// Default fallback MAC
+	dhDefault := NewDeviceHandler("device-uuid", "product-id", "L 625 CAM SC", 8000, 8554, "admin", "", nil, events.NewBus())
+	respDefault, err := dhDefault.Handle("GetNetworkInterfaces", "", "192.168.1.50:8000")
+	if err != nil {
+		t.Fatalf("GetNetworkInterfaces failed: %v", err)
+	}
+	if !strings.Contains(respDefault, "<tt:HwAddress>00:0C:43:00:01:02</tt:HwAddress>") {
+		t.Errorf("expected default MAC 00:0C:43:00:01:02, got: %s", respDefault)
+	}
+
+	// Custom MAC
+	customMAC := "00:0C:43:AB:CD:EF"
+	dhCustom := NewDeviceHandler("device-uuid", "product-id", "L 625 CAM SC", 8000, 8554, "admin", customMAC, nil, events.NewBus())
+	respCustom, err := dhCustom.Handle("GetNetworkInterfaces", "", "192.168.1.50:8000")
+	if err != nil {
+		t.Fatalf("GetNetworkInterfaces failed: %v", err)
+	}
+	if !strings.Contains(respCustom, "<tt:HwAddress>"+customMAC+"</tt:HwAddress>") {
+		t.Errorf("expected custom MAC %s, got: %s", customMAC, respCustom)
+	}
+}
+
+func TestMultiCameraONVIF(t *testing.T) {
+	bus1 := events.NewBus()
+	bus2 := events.NewBus()
+
+	srv := NewServer(
+		8000, 8554, "einfahrt", "aac",
+		"dev-1", "prod-1", "L 625 CAM SC", "00:0C:43:00:01:02",
+		"", "", nil, nil, nil, nil, nil, bus1,
+	)
+
+	// Configure multiple channels
+	srv.SetChannels([]CameraChannel{
+		{
+			Index:      1,
+			Name:       "Einfahrt",
+			Path:       "einfahrt",
+			AudioCodec: "aac",
+			EventBus:   bus1,
+		},
+		{
+			Index:      2,
+			Name:       "Garten",
+			Path:       "garten",
+			AudioCodec: "pcmu",
+			EventBus:   bus2,
+		},
+	})
+
+	// 1. Check GetProfiles
+	reqBody := `<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
+  <s:Body><GetProfiles xmlns="http://www.onvif.org/ver10/media/wsdl"/></s:Body>
+</s:Envelope>`
+	req := httptest.NewRequest("POST", "/onvif/media_service", bytes.NewBufferString(reqBody))
+	w := httptest.NewRecorder()
+	srv.handleSOAP(w, req)
+	body, _ := io.ReadAll(w.Result().Body)
+	respStr := string(body)
+
+	if !strings.Contains(respStr, "Profile_einfahrt_Main") || !strings.Contains(respStr, "Profile_garten_Main") {
+		t.Fatalf("expected both camera profiles in GetProfiles response: %s", respStr)
+	}
+	if !strings.Contains(respStr, "VideoSource_1") || !strings.Contains(respStr, "VideoSource_2") {
+		t.Fatalf("expected VideoSource_1 and VideoSource_2 in GetProfiles: %s", respStr)
+	}
+
+	// 2. Check GetVideoSources
+	reqBody = `<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
+  <s:Body><GetVideoSources xmlns="http://www.onvif.org/ver10/media/wsdl"/></s:Body>
+</s:Envelope>`
+	req = httptest.NewRequest("POST", "/onvif/media_service", bytes.NewBufferString(reqBody))
+	w = httptest.NewRecorder()
+	srv.handleSOAP(w, req)
+	body, _ = io.ReadAll(w.Result().Body)
+	respStr = string(body)
+
+	if !strings.Contains(respStr, `token="VideoSource_1"`) || !strings.Contains(respStr, `token="VideoSource_2"`) {
+		t.Fatalf("expected both VideoSource_1 and VideoSource_2: %s", respStr)
+	}
+
+	// 3. Check GetStreamUri for each profile
+	for _, tc := range []struct {
+		profileToken string
+		expectedPath string
+	}{
+		{"Profile_einfahrt_Main", "einfahrt"},
+		{"Profile_garten_Main", "garten"},
+		{"Profile_garten_Sub", "garten"},
+		{"Profile_Main", "einfahrt"}, // fallback to primary
+	} {
+		reqBody = fmt.Sprintf(`<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
+  <s:Body><GetStreamUri xmlns="http://www.onvif.org/ver10/media/wsdl"><ProfileToken>%s</ProfileToken></GetStreamUri></s:Body>
+</s:Envelope>`, tc.profileToken)
+		req = httptest.NewRequest("POST", "/onvif/media_service", bytes.NewBufferString(reqBody))
+		w = httptest.NewRecorder()
+		srv.handleSOAP(w, req)
+		body, _ = io.ReadAll(w.Result().Body)
+		expectedURI := fmt.Sprintf("rtsp://example.com:8554/%s", tc.expectedPath)
+		if !strings.Contains(string(body), expectedURI) {
+			t.Errorf("GetStreamUri for %s did not contain %s: %s", tc.profileToken, expectedURI, string(body))
+		}
+	}
+
+	// 4. Check REST API /api/cameras
+	req = httptest.NewRequest("GET", "/api/cameras", nil)
+	w = httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(w, req)
+	body, _ = io.ReadAll(w.Result().Body)
+	if !strings.Contains(string(body), `"einfahrt"`) || !strings.Contains(string(body), `"garten"`) {
+		t.Errorf("/api/cameras response missing cameras: %s", string(body))
+	}
+
+	// 5. Check PullMessages motion routing for Camera 2
+	reqBody = `<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
+  <s:Body><CreatePullPointSubscription xmlns="http://www.onvif.org/ver10/events/wsdl"/></s:Body>
+</s:Envelope>`
+	req = httptest.NewRequest("POST", "/onvif/event_service", bytes.NewBufferString(reqBody))
+	w = httptest.NewRecorder()
+	srv.handleSOAP(w, req)
+
+	// Trigger motion on camera 2
+	bus2.SetMotion(true)
+
+	reqBody = `<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
+  <s:Body><PullMessages xmlns="http://www.onvif.org/ver10/events/wsdl"/></s:Body>
+</s:Envelope>`
+	req = httptest.NewRequest("POST", "/onvif/event_service", bytes.NewBufferString(reqBody))
+	w = httptest.NewRecorder()
+	srv.handleSOAP(w, req)
+	body, _ = io.ReadAll(w.Result().Body)
+	respStr = string(body)
+
+	if !strings.Contains(respStr, `Value="VideoSourceConfig_2"`) || !strings.Contains(respStr, `Value="true"`) {
+		t.Fatalf("expected motion event for VideoSourceConfig_2: %s", respStr)
+	}
+
+	// 6. Check GetCapabilities returns dynamic VideoSources/AudioSources = 2
+	reqBody = `<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
+  <s:Body><GetCapabilities xmlns="http://www.onvif.org/ver10/device/wsdl"/></s:Body>
+</s:Envelope>`
+	req = httptest.NewRequest("POST", "/onvif/device_service", bytes.NewBufferString(reqBody))
+	w = httptest.NewRecorder()
+	srv.handleSOAP(w, req)
+	body, _ = io.ReadAll(w.Result().Body)
+	respStr = string(body)
+	if !strings.Contains(respStr, "<tt:VideoSources>2</tt:VideoSources>") ||
+		!strings.Contains(respStr, "<tt:AudioSources>2</tt:AudioSources>") {
+		t.Errorf("GetCapabilities should report 2 VideoSources and 2 AudioSources for 2 cameras: %s", respStr)
+	}
+
+	// 7. Check GetServices with IncludeCapability=true reports dynamic VideoSources = 2
+	reqBody = `<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
+  <s:Body><GetServices xmlns="http://www.onvif.org/ver10/device/wsdl"><IncludeCapability>true</IncludeCapability></GetServices></s:Body>
+</s:Envelope>`
+	req = httptest.NewRequest("POST", "/onvif/device_service", bytes.NewBufferString(reqBody))
+	w = httptest.NewRecorder()
+	srv.handleSOAP(w, req)
+	body, _ = io.ReadAll(w.Result().Body)
+	respStr = string(body)
+	if !strings.Contains(respStr, `VideoSources="2"`) || !strings.Contains(respStr, `AudioSources="2"`) {
+		t.Errorf("GetServices should report VideoSources=2 and AudioSources=2: %s", respStr)
+	}
+}
+
+func TestExtractXMLTag_NamespacesAndAttributes(t *testing.T) {
+	cases := []struct {
+		name     string
+		xml      string
+		tag      string
+		expected string
+	}{
+		{
+			name:     "plain tag",
+			xml:      `<ProfileToken>Profile_Main</ProfileToken>`,
+			tag:      "ProfileToken",
+			expected: "Profile_Main",
+		},
+		{
+			name:     "zeep ns0 namespace prefix",
+			xml:      `<ns0:GetStreamUri><ns0:ProfileToken>Profile_garten_Main</ns0:ProfileToken></ns0:GetStreamUri>`,
+			tag:      "ProfileToken",
+			expected: "Profile_garten_Main",
+		},
+		{
+			name:     "onvif trt namespace prefix with attributes",
+			xml:      `<trt:ProfileToken xmlns:trt="http://www.onvif.org/ver10/media/wsdl">Profile_einfahrt_Sub</trt:ProfileToken>`,
+			tag:      "ProfileToken",
+			expected: "Profile_einfahrt_Sub",
+		},
+		{
+			name:     "custom namespace prefix",
+			xml:      `<wsdl:ProfileToken>Profile_custom</wsdl:ProfileToken>`,
+			tag:      "ProfileToken",
+			expected: "Profile_custom",
+		},
+		{
+			name:     "self-closing tag with token attribute",
+			xml:      `<ProfileToken token="Profile_token_attr"/>`,
+			tag:      "ProfileToken",
+			expected: "Profile_token_attr",
+		},
+		{
+			name:     "namespaced self-closing tag with token attribute",
+			xml:      `<ns0:ProfileToken token="Profile_ns_token_attr"/>`,
+			tag:      "ProfileToken",
+			expected: "Profile_ns_token_attr",
+		},
+		{
+			name:     "tag with Value attribute fallback",
+			xml:      `<ProfileToken Value="Profile_value_attr"/>`,
+			tag:      "ProfileToken",
+			expected: "Profile_value_attr",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := extractXMLTag(tc.xml, tc.tag)
+			if got != tc.expected {
+				t.Errorf("extractXMLTag(%q, %q) = %q, want %q", tc.xml, tc.tag, got, tc.expected)
+			}
+		})
+	}
+}
+
+func TestMediaHandler_GetProfile_SingleAndMulti(t *testing.T) {
+	// 1. Single-camera mode
+	mhSingle := NewMediaHandler(8554, "steinel", "aac", 8000, nil, nil)
+	mhSingle.SetChannels([]CameraChannel{
+		{
+			Index:      1,
+			Name:       "Einfahrt",
+			Path:       "steinel",
+			AudioCodec: "aac",
+		},
+	})
+
+	// Request Profile_Main
+	reqMain := `<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body><ns0:GetProfile xmlns:ns0="http://www.onvif.org/ver10/media/wsdl"><ns0:ProfileToken>Profile_Main</ns0:ProfileToken></ns0:GetProfile></s:Body></s:Envelope>`
+	resp, err := mhSingle.Handle("GetProfile", reqMain, "192.168.1.50:8000")
+	if err != nil {
+		t.Fatalf("Handle GetProfile failed: %v", err)
+	}
+	if !strings.Contains(resp, "<trt:GetProfileResponse") || !strings.Contains(resp, `token="Profile_Main"`) {
+		t.Errorf("GetProfile Profile_Main response malformed: %s", resp)
+	}
+	if strings.Contains(resp, "<trt:Profiles") || strings.Contains(resp, "</trt:Profiles>") {
+		t.Errorf("GetProfile response must use singular <trt:Profile>, not <trt:Profiles>: %s", resp)
+	}
+
+	// Request Profile_Sub
+	reqSub := `<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body><ns0:GetProfile xmlns:ns0="http://www.onvif.org/ver10/media/wsdl"><ns0:ProfileToken>Profile_Sub</ns0:ProfileToken></ns0:GetProfile></s:Body></s:Envelope>`
+	resp, err = mhSingle.Handle("GetProfile", reqSub, "192.168.1.50:8000")
+	if err != nil {
+		t.Fatalf("Handle GetProfile failed: %v", err)
+	}
+	if !strings.Contains(resp, "<trt:GetProfileResponse") || !strings.Contains(resp, `token="Profile_Sub"`) {
+		t.Errorf("GetProfile Profile_Sub response malformed: %s", resp)
+	}
+
+	// 2. Multi-camera mode
+	mhMulti := NewMediaHandler(8554, "einfahrt", "aac", 8000, nil, nil)
+	mhMulti.SetChannels([]CameraChannel{
+		{
+			Index:      1,
+			Name:       "Einfahrt",
+			Path:       "einfahrt",
+			AudioCodec: "aac",
+		},
+		{
+			Index:      2,
+			Name:       "Garten",
+			Path:       "garten",
+			AudioCodec: "pcmu",
+		},
+	})
+
+	// Request Profile_garten_Main
+	reqGarten := `<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body><ns0:GetProfile xmlns:ns0="http://www.onvif.org/ver10/media/wsdl"><ns0:ProfileToken>Profile_garten_Main</ns0:ProfileToken></ns0:GetProfile></s:Body></s:Envelope>`
+	resp, err = mhMulti.Handle("GetProfile", reqGarten, "192.168.1.50:8000")
+	if err != nil {
+		t.Fatalf("Handle GetProfile failed: %v", err)
+	}
+	if !strings.Contains(resp, "<trt:GetProfileResponse") || !strings.Contains(resp, `token="Profile_garten_Main"`) {
+		t.Errorf("GetProfile Profile_garten_Main response malformed: %s", resp)
+	}
+	if strings.Contains(resp, "VideoSourceConfig_1") {
+		t.Errorf("GetProfile Profile_garten_Main should use VideoSourceConfig_2, but got VideoSourceConfig_1: %s", resp)
+	}
+
+	// Request Profile_einfahrt_Sub
+	reqEinfahrtSub := `<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body><ns0:GetProfile xmlns:ns0="http://www.onvif.org/ver10/media/wsdl"><ns0:ProfileToken>Profile_einfahrt_Sub</ns0:ProfileToken></ns0:GetProfile></s:Body></s:Envelope>`
+	resp, err = mhMulti.Handle("GetProfile", reqEinfahrtSub, "192.168.1.50:8000")
+	if err != nil {
+		t.Fatalf("Handle GetProfile failed: %v", err)
+	}
+	if !strings.Contains(resp, "<trt:GetProfileResponse") || !strings.Contains(resp, `token="Profile_einfahrt_Sub"`) {
+		t.Errorf("GetProfile Profile_einfahrt_Sub response malformed: %s", resp)
+	}
+}
+
+func TestMultiCameraONVIF_ZeepGetStreamUriAndSnapshot(t *testing.T) {
+	bus1 := events.NewBus()
+	bus2 := events.NewBus()
+
+	srv := NewServer(
+		8000, 8554, "einfahrt", "aac",
+		"dev-1", "prod-1", "L 625 CAM SC", "00:0C:43:00:01:02",
+		"", "", nil, nil, nil, nil, nil, bus1,
+	)
+
+	srv.SetChannels([]CameraChannel{
+		{
+			Index:      1,
+			Name:       "Einfahrt",
+			Path:       "einfahrt",
+			AudioCodec: "aac",
+			EventBus:   bus1,
+		},
+		{
+			Index:      2,
+			Name:       "Garten",
+			Path:       "garten",
+			AudioCodec: "pcmu",
+			EventBus:   bus2,
+		},
+	})
+
+	// Test 1: GetStreamUri with Home Assistant onvif-zeep dynamic prefix <ns0:ProfileToken>
+	reqBody := `<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
+  <s:Body>
+    <ns0:GetStreamUri xmlns:ns0="http://www.onvif.org/ver10/media/wsdl">
+      <ns0:ProfileToken>Profile_garten_Main</ns0:ProfileToken>
+    </ns0:GetStreamUri>
+  </s:Body>
+</s:Envelope>`
+	req := httptest.NewRequest("POST", "/onvif/media_service", bytes.NewBufferString(reqBody))
+	w := httptest.NewRecorder()
+	srv.handleSOAP(w, req)
+	body, _ := io.ReadAll(w.Result().Body)
+	if !strings.Contains(string(body), "rtsp://example.com:8554/garten") {
+		t.Fatalf("GetStreamUri for Profile_garten_Main failed to route to /garten: %s", string(body))
+	}
+
+	// Test 2: GetStreamUri for Einfahrt with <trt:ProfileToken>
+	reqBody = `<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
+  <s:Body>
+    <trt:GetStreamUri xmlns:trt="http://www.onvif.org/ver10/media/wsdl">
+      <trt:ProfileToken>Profile_einfahrt_Main</trt:ProfileToken>
+    </trt:GetStreamUri>
+  </s:Body>
+</s:Envelope>`
+	req = httptest.NewRequest("POST", "/onvif/media_service", bytes.NewBufferString(reqBody))
+	w = httptest.NewRecorder()
+	srv.handleSOAP(w, req)
+	body, _ = io.ReadAll(w.Result().Body)
+	if !strings.Contains(string(body), "rtsp://example.com:8554/einfahrt") {
+		t.Fatalf("GetStreamUri for Profile_einfahrt_Main failed to route to /einfahrt: %s", string(body))
+	}
+
+	// Test 3: GetSnapshotUri for Garten with <ns0:ProfileToken>
+	reqBody = `<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
+  <s:Body>
+    <ns0:GetSnapshotUri xmlns:ns0="http://www.onvif.org/ver10/media/wsdl">
+      <ns0:ProfileToken>Profile_garten_Main</ns0:ProfileToken>
+    </ns0:GetSnapshotUri>
+  </s:Body>
+</s:Envelope>`
+	req = httptest.NewRequest("POST", "/onvif/media_service", bytes.NewBufferString(reqBody))
+	w = httptest.NewRecorder()
+	srv.handleSOAP(w, req)
+	body, _ = io.ReadAll(w.Result().Body)
+	if !strings.Contains(string(body), "camera=garten") {
+		t.Fatalf("GetSnapshotUri for Profile_garten_Main failed to include ?camera=garten: %s", string(body))
+	}
+
+	// Test 4: GetSnapshotUri for Einfahrt with <ns0:ProfileToken>
+	reqBody = `<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
+  <s:Body>
+    <ns0:GetSnapshotUri xmlns:ns0="http://www.onvif.org/ver10/media/wsdl">
+      <ns0:ProfileToken>Profile_einfahrt_Main</ns0:ProfileToken>
+    </ns0:GetSnapshotUri>
+  </s:Body>
+</s:Envelope>`
+	req = httptest.NewRequest("POST", "/onvif/media_service", bytes.NewBufferString(reqBody))
+	w = httptest.NewRecorder()
+	srv.handleSOAP(w, req)
+	body, _ = io.ReadAll(w.Result().Body)
+	if !strings.Contains(string(body), "camera=einfahrt") {
+		t.Fatalf("GetSnapshotUri for Profile_einfahrt_Main failed to include ?camera=einfahrt: %s", string(body))
 	}
 }

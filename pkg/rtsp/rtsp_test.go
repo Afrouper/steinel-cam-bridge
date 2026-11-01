@@ -364,3 +364,60 @@ func TestServer_AuthInheritance(t *testing.T) {
 	assert.Nil(t, resp)
 	assert.Equal(t, true, conn.UserData(), "Connection should have inherited authentication from session")
 }
+
+func TestMultiStreamRegistrationAndRouting(t *testing.T) {
+	srv, err := NewServer(8574, "einfahrt", "aac", "", "")
+	assert.NoError(t, err)
+	defer srv.Close()
+
+	// Register second and third stream
+	st2, err := srv.RegisterStream("garten", "pcmu")
+	assert.NoError(t, err)
+	assert.NotNil(t, st2)
+
+	st3, err := srv.RegisterStream("haustuer", "aac")
+	assert.NoError(t, err)
+	assert.NotNil(t, st3)
+
+	// Verify paths
+	assert.True(t, srv.checkPath("einfahrt"))
+	assert.True(t, srv.checkPath("/einfahrt"))
+	assert.True(t, srv.checkPath("einfahrt/main"))
+	assert.True(t, srv.checkPath("garten"))
+	assert.True(t, srv.checkPath("/garten/trackID=0"))
+	assert.True(t, srv.checkPath("haustuer"))
+	assert.False(t, srv.checkPath("garage"))
+
+	// Stream retrieval
+	assert.Equal(t, "einfahrt", srv.GetStream("einfahrt").PathName())
+	assert.Equal(t, "garten", srv.GetStream("garten").PathName())
+	assert.Equal(t, "haustuer", srv.GetStream("haustuer").PathName())
+	assert.Nil(t, srv.GetStream("garage"))
+
+	// Verify findStreamForPath
+	assert.Equal(t, srv.GetStream("einfahrt"), srv.findStreamForPath("einfahrt"))
+	assert.Equal(t, srv.GetStream("garten"), srv.findStreamForPath("/garten/sub"))
+	assert.Equal(t, srv.PrimaryStream(), srv.findStreamForPath("live"))
+	assert.Equal(t, srv.PrimaryStream(), srv.findStreamForPath("steinel"))
+
+	// Verify Backchannel callback isolation
+	var bcCalled1, bcCalled2 bool
+	srv.GetStream("einfahrt").SetAudioBackchannelHandler(func(pkt *rtp.Packet) error {
+		bcCalled1 = true
+		return nil
+	})
+	srv.GetStream("garten").SetAudioBackchannelHandler(func(pkt *rtp.Packet) error {
+		bcCalled2 = true
+		return nil
+	})
+
+	testPkt := &rtp.Packet{
+		Header:  rtp.Header{PayloadType: 0, SequenceNumber: 1},
+		Payload: make([]byte, 160),
+	}
+	sess1 := &gortsplib.ServerSession{}
+	srv.GetStream("einfahrt").handleBackchannelPacket(nil, testPkt, "TEST", sess1)
+
+	assert.True(t, bcCalled1, "Stream 1 backchannel handler should be called")
+	assert.False(t, bcCalled2, "Stream 2 backchannel handler should NOT be called")
+}

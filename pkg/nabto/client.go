@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -154,6 +155,9 @@ func (c *Client) Connect() error {
 		isNewKey = true
 
 		// Write key to disk immediately so subsequent reconnect attempts load the same key
+		if dir := filepath.Dir(c.cfg.KeyPath); dir != "" && dir != "." {
+			_ = os.MkdirAll(dir, 0755)
+		}
 		if err := os.WriteFile(c.cfg.KeyPath, []byte(privKey), 0600); err != nil {
 			logger.Warn("Nabto", "⚠️ Could not save new key to %s: %v", c.cfg.KeyPath, err)
 		} else {
@@ -255,6 +259,9 @@ func (c *Client) Connect() error {
 			if err := c.pairPassword(c.cfg.PairPwd); err != nil {
 				logger.Error("IAM", "❌ Initial pairing failed: %v", err)
 				return fmt.Errorf("initial pairing failed: %w", err)
+			}
+			if dir := filepath.Dir(c.cfg.KeyPath); dir != "" && dir != "." {
+				_ = os.MkdirAll(dir, 0755)
 			}
 			if err := os.WriteFile(c.cfg.KeyPath, []byte(c.privateKey), 0600); err != nil {
 				logger.Warn("Nabto", "⚠️ Could not save key to %s: %v", c.cfg.KeyPath, err)

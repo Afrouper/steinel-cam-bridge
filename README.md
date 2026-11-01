@@ -95,6 +95,12 @@ an der Hardware.
 
 - **Autarkes Single-Binary**: Kein Python, kein Node.js und kein separater MediaMTX-Server erforderlich.
   - Im Betrieb als HomeAssistant AddOn Image mit minimalsten Abhängigkeiten.
+- **Mehrkamera-Betrieb (Multi-Camera Support)**:
+  - Gleichzeitiger Betrieb mehrerer Kameras über eine einzige Bridge-Instanz ohne zusätzliche Server-Ports.
+  - RTSP-Streaming über getrennte URL-Pfade (z. B. `rtsp://<host>:8554/steinel-einfahrt`, `rtsp://<host>:8554/steinel-garten`).
+  - ONVIF Profile S/T/G mit getrennten Video-Sources und Channels für NVR-Systeme (z. B. Synology Surveillance Station, Scrypted).
+  - MQTT Auto-Discovery mit individuellen Gerätenamen (`Steinel Einfahrt`, `Steinel Garten`) unter kollisionsfreien Topics (`steinel/<DeviceID>/...`).
+  - 100 % abwärtskompatibel zu bestehenden Einzelkamera-Konfigurationen.
 - **24/7 Resilienz & Watchdog**: RTP-Silence Watchdog, 30s Cooldown, mDNS-Wakeup.
 
 ---
@@ -270,6 +276,8 @@ Die Konfiguration erfolgt nach den Grundsätzen einer [12-Factor App](https://12
 | `CAMERA_PASSWORD` / `CAMERA_PASS` | `-pass` *(oder `-password`)* | `""` | Geräte-Passwort für L 620 CAM (in der Steinel-App vergeben) |
 | `BRIDGE_USER` | `-bridge-user` | `""` | Optionaler Benutzername für den Zugangsschutz der Bridge (RTSP, ONVIF, REST). Leer = offener Zugriff |
 | `BRIDGE_PASS` / `BRIDGE_PASSWORD` | `-bridge-pass` *(oder `-bridge-password`)* | `""` | Optionales Passwort für den Zugangsschutz der Bridge (RTSP Digest/Basic, ONVIF HTTP Digest / WS-Security, REST API) |
+| `BRIDGE_MAC` | `-mac` | `00:0C:43:00:01:02` | Eindeutige virtuelle MAC-Adresse der Bridge für ONVIF NVRs (Standard: `00:0C:43:00:01:02`) |
+| `CONFIG_PATH` | `-config` | `""` | Pfad zu einer JSON-Konfigurationsdatei (z. B. für Mehrkamera-Setups) |
 | `QR_CODE` | `-qr` | `""` | QR-Code Payload aus der Steinel App ("Kamera teilen") für automatisches Pairing der L 625 CAM SC |
 | `KEY_PATH` | `-key` | `data/client.key` | Speicherpfad für den persistenten ECC-Schlüssel (L 625 CAM SC) |
 | `RESET_PAIRING` | `-reset-pairing` | `false` | Löscht den gespeicherten Private Key und erzwingt ein erneutes Pairing mit dem angegebenen QR-Code |
@@ -319,6 +327,33 @@ Die Bridge bietet für die **Steinel L 625 CAM SC** zwei austauschbare Nabto Edg
 | `MQTT_PASSWORD` | `-mqtt-pass` | `""` | MQTT Passwort |
 | `MQTT_TOPIC_PREFIX` | `-mqtt-topic` | `steinel` | MQTT Basis-Topic (Geräte-ID wird automatisch angehängt: `<prefix>/<did>/...`) |
 | `MQTT_DISCOVERY_PREFIX` | `-mqtt-disc` | `homeassistant` | Home Assistant MQTT Auto-Discovery Prefix |
+
+### 📸 Mehrkamera-Konfiguration (Multi-Camera)
+
+Über eine Konfigurationsdatei (z. B. `-config config.json` oder `/data/options.json` im Home Assistant Add-on) können beliebig viele Kameras parallel über dieselbe Instanz betrieben werden:
+
+```json
+{
+  "cameras": [
+    {
+      "name": "Einfahrt",
+      "camera_ip": "192.168.1.100",
+      "qr_code": "did=de-xxxxxxx,pid=pr-xxxxx,sct=xxxx,pairPwd=xxxx",
+      "rtsp_path": "steinel-einfahrt"
+    },
+    {
+      "name": "Garten",
+      "camera_ip": "192.168.1.101",
+      "camera_type": "l620",
+      "camera_password": "meinpasswort",
+      "rtsp_path": "steinel-garten"
+    }
+  ],
+  "mqtt_broker": "tcp://192.168.1.50:1883"
+}
+```
+
+Jede Kamera erhält automatisch einen eigenen RTSP-Stream-Pfad (`/steinel-einfahrt`, `/steinel-garten`), ein eigenes ONVIF-Profil (`Profile_steinel-einfahrt_Main`, `Profile_steinel-garten_Main`), eine abgeleitete virtuelle MAC-Adresse und separate MQTT-Steuerungsobjekte in Home Assistant.
 
 ---
 

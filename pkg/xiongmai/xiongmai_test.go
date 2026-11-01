@@ -11,10 +11,15 @@ import (
 	"io"
 	"net"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/Afrouper/steinel-cam-bridge/pkg/audio"
+	"github.com/Afrouper/steinel-cam-bridge/pkg/rtsp"
 	"github.com/pion/rtp"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestHeaderEncodeDecode(t *testing.T) {
@@ -290,7 +295,11 @@ func TestTalkAudioPacketForwarding(t *testing.T) {
 	defer func() { _ = listener.Close() }()
 
 	port := listener.Addr().(*net.TCPAddr).Port
-	receivedAudioFrames := make(chan []byte, 10)
+	type receivedPacket struct {
+		channel byte
+		payload []byte
+	}
+	receivedAudioFrames := make(chan receivedPacket, 10)
 
 	go func() {
 		conn, err := listener.Accept()
@@ -321,7 +330,7 @@ func TestTalkAudioPacketForwarding(t *testing.T) {
 				respHdr := Header{Magic: HeaderMagic, SessionID: 1, Sequence: hdr.Sequence, MsgID: MsgLoginResp, DataLength: uint32(len(respWithTerm))}
 				_, _ = conn.Write(append(respHdr.Encode(), respWithTerm...))
 			case MsgTalkClaimReq, MsgTalkClaimV2Req:
-				resp := []byte(`{"Name":"OPTalk","Ret":100}`)
+				resp := []byte(`{"Name":"OPTalk","Ret":100,"AudioFormat":{"BitRate":64,"EncodeType":"G711_ALAW","SampleBit":16,"SampleRate":8000}}`)
 				respWithTerm := append(resp, 0x0A, 0x00)
 				respHdr := Header{Magic: HeaderMagic, SessionID: 1, Sequence: hdr.Sequence, MsgID: hdr.MsgID + 1, DataLength: uint32(len(respWithTerm))}
 				_, _ = conn.Write(append(respHdr.Encode(), respWithTerm...))
@@ -331,7 +340,7 @@ func TestTalkAudioPacketForwarding(t *testing.T) {
 				respHdr := Header{Magic: HeaderMagic, SessionID: 1, Sequence: hdr.Sequence, MsgID: MsgTalkControlResp, DataLength: uint32(len(respWithTerm))}
 				_, _ = conn.Write(append(respHdr.Encode(), respWithTerm...))
 			case MsgTalkSendData, MsgTalkAudioData:
-				receivedAudioFrames <- payload
+				receivedAudioFrames <- receivedPacket{channel: hdr.Channel, payload: payload}
 			default:
 				resp := []byte(`{"Ret":100}`)
 				respWithTerm := append(resp, 0x0A, 0x00)
@@ -352,7 +361,7 @@ func TestTalkAudioPacketForwarding(t *testing.T) {
 
 	talk := NewTalkClient(client)
 
-	// Send an RTP G.711 Audio Packet from RTSP Backchannel
+	// Send an RTP G.711 Audio Packet from RTSP Backchannel (PCMU, PT=0)
 	rtpPkt := &rtp.Packet{
 		Header: rtp.Header{
 			PayloadType:    0,
@@ -369,9 +378,12 @@ func TestTalkAudioPacketForwarding(t *testing.T) {
 
 	select {
 	case frame := <-receivedAudioFrames:
-		if len(frame) != len(rtpPkt.Payload) {
-			t.Errorf("expected frame length %d, got %d", len(rtpPkt.Payload), len(frame))
+		if len(frame.payload) != len(rtpPkt.Payload) {
+			t.Errorf("expected frame length %d, got %d", len(rtpPkt.Payload), len(frame.payload))
 		}
+		expectedPCMA := audio.TranscodePCMUToPCMA(rtpPkt.Payload)
+		assert.Equal(t, expectedPCMA, frame.payload, "Audio payload must be transcoded from PCMU to PCMA for L 620 speaker DAC")
+		assert.Equal(t, byte(0), frame.channel, "Audio data channel must be 0 (unencrypted raw PCM audio)")
 	case <-time.After(1 * time.Second):
 		t.Fatalf("timeout waiting for talk audio frame on TCP socket")
 	}
@@ -622,6 +634,29 @@ func TestAES128CBC(t *testing.T) {
 	}
 }
 
+func TestEncryptDecryptSessionPayload(t *testing.T) {
+	c := &Client{
+		communicateKey: []byte("0123456789abcdef"),
+	}
+	plainJSON := []byte(`{"Name":"OPMonitor","OPMonitor":{"Action":"Start","Parameter":{"Channel":0,"CombinMode":"NONE","StreamType":"Main","TransMode":"TCP"}},"SessionID":"0x000000007b"}`)
+
+	enc, err := c.EncryptSessionPayload(plainJSON)
+	if err != nil {
+		t.Fatalf("EncryptSessionPayload failed: %v", err)
+	}
+	if len(enc) == 0 || enc[len(enc)-1] != 0x00 {
+		t.Fatalf("expected trailing null byte, got len=%d", len(enc))
+	}
+
+	dec, err := c.DecryptSessionPayload(enc)
+	if err != nil {
+		t.Fatalf("DecryptSessionPayload failed: %v", err)
+	}
+	if string(dec) != string(plainJSON) {
+		t.Fatalf("decrypted JSON mismatch: got %q, want %q", string(dec), string(plainJSON))
+	}
+}
+
 func TestRSACrypto(t *testing.T) {
 	privKey, err := rsa.GenerateKey(rand.Reader, 1024)
 	if err != nil {
@@ -738,23 +773,28 @@ func TestAdaptiveRSALogin(t *testing.T) {
 				_, _ = conn.Write(append(respHdr.Encode(), respPayloadWithTerm...))
 
 			case MsgLoginReq: // 1000
-				cleanB64 := strings.TrimRight(string(payload), "\x00\r\n ")
-				cipherBytes, decErr := base64.StdEncoding.DecodeString(cleanB64)
-				if decErr != nil {
-					return
-				}
-				plainJSON, decErr := decryptAES128CBC([]byte(DefaultSofiaAESKey), cipherBytes)
-				if decErr != nil {
-					return
-				}
-
 				var req LoginReq
-				if err := json.Unmarshal(plainJSON, &req); err != nil {
-					return
+				cleanPayload := strings.TrimRight(string(payload), "\x00\r\n ")
+				if strings.HasPrefix(cleanPayload, "{") {
+					if err := json.Unmarshal([]byte(cleanPayload), &req); err != nil {
+						return
+					}
+				} else {
+					cipherBytes, decErr := base64.StdEncoding.DecodeString(cleanPayload)
+					if decErr != nil {
+						return
+					}
+					plainJSON, decErr := decryptAES128CBC([]byte(DefaultSofiaAESKey), cipherBytes)
+					if decErr != nil {
+						return
+					}
+					if err := json.Unmarshal(plainJSON, &req); err != nil {
+						return
+					}
 				}
 
-				// Validate that request uses RSA-encrypted fields and LoginType DVRIP-FutureHome
-				if req.LoginType != "DVRIP-FutureHome" || req.EncryptType != "MD5" {
+				// Validate that request uses RSA-encrypted fields and LoginType DVRIP-FutureHome or DVRIP-Xm030
+				if (req.LoginType != "DVRIP-FutureHome" && req.LoginType != "DVRIP-Xm030") || req.EncryptType != "MD5" {
 					return
 				}
 
@@ -920,19 +960,24 @@ func TestAdaptiveRSALoginCandidatesFallback(t *testing.T) {
 				_, _ = conn.Write(append(respHdr.Encode(), respPayloadWithTerm...))
 
 			case MsgLoginReq: // 1000
-				cleanB64 := strings.TrimRight(string(payload), "\x00\r\n ")
-				cipherBytes, decErr := base64.StdEncoding.DecodeString(cleanB64)
-				if decErr != nil {
-					return
-				}
-				plainJSON, decErr := decryptAES128CBC([]byte(DefaultSofiaAESKey), cipherBytes)
-				if decErr != nil {
-					return
-				}
-
 				var req LoginReq
-				if err := json.Unmarshal(plainJSON, &req); err != nil {
-					return
+				cleanPayload := strings.TrimRight(string(payload), "\x00\r\n ")
+				if strings.HasPrefix(cleanPayload, "{") {
+					if err := json.Unmarshal([]byte(cleanPayload), &req); err != nil {
+						return
+					}
+				} else {
+					cipherBytes, decErr := base64.StdEncoding.DecodeString(cleanPayload)
+					if decErr != nil {
+						return
+					}
+					plainJSON, decErr := decryptAES128CBC([]byte(DefaultSofiaAESKey), cipherBytes)
+					if decErr != nil {
+						return
+					}
+					if err := json.Unmarshal(plainJSON, &req); err != nil {
+						return
+					}
 				}
 
 				// Decrypt CommunicateKey and verify it is a 16-char alphanumeric string
@@ -1173,11 +1218,14 @@ func TestEncryptedPostLoginControlMessages(t *testing.T) {
 				_, _ = conn.Write(append(respHdr.Encode(), respPayloadWithTerm...))
 
 			case MsgLoginReq: // 1000
-				cipherBytes, _ := base64.StdEncoding.DecodeString(cleanPayload)
-				plainJSON, _ := decryptAES128CBC([]byte(DefaultSofiaAESKey), cipherBytes)
-
 				var req LoginReq
-				_ = json.Unmarshal(plainJSON, &req)
+				if strings.HasPrefix(cleanPayload, "{") {
+					_ = json.Unmarshal([]byte(cleanPayload), &req)
+				} else {
+					cipherBytes, _ := base64.StdEncoding.DecodeString(cleanPayload)
+					plainJSON, _ := decryptAES128CBC([]byte(DefaultSofiaAESKey), cipherBytes)
+					_ = json.Unmarshal(plainJSON, &req)
+				}
 
 				commCipher, _ := hex.DecodeString(req.CommunicateKey)
 				//nolint:staticcheck // Mock server decrypting RSA_V1.5 in test
@@ -1869,4 +1917,246 @@ func TestSuperviseSofiaLoop(t *testing.T) {
 	if d.client.GetSessionID() != 0x05 {
 		t.Errorf("expected session ID 0x05, got 0x%08X", d.client.GetSessionID())
 	}
+}
+
+func TestClientCloseReconnectNoPanic(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer func() { _ = l.Close() }()
+
+	go func() {
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer func() { _ = c.Close() }()
+				buf := make([]byte, 1024)
+				for {
+					n, err := c.Read(buf)
+					if err != nil || n < HeaderLength {
+						return
+					}
+					hdr, err := DecodeHeader(buf[:HeaderLength])
+					if err != nil {
+						return
+					}
+					switch hdr.MsgID {
+					case MsgLoginReq:
+						resp := LoginResp{
+							Name:      "OPUserLogin",
+							Ret:       100,
+							SessionID: "0x00000001",
+						}
+						respData, _ := json.Marshal(resp)
+						respTerm := append(respData, 0x00)
+						rHdr := Header{
+							Magic:      HeaderMagic,
+							Channel:    0,
+							SessionID:  0x01,
+							Sequence:   hdr.Sequence,
+							MsgID:      MsgLoginResp,
+							DataLength: uint32(len(respTerm)),
+						}
+						_, _ = c.Write(append(rHdr.Encode(), respTerm...))
+					default:
+						respPayload := []byte(`{"Ret":100}`)
+						respTerm := append(respPayload, 0x00)
+						respHdr := &Header{
+							Magic:      HeaderMagic,
+							Channel:    hdr.Channel,
+							SessionID:  hdr.SessionID,
+							Sequence:   hdr.Sequence,
+							MsgID:      hdr.MsgID + 1,
+							DataLength: uint32(len(respTerm)),
+						}
+						_, _ = c.Write(append(respHdr.Encode(), respTerm...))
+					}
+				}
+			}(conn)
+		}
+	}()
+
+	client := NewClient("127.0.0.1", l.Addr().(*net.TCPAddr).Port, "admin", "")
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	// 1. First Connect & Close
+	err = client.Connect(ctx)
+	require.NoError(t, err)
+	err = client.Close()
+	require.NoError(t, err)
+
+	// 2. Second Connect & Close (must NOT panic on closing closed channel)
+	err = client.Connect(ctx)
+	require.NoError(t, err)
+	err = client.Close()
+	require.NoError(t, err)
+
+	// 3. Duplicate Close (must be idempotent and NOT panic)
+	err = client.Close()
+	require.NoError(t, err)
+}
+
+func TestSendRawPacketTimeoutClosesConn(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer func() { _ = l.Close() }()
+
+	// Mock server that accepts connection but never replies, simulating timeout
+	go func() {
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				buf := make([]byte, 1024)
+				_, _ = c.Read(buf)
+				time.Sleep(1 * time.Second)
+				_ = c.Close()
+			}(conn)
+		}
+	}()
+
+	client := NewClient("127.0.0.1", l.Addr().(*net.TCPAddr).Port, "admin", "")
+	conn, err := net.Dial("tcp", l.Addr().String())
+	require.NoError(t, err)
+	client.conn = conn
+	client.isLoggedIn = true
+
+	// Send raw packet with an expired deadline
+	client.mu.Lock()
+	_ = client.conn.SetDeadline(time.Now().Add(-10 * time.Millisecond))
+	_, _, sendErr := client.sendRawPacketWithHeaderLocked(MsgFileSearchReq, 0, 0, 0x01, []byte("{}"))
+	client.mu.Unlock()
+
+	require.Error(t, sendErr)
+	assert.Nil(t, client.conn, "client.conn must be nil after timeout to prevent desynchronization")
+	assert.False(t, client.isLoggedIn, "client.isLoggedIn must be false after connection loss")
+}
+
+func TestClientConnectNilConnOnFailure(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer func() { _ = l.Close() }()
+
+	// Server accepts and immediately closes to trigger EOF during login
+	go func() {
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				return
+			}
+			_ = conn.Close()
+		}
+	}()
+
+	client := NewClient("127.0.0.1", l.Addr().(*net.TCPAddr).Port, "admin", "")
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+
+	// Connect must cleanly return error without panicking on nil c.conn
+	err = client.Connect(ctx)
+	require.Error(t, err)
+	assert.Nil(t, client.conn)
+}
+
+type mockOnDemandRTSPServer struct {
+	clients atomic.Int64
+}
+
+func (m *mockOnDemandRTSPServer) WriteVideoPacket(pkt *rtp.Packet)                                {}
+func (m *mockOnDemandRTSPServer) WriteAACFrame(au []byte, pts time.Duration)                      {}
+func (m *mockOnDemandRTSPServer) WriteAudioPacket(pkt *rtp.Packet)                                {}
+func (m *mockOnDemandRTSPServer) GetAudioCodec() string                                           { return "aac" }
+func (m *mockOnDemandRTSPServer) SetAudioBackchannelHandler(handler rtsp.AudioBackchannelHandler) {}
+func (m *mockOnDemandRTSPServer) SetOnPlayHandler(handler rtsp.OnPlayHandler)                     {}
+func (m *mockOnDemandRTSPServer) ActiveClients() int64                                            { return m.clients.Load() }
+
+var _ rtsp.MediaStream = (*mockOnDemandRTSPServer)(nil)
+
+func TestDriverOnDemandStreaming(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer func() { _ = l.Close() }()
+
+	port := l.Addr().(*net.TCPAddr).Port
+
+	// Mock Sofia server handling login, OPTrans and OPMonitor
+	go func() {
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer func() { _ = c.Close() }()
+				buf := make([]byte, 1024)
+				for {
+					n, err := c.Read(buf)
+					if err != nil || n < HeaderLength {
+						return
+					}
+					hdr, err := DecodeHeader(buf[:HeaderLength])
+					if err != nil {
+						return
+					}
+					switch hdr.MsgID {
+					case MsgLoginReq:
+						resp, _ := json.Marshal(LoginResp{Ret: 100, SessionID: "0x0A"})
+						respHdr := Header{Magic: HeaderMagic, SessionID: 0x0A, Sequence: hdr.Sequence, MsgID: MsgLoginResp, DataLength: uint32(len(resp) + 2)}
+						_, _ = c.Write(append(respHdr.Encode(), append(resp, 0x0A, 0x00)...))
+					case MsgTransStartReq:
+						resp, _ := json.Marshal(map[string]interface{}{"Ret": 100, "SessionID": "0x0000000A"})
+						respHdr := Header{Magic: HeaderMagic, SessionID: 0x0A, Sequence: hdr.Sequence, MsgID: MsgTransStartResp, DataLength: uint32(len(resp) + 2)}
+						_, _ = c.Write(append(respHdr.Encode(), append(resp, 0x0A, 0x00)...))
+					case MsgMonitorClaimReq, MsgMonitorClaimResp:
+						resp := []byte(`{"Name":"OPMonitor","Ret":100}` + "\x00")
+						respHdr := Header{Magic: HeaderMagic, SessionID: 0x0A, Sequence: hdr.Sequence, MsgID: MsgMonitorClaimResp, DataLength: uint32(len(resp))}
+						_, _ = c.Write(append(respHdr.Encode(), resp...))
+					case MsgMonitorStartReq:
+						resp := []byte(`{"Name":"OPMonitor","Ret":100}` + "\x00")
+						respHdr := Header{Magic: HeaderMagic, SessionID: 0x0A, Sequence: hdr.Sequence, MsgID: MsgMonitorStartResp, DataLength: uint32(len(resp))}
+						_, _ = c.Write(append(respHdr.Encode(), resp...))
+					default:
+						resp := []byte(`{"Ret":100}` + "\x00")
+						respHdr := Header{Magic: HeaderMagic, SessionID: 0x0A, Sequence: hdr.Sequence, MsgID: hdr.MsgID + 1, DataLength: uint32(len(resp))}
+						_, _ = c.Write(append(respHdr.Encode(), resp...))
+					}
+				}
+			}(conn)
+		}
+	}()
+
+	mockStream := &mockOnDemandRTSPServer{}
+	d := NewDriver("127.0.0.1", "admin", "", "1080p", mockStream, nil)
+	d.client.addr = fmt.Sprintf("127.0.0.1:%d", port)
+	d.sofiaStream.port = port
+	defer func() { _ = d.Close() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Start with 0 active clients
+	mockStream.clients.Store(0)
+	err = d.Start(ctx)
+	require.NoError(t, err)
+
+	// Stream must NOT be running when active clients == 0 (On-Demand idle)
+	assert.False(t, d.sofiaStream.IsRunning(), "Sofia stream must remain idle when ActiveClients == 0")
+
+	// Trigger on-demand streaming when an RTSP client connects
+	mockStream.clients.Store(1)
+	d.RequestKeyframe()
+
+	// Wait for stream to start
+	require.Eventually(t, func() bool {
+		return d.sofiaStream.IsRunning()
+	}, 2*time.Second, 50*time.Millisecond, "Sofia stream must start when an active client connects")
+
+	// Stop stream when clients disconnect
+	d.stopSofiaStream()
+	assert.False(t, d.sofiaStream.IsRunning(), "Sofia stream must stop when stopSofiaStream is invoked")
 }
