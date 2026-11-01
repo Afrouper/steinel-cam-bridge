@@ -2,6 +2,18 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.5.0-beta.8
+
+### On-Demand Streaming für L 620 CAM & Stabilitäts-Fixes
+
+- **On-Demand Sofia Streaming für L 620 CAM (Issue #56)**:
+  - Die Kamera-Videoübertragung über Port 34567 wird nur noch bei aktiven RTSP-Zuschauern gestartet (`OPMonitor Start`) und geht nach einer Nachlaufzeit von 15 Sekunden ohne aktive Clients in den Ruhezustand (`OPMonitor Stop`, 0 Pakete/s).
+  - Die Steuerungs- und Telemetrieverbindung (Licht, Dimmer, Dämmerung, PIR) bleibt 24/7 dauerhaft aktiv.
+- **Fix Reconnect Nil-Pointer-Crash (Issue #56)**:
+  - Absicherung der Verbindungsbereinigung in `Client.Connect` bei fehlgeschlagenem Login.
+- **SD-Karten-Abfrage Optimierung (Issue #56)**:
+  - Begrenzung des initialen Abfragezeitfensters auf 4 Stunden und Auffrischung der Lese-Deadlines gegen Timeouts bei vollen Speicherkarten.
+
 ## 1.5.0-beta.7
 
 ### Multi-Kamera-Betrieb & L 620 CAM Anpassungen
