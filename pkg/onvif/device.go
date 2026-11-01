@@ -9,15 +9,30 @@ import (
 )
 
 type DeviceHandler struct {
-	deviceID   string
-	productID  string
-	model      string
-	macAddress string
-	onvifPort  int
-	rtspPort   int
-	authUser   string
-	rebootFunc func() error
-	eventBus   *events.Bus
+	deviceID     string
+	productID    string
+	model        string
+	macAddress   string
+	onvifPort    int
+	rtspPort     int
+	authUser     string
+	rebootFunc   func() error
+	eventBus     *events.Bus
+	channelsFunc func() []CameraChannel
+}
+
+// SetChannelsFunc sets the callback for querying registered camera channels.
+func (h *DeviceHandler) SetChannelsFunc(f func() []CameraChannel) {
+	h.channelsFunc = f
+}
+
+func (h *DeviceHandler) numSources() int {
+	if h.channelsFunc != nil {
+		if chs := h.channelsFunc(); len(chs) > 0 {
+			return len(chs)
+		}
+	}
+	return 1
 }
 
 func NewDeviceHandler(deviceID, productID, model string, onvifPort, rtspPort int, authUser string, macAddress string, rebootFunc func() error, eventBus *events.Bus) *DeviceHandler {
@@ -205,15 +220,15 @@ func (h *DeviceHandler) getCapabilities(host string) string {
     <tt:Extension>
       <tt:DeviceIO>
         <tt:XAddr>%s</tt:XAddr>
-        <tt:VideoSources>1</tt:VideoSources>
+        <tt:VideoSources>%d</tt:VideoSources>
         <tt:VideoOutputs>0</tt:VideoOutputs>
-        <tt:AudioSources>1</tt:AudioSources>
-        <tt:AudioOutputs>1</tt:AudioOutputs>
+        <tt:AudioSources>%d</tt:AudioSources>
+        <tt:AudioOutputs>%d</tt:AudioOutputs>
         <tt:RelayOutputs>1</tt:RelayOutputs>
       </tt:DeviceIO>
     </tt:Extension>
   </tds:Capabilities>
-</tds:GetCapabilitiesResponse>`, NS_TDS, NS_TT, deviceURL, eventURL, mediaURL, searchURL, replayURL, recordingURL, deviceIOURL)
+</tds:GetCapabilitiesResponse>`, NS_TDS, NS_TT, deviceURL, eventURL, mediaURL, searchURL, replayURL, recordingURL, deviceIOURL, h.numSources(), h.numSources(), h.numSources())
 }
 
 func (h *DeviceHandler) getServices(host string, reqXML ...string) string {
@@ -317,7 +332,7 @@ func (h *DeviceHandler) getServices(host string, reqXML ...string) string {
     <tds:Namespace>%s</tds:Namespace>
     <tds:XAddr>%s</tds:XAddr>
     <tds:Capabilities>
-      <tmd:Capabilities VideoSources="1" VideoOutputs="0" AudioSources="1" AudioOutputs="1" RelayOutputs="1"/>
+      <tmd:Capabilities VideoSources="%d" VideoOutputs="0" AudioSources="%d" AudioOutputs="%d" RelayOutputs="1"/>
     </tds:Capabilities>
     <tds:Version><tt:Major>2</tt:Major><tt:Minor>0</tt:Minor></tds:Version>
   </tds:Service>
@@ -340,7 +355,7 @@ func (h *DeviceHandler) getServices(host string, reqXML ...string) string {
 		NS_TDS, deviceURL,
 		NS_TRT, mediaURL,
 		NS_TEV, eventURL,
-		NS_TIO, deviceIOURL,
+		NS_TIO, deviceIOURL, h.numSources(), h.numSources(), h.numSources(),
 		NS_TSE, searchURL,
 		NS_TRP, replayURL,
 		NS_TRC, recordingURL)

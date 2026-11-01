@@ -89,6 +89,8 @@ func NewServer(
 		recordingProvider: recordingProvider,
 	}
 
+	s.deviceHandler.SetChannelsFunc(s.Channels)
+
 	// Register initial channel
 	s.channels = []CameraChannel{
 		{

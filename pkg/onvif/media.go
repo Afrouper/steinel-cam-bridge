@@ -2,6 +2,7 @@ package onvif
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -72,50 +73,60 @@ func (h *MediaHandler) Channels() []CameraChannel {
 	return result
 }
 
-func extractXMLTag(xmlStr, tag string) string {
-	startIdx := strings.Index(xmlStr, "<"+tag+">")
-	endTag := "</" + tag + ">"
-	if startIdx != -1 {
-		startIdx += len(tag) + 2
-		endIdx := strings.Index(xmlStr[startIdx:], endTag)
-		if endIdx != -1 {
-			return strings.TrimSpace(xmlStr[startIdx : startIdx+endIdx])
-		}
+var (
+	xmlTagRegexCache   = make(map[string]*regexp.Regexp)
+	xmlTagRegexCacheMu sync.RWMutex
+)
+
+func getXMLTagRegex(tag string) *regexp.Regexp {
+	xmlTagRegexCacheMu.RLock()
+	re, ok := xmlTagRegexCache[tag]
+	xmlTagRegexCacheMu.RUnlock()
+	if ok {
+		return re
 	}
-	for _, prefix := range []string{"trt:", "tt:", "tns1:"} {
-		pTag := "<" + prefix + tag + ">"
-		startIdx = strings.Index(xmlStr, pTag)
-		if startIdx != -1 {
-			startIdx += len(pTag)
-			endIdx := strings.Index(xmlStr[startIdx:], "</"+prefix+tag+">")
-			if endIdx != -1 {
-				return strings.TrimSpace(xmlStr[startIdx : startIdx+endIdx])
-			}
-		}
+
+	xmlTagRegexCacheMu.Lock()
+	defer xmlTagRegexCacheMu.Unlock()
+	if re, ok = xmlTagRegexCache[tag]; ok {
+		return re
+	}
+
+	// Matches:
+	// <tag>content</tag>
+	// <prefix:tag>content</prefix:tag>
+	// <tag attr="val">content</tag>
+	// <prefix:tag attr="val">content</prefix:tag>
+	pattern := fmt.Sprintf(`(?i)<(?:[a-zA-Z0-9_\-]+:)?%s(?:\s+[^>]*?)?>([^<]+)</(?:[a-zA-Z0-9_\-]+:)?%s>`, tag, tag)
+	re = regexp.MustCompile(pattern)
+	xmlTagRegexCache[tag] = re
+	return re
+}
+
+func extractXMLTag(xmlStr, tag string) string {
+	re := getXMLTagRegex(tag)
+	if match := re.FindStringSubmatch(xmlStr); len(match) > 1 {
+		return strings.TrimSpace(match[1])
+	}
+
+	// Fallback to checking attributes e.g. token="..." or ProfileToken="..." or Value="..."
+	if val := extractXMLAttr(xmlStr, tag, "token"); val != "" {
+		return strings.TrimSpace(val)
+	}
+	if val := extractXMLAttr(xmlStr, tag, "Value"); val != "" {
+		return strings.TrimSpace(val)
+	}
+	if val := extractXMLAttr(xmlStr, tag, tag); val != "" {
+		return strings.TrimSpace(val)
 	}
 	return ""
 }
 
 func extractXMLAttr(xmlStr, tag, attr string) string {
-	idx := strings.Index(xmlStr, "<"+tag)
-	if idx == -1 {
-		idx = strings.Index(xmlStr, "<trt:"+tag)
-	}
-	if idx == -1 {
-		return ""
-	}
-	sub := xmlStr[idx:]
-	endClose := strings.Index(sub, ">")
-	if endClose != -1 {
-		sub = sub[:endClose]
-	}
-	attrKey := attr + `="`
-	aIdx := strings.Index(sub, attrKey)
-	if aIdx != -1 {
-		aIdx += len(attrKey)
-		valEnd := strings.Index(sub[aIdx:], `"`)
-		if valEnd != -1 {
-			return sub[aIdx : aIdx+valEnd]
+	pattern := fmt.Sprintf(`(?i)<(?:[a-zA-Z0-9_\-]+:)?%s(?:\s+[^>]*?)?\s+%s="([^"]+)"`, tag, attr)
+	if re, err := regexp.Compile(pattern); err == nil {
+		if match := re.FindStringSubmatch(xmlStr); len(match) > 1 {
+			return strings.TrimSpace(match[1])
 		}
 	}
 	return ""
@@ -287,8 +298,65 @@ func (h *MediaHandler) getProfiles() string {
 	return sb.String()
 }
 
+func (h *MediaHandler) formatSingleProfileXML(token, name string, chIndex int, path string, isMain bool, audioCodec string) string {
+	p := h.formatProfileXML(token, name, chIndex, path, isMain, audioCodec)
+	p = strings.Replace(p, "<trt:Profiles ", "<trt:Profile ", 1)
+	p = strings.Replace(p, "</trt:Profiles>", "</trt:Profile>", 1)
+	return p
+}
+
 func (h *MediaHandler) getProfile(reqXML string) string {
-	return h.getProfiles()
+	channels := h.Channels()
+	reqToken := extractXMLTag(reqXML, "ProfileToken")
+
+	if len(channels) <= 1 {
+		codec := h.audioCodec
+		if len(channels) == 1 && channels[0].AudioCodec != "" {
+			codec = channels[0].AudioCodec
+		}
+		isMain := !strings.Contains(reqToken, "Sub")
+		token := "Profile_Main"
+		name := "MainStream 1080p"
+		if !isMain {
+			token = "Profile_Sub"
+			name = "SubStream 360p"
+		}
+		pXML := h.formatSingleProfileXML(token, name, 1, h.rtspPath, isMain, codec)
+		return fmt.Sprintf(`<trt:GetProfileResponse xmlns:trt="%s" xmlns:tt="%s">
+%s
+</trt:GetProfileResponse>`, NS_TRT, NS_TT, pXML)
+	}
+
+	var targetCh *CameraChannel
+	isMain := !strings.Contains(reqToken, "Sub")
+
+	for i := range channels {
+		ch := &channels[i]
+		if reqToken != "" && (reqToken == fmt.Sprintf("Profile_%s_Main", ch.Path) ||
+			reqToken == fmt.Sprintf("Profile_%s_Sub", ch.Path) ||
+			strings.Contains(reqToken, ch.Path)) {
+			targetCh = ch
+			break
+		} else if strings.Contains(reqXML, ch.Path) {
+			targetCh = ch
+			break
+		}
+	}
+	if targetCh == nil && len(channels) > 0 {
+		targetCh = &channels[0]
+	}
+
+	token := fmt.Sprintf("Profile_%s_Main", targetCh.Path)
+	name := fmt.Sprintf("%s MainStream 1080p", targetCh.Name)
+	if !isMain {
+		token = fmt.Sprintf("Profile_%s_Sub", targetCh.Path)
+		name = fmt.Sprintf("%s SubStream 360p", targetCh.Name)
+	}
+
+	pXML := h.formatSingleProfileXML(token, name, targetCh.Index, targetCh.Path, isMain, targetCh.AudioCodec)
+	return fmt.Sprintf(`<trt:GetProfileResponse xmlns:trt="%s" xmlns:tt="%s">
+%s
+</trt:GetProfileResponse>`, NS_TRT, NS_TT, pXML)
 }
 
 func (h *MediaHandler) getStreamUri(host string, reqXML string) string {
@@ -310,10 +378,14 @@ func (h *MediaHandler) getStreamUri(host string, reqXML string) string {
 				selectedPath = ch.Path
 				break
 			}
+		} else if strings.Contains(reqXML, ch.Path) {
+			selectedPath = ch.Path
+			break
 		}
 	}
 
 	rtspURL := fmt.Sprintf("rtsp://%s:%d/%s", ip, h.rtspPort, selectedPath)
+	logger.Info("ONVIF", "📹 GetStreamUri for profile '%s' -> %s", reqToken, rtspURL)
 
 	return fmt.Sprintf(`<trt:GetStreamUriResponse xmlns:trt="%s" xmlns:tt="%s">
   <trt:MediaUri>
@@ -343,10 +415,14 @@ func (h *MediaHandler) getSnapshotUri(host string, reqXML string) string {
 				selectedPath = ch.Path
 				break
 			}
+		} else if strings.Contains(reqXML, ch.Path) {
+			selectedPath = ch.Path
+			break
 		}
 	}
 
 	snapshotURL := fmt.Sprintf("http://%s:%d/api/sdcard/events/latest/snapshot.jpg?camera=%s", ip, h.onvifPort, selectedPath)
+	logger.Info("ONVIF", "📸 GetSnapshotUri for profile '%s' -> %s", reqToken, snapshotURL)
 
 	return fmt.Sprintf(`<trt:GetSnapshotUriResponse xmlns:trt="%s" xmlns:tt="%s">
   <trt:MediaUri>
