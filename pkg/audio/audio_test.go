@@ -28,6 +28,18 @@ func TestG711Decode(t *testing.T) {
 	assert.Equal(t, int16(8), pcmAlaw[0])
 }
 
+func TestG711Transcode(t *testing.T) {
+	silencePCMU := []byte{0xFF, 0xFF, 0xFF, 0xFF}
+	pcma := TranscodePCMUToPCMA(silencePCMU)
+	require.Equal(t, 4, len(pcma))
+
+	pcmuBack := TranscodePCMAToPCMU(pcma)
+	require.Equal(t, 4, len(pcmuBack))
+
+	assert.Nil(t, TranscodePCMUToPCMA(nil))
+	assert.Nil(t, TranscodePCMAToPCMU(nil))
+}
+
 func TestResampling(t *testing.T) {
 	src := []int16{0, 100, 200, 300}
 	resampled16k := Resample8kTo16k(src)

@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Afrouper/steinel-cam-bridge/pkg/audio"
 	"github.com/pion/rtp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -292,7 +293,11 @@ func TestTalkAudioPacketForwarding(t *testing.T) {
 	defer func() { _ = listener.Close() }()
 
 	port := listener.Addr().(*net.TCPAddr).Port
-	receivedAudioFrames := make(chan []byte, 10)
+	type receivedPacket struct {
+		channel byte
+		payload []byte
+	}
+	receivedAudioFrames := make(chan receivedPacket, 10)
 
 	go func() {
 		conn, err := listener.Accept()
@@ -323,7 +328,7 @@ func TestTalkAudioPacketForwarding(t *testing.T) {
 				respHdr := Header{Magic: HeaderMagic, SessionID: 1, Sequence: hdr.Sequence, MsgID: MsgLoginResp, DataLength: uint32(len(respWithTerm))}
 				_, _ = conn.Write(append(respHdr.Encode(), respWithTerm...))
 			case MsgTalkClaimReq, MsgTalkClaimV2Req:
-				resp := []byte(`{"Name":"OPTalk","Ret":100}`)
+				resp := []byte(`{"Name":"OPTalk","Ret":100,"AudioFormat":{"BitRate":64,"EncodeType":"G711_ALAW","SampleBit":16,"SampleRate":8000}}`)
 				respWithTerm := append(resp, 0x0A, 0x00)
 				respHdr := Header{Magic: HeaderMagic, SessionID: 1, Sequence: hdr.Sequence, MsgID: hdr.MsgID + 1, DataLength: uint32(len(respWithTerm))}
 				_, _ = conn.Write(append(respHdr.Encode(), respWithTerm...))
@@ -333,7 +338,7 @@ func TestTalkAudioPacketForwarding(t *testing.T) {
 				respHdr := Header{Magic: HeaderMagic, SessionID: 1, Sequence: hdr.Sequence, MsgID: MsgTalkControlResp, DataLength: uint32(len(respWithTerm))}
 				_, _ = conn.Write(append(respHdr.Encode(), respWithTerm...))
 			case MsgTalkSendData, MsgTalkAudioData:
-				receivedAudioFrames <- payload
+				receivedAudioFrames <- receivedPacket{channel: hdr.Channel, payload: payload}
 			default:
 				resp := []byte(`{"Ret":100}`)
 				respWithTerm := append(resp, 0x0A, 0x00)
@@ -354,7 +359,7 @@ func TestTalkAudioPacketForwarding(t *testing.T) {
 
 	talk := NewTalkClient(client)
 
-	// Send an RTP G.711 Audio Packet from RTSP Backchannel
+	// Send an RTP G.711 Audio Packet from RTSP Backchannel (PCMU, PT=0)
 	rtpPkt := &rtp.Packet{
 		Header: rtp.Header{
 			PayloadType:    0,
@@ -371,9 +376,12 @@ func TestTalkAudioPacketForwarding(t *testing.T) {
 
 	select {
 	case frame := <-receivedAudioFrames:
-		if len(frame) != len(rtpPkt.Payload) {
-			t.Errorf("expected frame length %d, got %d", len(rtpPkt.Payload), len(frame))
+		if len(frame.payload) != len(rtpPkt.Payload) {
+			t.Errorf("expected frame length %d, got %d", len(rtpPkt.Payload), len(frame.payload))
 		}
+		expectedPCMA := audio.TranscodePCMUToPCMA(rtpPkt.Payload)
+		assert.Equal(t, expectedPCMA, frame.payload, "Audio payload must be transcoded from PCMU to PCMA for L 620 speaker DAC")
+		assert.Equal(t, byte(0), frame.channel, "Audio data channel must be 0 (unencrypted raw PCM audio)")
 	case <-time.After(1 * time.Second):
 		t.Fatalf("timeout waiting for talk audio frame on TCP socket")
 	}

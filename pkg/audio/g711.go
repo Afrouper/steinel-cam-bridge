@@ -31,3 +31,21 @@ func DecodePCMA(src []byte) []int16 {
 	}
 	return dst
 }
+
+// TranscodePCMUToPCMA converts a slice of G.711 mu-law (PCMU) bytes into G.711 A-law (PCMA) bytes.
+func TranscodePCMUToPCMA(src []byte) []byte {
+	if len(src) == 0 {
+		return nil
+	}
+	raw := g711.DecodeUlaw(src)
+	return g711.EncodeAlaw(raw)
+}
+
+// TranscodePCMAToPCMU converts a slice of G.711 A-law (PCMA) bytes into G.711 mu-law (PCMU) bytes.
+func TranscodePCMAToPCMU(src []byte) []byte {
+	if len(src) == 0 {
+		return nil
+	}
+	raw := g711.DecodeAlaw(src)
+	return g711.EncodeUlaw(raw)
+}
