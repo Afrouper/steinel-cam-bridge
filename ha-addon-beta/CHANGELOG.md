@@ -2,6 +2,70 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.5.0-beta.6
+
+### 🚀 Nativer Sofia Video Ingest über Port 34567 für Steinel L 620 CAM (Issue #56)
+
+- **Natives H.264 Video-Streaming über Port 34567**:
+  - Direkter Empfang des Videostroms über das native Xiongmai Sofia/NetIP-Protokoll (`OPMonitor` MsgID 1410 / 1412).
+  - Vollständige Unabhängigkeit vom internen Kamera-RTSP-Port 554, der auf älteren Steinel L 620 CAM Firmware-Ständen (z. B. 2019er `V4.03.R12`) dauerhaft geschlossen ist.
+  - Zuverlässiges Demuxing von I-Frames (`00 00 01 FC`), P-Frames (`00 00 01 FD`) und Fortsetzungs-Chunks sowie RFC 6184 konforme RTP-Packetierung.
+- **Behebung des RSA-Login-Fehlers 124**:
+  - Korrektur der Authentifizierung via `LoginType: "DVRIP-Xm030"` mit Plaintext-Outer-JSON und RSA-PKCS#1-v1.5-Verschlüsselung des 8-stelligen Sofia-Hashes (`PassWord`) sowie des 16-stelligen Sitzungsschlüssels (`CommunicateKey`).
+- **Stabiler Dauerbetrieb & Bereinigung**:
+  - Heartbeat-Intervall auf 15 Sekunden angepasst (für das 20-Sekunden `AliveInterval` der Kamera).
+  - Entfernung überflüssiger `NetWork.RTSP` (1042) Aktivierungsbefehle beim Verbindungsaufbau.
+
+## 1.5.0-beta.5
+
+### 🐛 Fix Doppelter MQTT Auto-Discovery Publish beim Start
+
+- **Pruning von unkonfigurierten Platzhalter-Geräten**:
+  - Behebt ein Problem, bei dem auf Einzelkamera-Setups beim Verbindungsaufbau zum MQTT-Broker die Auto-Discovery Entities doppelt publiziert wurden.
+  - Wenn die `DeviceID` bereits aus dem QR-Code bekannt war, verblieb ein anfänglicher Platzhalter mit technischer ID neben der regulär registrierten Kamera in der Geräte-Map.
+  - Durch explizite Kennzeichnung und zuverlässige Bereinigung wird das Auto-Discovery beim Start nun garantiert exakt einmal pro Kamera publiziert.
+
+## 1.5.0-beta.4
+
+### 🐛 Stabilitäts-Fixes für den Multi-Kamera-Betrieb (Issue #57)
+
+- **Instanzsicherer AAC-Audiotranscoder (`pkg/audio/internal/aac`)**:
+  - Behebt einen `SIGSEGV` Absturz beim parallelen Kodieren von Audio-Streams mehrerer Kameras.
+  - Die bisherige Abhängigkeit nutzte ein globales CGo-Handle (`C.VO_HANDLE`), das bei mehreren Kameras überschrieben wurde. Der neue Encoder kapselt das Handle strikt pro Instanz und ist vollständig nebenläufig und thread-sicher.
+- **Zuverlässige Schlüssel-Pfade & `os.MkdirAll`**:
+  - Behebt Warnungen (`no such file or directory`) beim Speichern neuer Schlüsseldateien für nachgelagerte Kameras (`data/<path>_client.key`).
+  - Automatische Erstellung des Zielverzeichnisses (`os.MkdirAll`) vor dem Schreiben und konsistente Ableitung absoluter Pfade (`/data/<path>_client.key`).
+- **Gezielte MQTT-Device-Aktualisierung pro Kamera**:
+  - Behebt ein Problem, bei dem alle Kameras nach der Nabto P2P DeviceID-Erkennung mit dem Namen und den Topics der ersten Kamera überschrieben wurden.
+  - Jede Kamera wird unter ihrem eindeutigen Pfad (`cam.Path`) registriert und bei der Erkennung isoliert aktualisiert. Name, Topics (`steinel/<DeviceID>/...`) und Entitäten in Home Assistant bleiben für jede Kamera exakt erhalten.
+
+## 1.5.0-beta.3
+
+### 🐛 Fix Gerätename & 100 % Namens-Abwärtskompatibilität
+
+- **Wiederherstellung des ursprünglichen Home Assistant Gerätenamens**:
+  - Behebt ein Problem aus Beta 2, bei dem bestehende Einzelkamera-Installationen in Home Assistant automatisch in "Steinel Camera 1" umbenannt wurden.
+  - Ohne explizite Namensangabe meldet die Bridge in Home Assistant wie gewohnt den bewährten Namen `Steinel <Modell> (<DeviceID>)` (z. B. `Steinel L 625 CAM SC (de-xxxxxxx)`).
+- **Optionaler `camera_name` Parameter**:
+  - Auch für Einzelkamera-Setups kann nun direkt im Formular ein individueller Anzeigename festgelegt werden (`camera_name: "Einfahrt"` $\rightarrow$ `Steinel Einfahrt`).
+
+## 1.5.0-beta.2
+
+### 🚀 Vollwertiger Multi-Kamera-Betrieb (Issue #57)
+
+- **Paralleler Betrieb beliebig vieler Kameras über eine einzige Bridge-Instanz**:
+  - Konfiguration mehrerer Steinel-Kameras über den neuen Konfigurationsbereich **`cameras: [...]`** im Home Assistant Add-on.
+  - Jede Kamera kann individuell konfiguriert werden (`name`, `camera_ip`, `camera_type`, `qr_code`, `camera_password`, `camera_user`, `rtsp_path`, etc.).
+- **Keine zusätzlichen Server-Ports erforderlich**:
+  - **RTSP (`:8554`)**: Paralleles Live-Streaming über getrennte URL-Pfade (z. B. `rtsp://<host>:8554/steinel-einfahrt`, `rtsp://<host>:8554/steinel-garten`). Profile T Zwei-Wege-Audio (Gegensprechen) wird zielgerichtet an den Lautsprecher der jeweiligen Kamera geleitet.
+  - **ONVIF Profile S/T/G (`:8000`)**: Standardkonforme Bereitstellung getrennter Videoquellen (`VideoSource_1`, `VideoSource_2`) und Profile (`Profile_<pfad>_Main`, `Profile_<pfad>_Sub`) für NVR-Systeme (Synology Surveillance Station, Scrypted, Frigate, Home Assistant). Motion PullPoint-Events adressieren gezielt die jeweilige Kamera (`VideoSourceConfig_1`, etc.).
+  - **MQTT (`:1883`)**: Auto-Discovery separater Home Assistant Geräte (`Steinel Einfahrt`, `Steinel Garten`) über eine gemeinsame MQTT-Verbindung unter kollisionsfreien Topics (`steinel/<DeviceID>/...`).
+- **100 % Abwärtskompatibilität**:
+  - Bestehende Einzelkamera-Konfigurationen (`camera_ip`, `qr_code`, `camera_mac` etc.) werden ohne manuelle Migration automatisch als primäre Kamera übernommen.
+  - Standard-RTSP-Pfade `/steinel` und `/live` verbleiben als Alias auf Kamera 1.
+- **Isolierte Supervisor-Lifecycles**:
+  - Jede Kamera läuft in einer eigenen autonomen Überwachungs- und Reconnect-Pipeline. Timeouts oder Reboots einer Kamera beeinflussen die anderen Kameras in keiner Weise.
+
 ## 1.5.0-beta.1
 
 ### 🚀 Konfigurierbare ONVIF MAC-Adresse für Multi-Cam & Multi-Container (Issue #57)
