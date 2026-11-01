@@ -64,8 +64,10 @@ func (d *L620Driver) SetResolution(res string) error {
 	return d.xmDriver.SetResolution(res)
 }
 
-// RequestKeyframe requests a keyframe (handled automatically by RTSP Ingest).
-func (d *L620Driver) RequestKeyframe() {}
+// RequestKeyframe requests an immediate keyframe or triggers on-demand stream startup.
+func (d *L620Driver) RequestKeyframe() {
+	d.xmDriver.RequestKeyframe()
+}
 
 // SetLampState switches the primary lamp on or off.
 func (d *L620Driver) SetLampState(mode string) error {

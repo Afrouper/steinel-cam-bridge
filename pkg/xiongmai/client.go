@@ -143,8 +143,10 @@ func (c *Client) Connect(ctx context.Context) error {
 
 	// Step 1: Login
 	if err := c.loginLocked(); err != nil {
-		_ = c.conn.Close()
-		c.conn = nil
+		if c.conn != nil {
+			_ = c.conn.Close()
+			c.conn = nil
+		}
 		return fmt.Errorf("xiongmai login failed: %w", err)
 	}
 
@@ -995,6 +997,8 @@ func (c *Client) sendRawPacketWithHeaderLocked(msgID uint16, channel byte, total
 			return nil, nil, fmt.Errorf("response payload too large: %d bytes", respHdr.DataLength)
 		}
 
+		// Refresh read deadline for the payload data once the header has arrived
+		_ = c.conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 		respPayload := make([]byte, respHdr.DataLength)
 		if _, err := io.ReadFull(c.conn, respPayload); err != nil {
 			_ = c.conn.Close()
@@ -1002,6 +1006,7 @@ func (c *Client) sendRawPacketWithHeaderLocked(msgID uint16, channel byte, total
 			c.isLoggedIn = false
 			return nil, nil, fmt.Errorf("failed to read response payload: %w", err)
 		}
+		_ = c.conn.SetDeadline(time.Time{})
 
 		// Trim trailing null/newlines
 		cleanPayload := strings.TrimRight(string(respPayload), "\x00\r\n ")

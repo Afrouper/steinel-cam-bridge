@@ -11,10 +11,12 @@ import (
 	"io"
 	"net"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/Afrouper/steinel-cam-bridge/pkg/audio"
+	"github.com/Afrouper/steinel-cam-bridge/pkg/rtsp"
 	"github.com/pion/rtp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -2033,4 +2035,128 @@ func TestSendRawPacketTimeoutClosesConn(t *testing.T) {
 	require.Error(t, sendErr)
 	assert.Nil(t, client.conn, "client.conn must be nil after timeout to prevent desynchronization")
 	assert.False(t, client.isLoggedIn, "client.isLoggedIn must be false after connection loss")
+}
+
+func TestClientConnectNilConnOnFailure(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer func() { _ = l.Close() }()
+
+	// Server accepts and immediately closes to trigger EOF during login
+	go func() {
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				return
+			}
+			_ = conn.Close()
+		}
+	}()
+
+	client := NewClient("127.0.0.1", l.Addr().(*net.TCPAddr).Port, "admin", "")
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+
+	// Connect must cleanly return error without panicking on nil c.conn
+	err = client.Connect(ctx)
+	require.Error(t, err)
+	assert.Nil(t, client.conn)
+}
+
+type mockOnDemandRTSPServer struct {
+	clients atomic.Int64
+}
+
+func (m *mockOnDemandRTSPServer) WriteVideoPacket(pkt *rtp.Packet)                                {}
+func (m *mockOnDemandRTSPServer) WriteAACFrame(au []byte, pts time.Duration)                      {}
+func (m *mockOnDemandRTSPServer) WriteAudioPacket(pkt *rtp.Packet)                                {}
+func (m *mockOnDemandRTSPServer) GetAudioCodec() string                                           { return "aac" }
+func (m *mockOnDemandRTSPServer) SetAudioBackchannelHandler(handler rtsp.AudioBackchannelHandler) {}
+func (m *mockOnDemandRTSPServer) SetOnPlayHandler(handler rtsp.OnPlayHandler)                     {}
+func (m *mockOnDemandRTSPServer) ActiveClients() int64                                            { return m.clients.Load() }
+
+var _ rtsp.MediaStream = (*mockOnDemandRTSPServer)(nil)
+
+func TestDriverOnDemandStreaming(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer func() { _ = l.Close() }()
+
+	port := l.Addr().(*net.TCPAddr).Port
+
+	// Mock Sofia server handling login, OPTrans and OPMonitor
+	go func() {
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer func() { _ = c.Close() }()
+				buf := make([]byte, 1024)
+				for {
+					n, err := c.Read(buf)
+					if err != nil || n < HeaderLength {
+						return
+					}
+					hdr, err := DecodeHeader(buf[:HeaderLength])
+					if err != nil {
+						return
+					}
+					switch hdr.MsgID {
+					case MsgLoginReq:
+						resp, _ := json.Marshal(LoginResp{Ret: 100, SessionID: "0x0A"})
+						respHdr := Header{Magic: HeaderMagic, SessionID: 0x0A, Sequence: hdr.Sequence, MsgID: MsgLoginResp, DataLength: uint32(len(resp) + 2)}
+						_, _ = c.Write(append(respHdr.Encode(), append(resp, 0x0A, 0x00)...))
+					case MsgTransStartReq:
+						resp, _ := json.Marshal(map[string]interface{}{"Ret": 100, "SessionID": "0x0000000A"})
+						respHdr := Header{Magic: HeaderMagic, SessionID: 0x0A, Sequence: hdr.Sequence, MsgID: MsgTransStartResp, DataLength: uint32(len(resp) + 2)}
+						_, _ = c.Write(append(respHdr.Encode(), append(resp, 0x0A, 0x00)...))
+					case MsgMonitorClaimReq, MsgMonitorClaimResp:
+						resp := []byte(`{"Name":"OPMonitor","Ret":100}` + "\x00")
+						respHdr := Header{Magic: HeaderMagic, SessionID: 0x0A, Sequence: hdr.Sequence, MsgID: MsgMonitorClaimResp, DataLength: uint32(len(resp))}
+						_, _ = c.Write(append(respHdr.Encode(), resp...))
+					case MsgMonitorStartReq:
+						resp := []byte(`{"Name":"OPMonitor","Ret":100}` + "\x00")
+						respHdr := Header{Magic: HeaderMagic, SessionID: 0x0A, Sequence: hdr.Sequence, MsgID: MsgMonitorStartResp, DataLength: uint32(len(resp))}
+						_, _ = c.Write(append(respHdr.Encode(), resp...))
+					default:
+						resp := []byte(`{"Ret":100}` + "\x00")
+						respHdr := Header{Magic: HeaderMagic, SessionID: 0x0A, Sequence: hdr.Sequence, MsgID: hdr.MsgID + 1, DataLength: uint32(len(resp))}
+						_, _ = c.Write(append(respHdr.Encode(), resp...))
+					}
+				}
+			}(conn)
+		}
+	}()
+
+	mockStream := &mockOnDemandRTSPServer{}
+	d := NewDriver("127.0.0.1", "admin", "", "1080p", mockStream, nil)
+	d.client.addr = fmt.Sprintf("127.0.0.1:%d", port)
+	d.sofiaStream.port = port
+	defer func() { _ = d.Close() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Start with 0 active clients
+	mockStream.clients.Store(0)
+	err = d.Start(ctx)
+	require.NoError(t, err)
+
+	// Stream must NOT be running when active clients == 0 (On-Demand idle)
+	assert.False(t, d.sofiaStream.IsRunning(), "Sofia stream must remain idle when ActiveClients == 0")
+
+	// Trigger on-demand streaming when an RTSP client connects
+	mockStream.clients.Store(1)
+	d.RequestKeyframe()
+
+	// Wait for stream to start
+	require.Eventually(t, func() bool {
+		return d.sofiaStream.IsRunning()
+	}, 2*time.Second, 50*time.Millisecond, "Sofia stream must start when an active client connects")
+
+	// Stop stream when clients disconnect
+	d.stopSofiaStream()
+	assert.False(t, d.sofiaStream.IsRunning(), "Sofia stream must stop when stopSofiaStream is invoked")
 }

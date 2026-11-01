@@ -2,6 +2,7 @@ package xiongmai
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -15,22 +16,29 @@ import (
 	"github.com/pion/rtp"
 )
 
+const (
+	defaultIdleGracePeriod = 15 * time.Second
+)
+
 // Driver implements the Steinel Camera Driver for Generation 1 devices (Steinel L 620 CAM / XLED CAM 1).
 type Driver struct {
-	cameraIP    string
-	user        string
-	password    string
-	resolution  string
-	rtspServer  rtsp.MediaStream
-	eventBus    *events.Bus
-	client      *Client
-	sofiaStream *SofiaStream
-	ingest      *RTSPIngest
-	talk        *TalkClient
-	sdcard      *SDCardManager
-	mu          sync.Mutex
-	running     bool
-	closeChan   chan struct{}
+	cameraIP       string
+	user           string
+	password       string
+	resolution     string
+	rtspServer     rtsp.MediaStream
+	eventBus       *events.Bus
+	client         *Client
+	sofiaStream    *SofiaStream
+	ingest         *RTSPIngest
+	talk           *TalkClient
+	sdcard         *SDCardManager
+	ctx            context.Context
+	mu             sync.Mutex
+	streamMu       sync.Mutex
+	lastClientSeen time.Time
+	running        bool
+	closeChan      chan struct{}
 }
 
 // NewDriver creates a new driver instance for a Steinel L 620 CAM.
@@ -88,6 +96,7 @@ func (d *Driver) Start(ctx context.Context) error {
 	if d.running {
 		return nil
 	}
+	d.ctx = ctx
 
 	logger.Info("Xiongmai Driver", "🚀 Connecting to Steinel L 620 CAM at %s (TCP Port %d)...", d.cameraIP, DefaultPort)
 
@@ -97,10 +106,11 @@ func (d *Driver) Start(ctx context.Context) error {
 	})
 
 	// Step 1: Connect & Login on Sofia port 34567
-	var sofiaStreamStarted bool
+	var sofiaAvailable bool
 	if err := d.client.Connect(ctx); err != nil {
 		logger.Warn("Xiongmai Driver", "⚠️ Sofia port %d connection error (%v) — starting in resilient RTSP mode with background reconnect", DefaultPort, err)
 	} else if d.client.IsLoggedIn() {
+		sofiaAvailable = true
 		// Step 2: Query video encode config & ensure H.264
 		if err := d.client.EnsureH264Encoding(); err != nil {
 			logger.Warn("Xiongmai Driver", "⚠️ Video encode check result: %v", err)
@@ -109,22 +119,28 @@ func (d *Driver) Start(ctx context.Context) error {
 		// Step 3: Query initial light and MCU states
 		d.syncInitialState()
 
-		// Step 4: Start native Sofia video stream (Port 34567)
-		if d.sofiaStream != nil {
-			if err := d.sofiaStream.Start(ctx); err != nil {
-				logger.Warn("Xiongmai Driver", "⚠️ Failed to start native Sofia stream (%v), falling back to RTSP ingest", err)
+		// Step 4: On-demand streaming check
+		if d.rtspServer != nil && d.rtspServer.ActiveClients() > 0 {
+			d.lastClientSeen = time.Now()
+			if err := d.startSofiaStreamLocked(ctx); err != nil {
+				logger.Warn("Xiongmai Driver", "⚠️ Failed to start initial Sofia stream (%v), falling back to RTSP ingest", err)
+				sofiaAvailable = false
 			} else {
-				sofiaStreamStarted = true
-				logger.Info("Xiongmai Driver", "🎥 Native Sofia video stream active on port %d", DefaultPort)
+				logger.Info("Xiongmai Driver", "🎥 Initial Sofia video stream active on port %d (clients connected)", DefaultPort)
 			}
+		} else {
+			logger.Info("Xiongmai Driver", "💤 On-demand streaming armed: camera media socket idle until RTSP client connects")
 		}
 	}
 
 	// Step 5: Always launch autonomous background supervisor for Sofia control connection
 	go d.superviseSofiaLoop(ctx)
 
-	// Step 6: Fallback to RTSP Ingest only if native Sofia stream is not active
-	if !sofiaStreamStarted {
+	// Step 6: Launch on-demand media supervisor (handles start/stop based on RTSP client count)
+	go d.superviseOnDemandLoop(ctx)
+
+	// Step 7: Fallback to RTSP Ingest only if Sofia is completely unavailable (failed login / port closed)
+	if !sofiaAvailable {
 		effectivePwd := d.client.GetEffectivePassword()
 		if effectivePwd == "" && d.password != "" {
 			effectivePwd = d.password
@@ -236,14 +252,9 @@ func (d *Driver) superviseSofiaLoop(ctx context.Context) {
 				_ = d.client.EnsureH264Encoding()
 				d.syncInitialState()
 
-				if d.sofiaStream != nil && !d.sofiaStream.IsRunning() {
+				if d.sofiaStream != nil && !d.sofiaStream.IsRunning() && d.rtspServer != nil && d.rtspServer.ActiveClients() > 0 {
 					go func() {
-						if err := d.sofiaStream.Start(ctx); err == nil {
-							logger.Info("Xiongmai Driver", "🎥 Native Sofia video stream resumed on port %d", DefaultPort)
-							if d.ingest != nil {
-								_ = d.ingest.Close()
-							}
-						}
+						_ = d.startSofiaStream(ctx)
 					}()
 				}
 			} else {
@@ -487,4 +498,101 @@ func (d *Driver) Close() error {
 		_ = d.client.Close()
 	}
 	return nil
+}
+
+// startSofiaStream safely initiates the Sofia video stream if not already active.
+func (d *Driver) startSofiaStream(ctx context.Context) error {
+	d.streamMu.Lock()
+	defer d.streamMu.Unlock()
+	return d.startSofiaStreamLocked(ctx)
+}
+
+func (d *Driver) startSofiaStreamLocked(ctx context.Context) error {
+	if d.sofiaStream == nil || d.sofiaStream.IsRunning() {
+		return nil
+	}
+	if d.client == nil || !d.client.IsLoggedIn() {
+		return errors.New("client not logged in")
+	}
+
+	logger.Info("Xiongmai Driver", "🎥 Activating on-demand Sofia video stream (Port %d)...", DefaultPort)
+	if err := d.sofiaStream.Start(ctx); err != nil {
+		logger.Warn("Xiongmai Driver", "⚠️ Failed to start native Sofia stream (%v)", err)
+		return err
+	}
+	logger.Info("Xiongmai Driver", "🎥 Native Sofia video stream active on port %d", DefaultPort)
+	if d.ingest != nil {
+		_ = d.ingest.Close()
+		d.ingest = nil
+	}
+	return nil
+}
+
+// stopSofiaStream stops the Sofia video stream and puts the camera media socket to sleep.
+func (d *Driver) stopSofiaStream() {
+	d.streamMu.Lock()
+	defer d.streamMu.Unlock()
+	d.stopSofiaStreamLocked()
+}
+
+func (d *Driver) stopSofiaStreamLocked() {
+	if d.sofiaStream == nil || !d.sofiaStream.IsRunning() {
+		return
+	}
+	logger.Info("Xiongmai Driver", "⏹️ No active RTSP clients: stopping on-demand Sofia video stream (idle grace period %v reached)", defaultIdleGracePeriod)
+	_ = d.sofiaStream.Stop()
+}
+
+// superviseOnDemandLoop monitors active RTSP clients and starts/stops the Sofia video stream on demand.
+func (d *Driver) superviseOnDemandLoop(ctx context.Context) {
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-d.closeChan:
+			return
+		case <-ticker.C:
+			if d.rtspServer == nil {
+				continue
+			}
+
+			clients := d.rtspServer.ActiveClients()
+			if clients > 0 {
+				d.mu.Lock()
+				d.lastClientSeen = time.Now()
+				d.mu.Unlock()
+
+				if d.sofiaStream != nil && !d.sofiaStream.IsRunning() && d.client != nil && d.client.IsLoggedIn() {
+					_ = d.startSofiaStream(ctx)
+				}
+			} else {
+				d.mu.Lock()
+				lastSeen := d.lastClientSeen
+				d.mu.Unlock()
+
+				if d.sofiaStream != nil && d.sofiaStream.IsRunning() {
+					if !lastSeen.IsZero() && time.Since(lastSeen) >= defaultIdleGracePeriod {
+						d.stopSofiaStream()
+					}
+				}
+			}
+		}
+	}
+}
+
+// RequestKeyframe triggers immediate startup of the on-demand stream when an RTSP client connects.
+func (d *Driver) RequestKeyframe() {
+	d.mu.Lock()
+	d.lastClientSeen = time.Now()
+	ctx := d.ctx
+	d.mu.Unlock()
+
+	if d.sofiaStream != nil && !d.sofiaStream.IsRunning() && d.client != nil && d.client.IsLoggedIn() && ctx != nil {
+		go func() {
+			_ = d.startSofiaStream(ctx)
+		}()
+	}
 }
