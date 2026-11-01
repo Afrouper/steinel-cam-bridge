@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/pion/rtp"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestHeaderEncodeDecode(t *testing.T) {
@@ -1905,4 +1907,122 @@ func TestSuperviseSofiaLoop(t *testing.T) {
 	if d.client.GetSessionID() != 0x05 {
 		t.Errorf("expected session ID 0x05, got 0x%08X", d.client.GetSessionID())
 	}
+}
+
+func TestClientCloseReconnectNoPanic(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer func() { _ = l.Close() }()
+
+	go func() {
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer func() { _ = c.Close() }()
+				buf := make([]byte, 1024)
+				for {
+					n, err := c.Read(buf)
+					if err != nil || n < HeaderLength {
+						return
+					}
+					hdr, err := DecodeHeader(buf[:HeaderLength])
+					if err != nil {
+						return
+					}
+					switch hdr.MsgID {
+					case MsgLoginReq:
+						resp := LoginResp{
+							Name:      "OPUserLogin",
+							Ret:       100,
+							SessionID: "0x00000001",
+						}
+						respData, _ := json.Marshal(resp)
+						respTerm := append(respData, 0x00)
+						rHdr := Header{
+							Magic:      HeaderMagic,
+							Channel:    0,
+							SessionID:  0x01,
+							Sequence:   hdr.Sequence,
+							MsgID:      MsgLoginResp,
+							DataLength: uint32(len(respTerm)),
+						}
+						_, _ = c.Write(append(rHdr.Encode(), respTerm...))
+					default:
+						respPayload := []byte(`{"Ret":100}`)
+						respTerm := append(respPayload, 0x00)
+						respHdr := &Header{
+							Magic:      HeaderMagic,
+							Channel:    hdr.Channel,
+							SessionID:  hdr.SessionID,
+							Sequence:   hdr.Sequence,
+							MsgID:      hdr.MsgID + 1,
+							DataLength: uint32(len(respTerm)),
+						}
+						_, _ = c.Write(append(respHdr.Encode(), respTerm...))
+					}
+				}
+			}(conn)
+		}
+	}()
+
+	client := NewClient("127.0.0.1", l.Addr().(*net.TCPAddr).Port, "admin", "")
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	// 1. First Connect & Close
+	err = client.Connect(ctx)
+	require.NoError(t, err)
+	err = client.Close()
+	require.NoError(t, err)
+
+	// 2. Second Connect & Close (must NOT panic on closing closed channel)
+	err = client.Connect(ctx)
+	require.NoError(t, err)
+	err = client.Close()
+	require.NoError(t, err)
+
+	// 3. Duplicate Close (must be idempotent and NOT panic)
+	err = client.Close()
+	require.NoError(t, err)
+}
+
+func TestSendRawPacketTimeoutClosesConn(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer func() { _ = l.Close() }()
+
+	// Mock server that accepts connection but never replies, simulating timeout
+	go func() {
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				buf := make([]byte, 1024)
+				_, _ = c.Read(buf)
+				time.Sleep(1 * time.Second)
+				_ = c.Close()
+			}(conn)
+		}
+	}()
+
+	client := NewClient("127.0.0.1", l.Addr().(*net.TCPAddr).Port, "admin", "")
+	conn, err := net.Dial("tcp", l.Addr().String())
+	require.NoError(t, err)
+	client.conn = conn
+	client.isLoggedIn = true
+
+	// Send raw packet with an expired deadline
+	client.mu.Lock()
+	_ = client.conn.SetDeadline(time.Now().Add(-10 * time.Millisecond))
+	_, _, sendErr := client.sendRawPacketWithHeaderLocked(MsgFileSearchReq, 0, 0, 0x01, []byte("{}"))
+	client.mu.Unlock()
+
+	require.Error(t, sendErr)
+	assert.Nil(t, client.conn, "client.conn must be nil after timeout to prevent desynchronization")
+	assert.False(t, client.isLoggedIn, "client.isLoggedIn must be false after connection loss")
 }

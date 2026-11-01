@@ -138,6 +138,7 @@ func (c *Client) Connect(ctx context.Context) error {
 	}
 	c.conn = conn
 	c.closed.Store(false)
+	c.closeChan = make(chan struct{})
 	logger.Trace("Xiongmai", "🔌 TCP socket connected to %s, starting login handshake", c.addr)
 
 	// Step 1: Login
@@ -954,8 +955,15 @@ func (c *Client) sendRawPacketWithHeaderLocked(msgID uint16, channel byte, total
 
 	packet := append(hdr.Encode(), dataWithTerminator...)
 
-	_ = c.conn.SetDeadline(time.Now().Add(5 * time.Second))
+	timeout := 10 * time.Second
+	if msgID == MsgFileSearchReq || msgID == MsgFileSearchResp {
+		timeout = 25 * time.Second
+	}
+	_ = c.conn.SetDeadline(time.Now().Add(timeout))
 	if _, err := c.conn.Write(packet); err != nil {
+		_ = c.conn.Close()
+		c.conn = nil
+		c.isLoggedIn = false
 		return nil, nil, fmt.Errorf("write error: %w", err)
 	}
 
@@ -963,23 +971,35 @@ func (c *Client) sendRawPacketWithHeaderLocked(msgID uint16, channel byte, total
 	for {
 		respHdrBuf := make([]byte, HeaderLength)
 		if _, err := io.ReadFull(c.conn, respHdrBuf); err != nil {
+			_ = c.conn.Close()
+			c.conn = nil
+			c.isLoggedIn = false
 			return nil, nil, fmt.Errorf("failed to read response header: %w", err)
 		}
 
 		respHdr, err := DecodeHeader(respHdrBuf)
 		if err != nil {
-			return nil, nil, err
+			_ = c.conn.Close()
+			c.conn = nil
+			c.isLoggedIn = false
+			return nil, nil, fmt.Errorf("invalid response header: %w", err)
 		}
 
 		logger.Trace("Xiongmai", "<- Sofia Raw Header: MsgID=%d (0x%04X), Seq=%d, Channel=0x%02X, TotalPkt=0x%02X, SessionID=0x%08X, Len=%d",
 			respHdr.MsgID, respHdr.MsgID, respHdr.Sequence, respHdr.Channel, respHdr.TotalPkt, respHdr.SessionID, respHdr.DataLength)
 
 		if respHdr.DataLength > 65535 {
+			_ = c.conn.Close()
+			c.conn = nil
+			c.isLoggedIn = false
 			return nil, nil, fmt.Errorf("response payload too large: %d bytes", respHdr.DataLength)
 		}
 
 		respPayload := make([]byte, respHdr.DataLength)
 		if _, err := io.ReadFull(c.conn, respPayload); err != nil {
+			_ = c.conn.Close()
+			c.conn = nil
+			c.isLoggedIn = false
 			return nil, nil, fmt.Errorf("failed to read response payload: %w", err)
 		}
 
@@ -1177,13 +1197,18 @@ func (c *Client) IsDataEncryptionAES() bool {
 
 // Close gracefully logs out and closes the connection.
 func (c *Client) Close() error {
-	if c.closed.Swap(true) {
-		return nil
-	}
-	close(c.closeChan)
-
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	c.closed.Store(true)
+	if c.closeChan != nil {
+		select {
+		case <-c.closeChan:
+			// already closed
+		default:
+			close(c.closeChan)
+		}
+	}
 
 	if c.conn != nil {
 		if c.isLoggedIn {
