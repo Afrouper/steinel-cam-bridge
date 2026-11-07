@@ -2,6 +2,21 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.5.0
+
+### 🚀 Hauptfeatures: Direktes L 620 Streaming & Multi-Kamera-Betrieb
+
+- **Verbesserter Steinel L 620 CAM Support (Natives Sofia Streaming ohne RTSP)**:
+  - **Direktes Streaming über Port 34567**: Zuverlässiger Empfang des H.264-Videostroms direkt über das native Xiongmai Sofia/NetIP-Protokoll (`OPMonitor`).
+  - **Unabhängig von internem Port 554**: Keine Abhängigkeit mehr vom internen Kamera-RTSP-Dienst – auch ältere Firmware-Stände (z. B. 2019er `V4.03.R12`) mit geschlossenem Port 554 werden einwandfrei unterstützt.
+  - **Ressourcenschonendes On-Demand-Streaming**: Die Videoübertragung von der Kamera wird nur bei aktiven RTSP-/ONVIF-Zuschauern gestartet und pausiert nach 15 Sekunden Leerlauf automatisch. Steuerungs- und Sensordaten bleiben 24/7 aktiv.
+  - **Optimiertes Zwei-Wege-Audio (Gegensprechen)**: Automatische Transkodierung von PCMU (µ-law) zu PCMA (A-law) für den Lautsprecher der L 620 sowie thread-sichere Audioübertragung.
+  - **Robuste Authentifizierung**: Zuverlässiger Login auch bei neueren Modellen via RSA-Verschlüsselung (`DVRIP-Xm030`).
+- **Multi-Kamera-Unterstützung**:
+  - Gleichzeitiger Betrieb beliebig vieler Steinel Kameras über eine einzige Bridge-Instanz und gemeinsame Ports (`:8554` RTSP, `:8000` ONVIF).
+  - Vollständige Trennung von Event-Bussen, Supervisoren, RTSP-Pfaden (`/live`, `/<name>/live`), ONVIF-Kanälen und MQTT-Geräten.
+  - Ausführliche Dokumentation und Konfigurationsbeispiele für Home Assistant und Docker finden sich in der [README.md](https://github.com/Afrouper/steinel-cam-bridge#readme).
+
 ## 1.5.0-beta.8
 
 ### On-Demand Streaming für L 620 CAM & Stabilitäts-Fixes

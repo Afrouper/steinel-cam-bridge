@@ -17,15 +17,16 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
    - CoAP Signaling (`/p2p/webrtc-info` & `/webrtc/tracks`)
    - WebRTC DTLS/SRTP Media (Pion WebRTC v4) + DataChannel `test` (MCU-Frames & SD-Karten Chunks)
 2. **Steinel L 620 CAM / XLED CAM 1 (Xiongmai Sofia Driver)**:
-   - Xiongmai Sofia Binärprotokoll auf TCP-Port `34567` (Login, MCU-Lichtsteuerung, Alarme, SD-Karten-Indexierung & Chunk-Download)
-   - Nativer lokaler RTSP-Stream-Ingest von der Kamera
-   - 2-Wege-Audio Backchannel via Xiongmai Talk-Protokoll
+   - Xiongmai Sofia Binärprotokoll auf TCP-Port `34567` (Login via MD5 oder RSA `DVRIP-Xm030`, MCU-Lichtsteuerung, Alarme, SD-Karten-Indexierung & Chunk-Download)
+   - Direktes natives H.264 Video-Streaming (`OPMonitor` MsgID 1410 / 1412) über Port `34567` (vollständig unabhängig von internem RTSP-Port 554)
+   - Ressourcenschonendes On-Demand-Streaming bei aktiven RTSP-Zuschauern (mit 15s Standby-Cooldown)
+   - 2-Wege-Audio Backchannel via Xiongmai Talk-Protokoll mit automatischer PCMU $\leftrightarrow$ PCMA Transkodierung
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                       Steinel Kamera / Außenleuchte                         │
 │  ├─ L 625 CAM SC: Nabto Edge P2P (UDP 5592) + WebRTC (H.264/PCMU) + DC      │
-│  └─ L 620 CAM / XLED: Xiongmai Sofia (TCP 34567) + RTSP Ingest + XM-Talk    │
+│  └─ L 620 CAM / XLED: Xiongmai Sofia (Port 34567 Video/Control) + XM-Talk   │
 └──────────────────────────────────────┬──────────────────────────────────────┘
                                        │ Auto-Detection via Port 34567 Probe
                                        ▼
@@ -126,11 +127,12 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
 - **`pkg/xiongmai/`**:
   - Detailspezifikation & Byte-Layout: Siehe [`AGENTS_L620.md`](file:///Users/christian/dev/git/steinel-cam-bridge/AGENTS_L620.md).
   - `client.go`: Xiongmai Sofia Binärprotokoll-Client (Port 34567, MD5-Challenge-Response & adaptiver RSA/AES-Login mit 100 % CWE-312 Passwort-Maskierung, OPTrans RS232 Serial Bridge, 1582 Telemetrie-Fragmentierungs-Puffer & `EnsureH264Encoding` via `Simplify.Encode` 1040/1042).
-  - `driver.go`: Orchestriert Sofia-Verbindung, autonomer Sofia Reconnect-Supervisor (`superviseSofiaLoop`), RTSP-Ingest, MCU-Synchronisation, SD-Karten-Verwaltung und Talk-Backchannel.
+  - `driver.go`: Orchestriert Sofia-Verbindung, autonomer Sofia Reconnect-Supervisor (`superviseSofiaLoop`), natives Sofia Video-Streaming (`sofia_stream.go`) mit automatischem Fallback auf RTSP-Ingest (`rtsp_ingest.go`), MCU-Synchronisation, SD-Karten-Verwaltung und Talk-Backchannel.
+  - `sofia_stream.go`: Natives H.264 Video-Streaming über das Sofia/NetIP-Protokoll (MsgID 1410/1412) mit On-Demand-Aktivierung bei aktiven RTSP-Zuschauern, Frame-Demuxing (I-Frames `00 00 01 FC`, P-Frames `00 00 01 FD`, Chunks) und RFC 6184 konformer RTP-Paketierung.
   - `rtsp_ingest.go`: Nimmt den nativen H.264/AAC-RTSP-Stream der L 620 entgegen mit kanonischer sauberer Pfad-Reihenfolge (ohne `?real_stream` an Position 1 gegen Kamera-Pufferüberläufe), Port-554-Unreachable-Short-Circuit & exponentiellem Backoff, SDP-Track-Prüfung, Zero-Packet Initial-Watchdog (5s) und Silence-Watchdog (15s).
   - `mcu.go`: ASCII-Frame Parser (`B...U`) & Command Builder für L 620 Licht-, Dämmerungs- und Sensorkommandos via OPTrans RS232.
   - `sdcard.go`: Xiongmai SD-Karten Dateisystemabfrage (`OPFileQuery`) und Download mit konsistenter Thumbnail-Behandlung.
-  - `talk.go`: Rückkanal-Audiokommunikation (G.711u / PCMU) über das Xiongmai Talk-Protokoll.
+  - `talk.go`: Rückkanal-Audiokommunikation (G.711u / PCMU) über das Xiongmai Talk-Protokoll mit dynamischer Audio-Aushandlung (`MsgTalkClaimV2Req`), automatischer PCMU $\leftrightarrow$ PCMA Transkodierung und thread-sicherem Audio-Framing.
 
 - **`pkg/storage/`**:
   - `storage.go`: Definiert das gemeinsame Interface `RecordingProvider`, Metadatenstrukturen (`RecordingItem`, `RecordingListResponse`) und kanonische Speicherfehler (`ErrStorageBusy`, `ErrStorageTimeout`, `ErrFeatureDisabled`).
@@ -140,9 +142,10 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
   - `syncer.go`: Hintergrund-Syncer (`RecordingSyncer`), der neue SD-Karten-Aufnahmen periodisch (abschaltbar via `0`, adaptiv gedrosselt auf 5 Minuten bei aktivem 24/7 RTSP-Streaming zur Kamera-SoC-Schonung) oder bei Bewegungstriggern (mit 35s Pufferzeit gegen I/O-Kollisionen während der 30s-Aufnahme) in den Cache lädt, redundante Upstream-Queries bei Cache-Nutzung unterbindet und neue Aufnahme-Events mit vollständiger `thumbnail_url` an MQTT / Home Assistant publiziert.
 
 - **`pkg/audio/`**:
-  - `g711.go`: ITU-T G.711 µ-law & A-law Decoder (`DecodePCMU` & `DecodePCMA`, 8-Bit $\rightarrow$ 16-Bit Linear PCM).
+  - `g711.go`: ITU-T G.711 µ-law & A-law Decoder (`DecodePCMU` & `DecodePCMA`, 8-Bit $\rightarrow$ 16-Bit Linear PCM) sowie bidirektionale Transkodierung (`TranscodePCMUToPCMA`, `TranscodePCMAToPCMU`).
   - `resample.go`: Polyphase- / Interpolations-Resampler (8 kHz $\rightarrow$ 16 kHz / 32 kHz).
-  - `transcoder.go`: Echtzeit-Audiotranscoder (`ProcessPCMU` & `ProcessPCMA`) mit persistentem VisualOn AAC-Encoder (`github.com/gen2brain/aac-go`), wiederverwendbarem `pcmReader bytes.Reader` via `Reset()` und Puffer-Kompaktierung gegen Speicherfragmentierung.
+  - `transcoder.go`: Echtzeit-Audiotranscoder (`ProcessPCMU` & `ProcessPCMA`) mit wiederverwendbarem `pcmReader bytes.Reader` via `Reset()` und Puffer-Kompaktierung gegen Speicherfragmentierung.
+  - `internal/aac`: Instanz-isolierter nativer VisualOn AAC-Encoder (`pkg/audio/internal/aac`) für thread-sicheres Multi-Kamera-Transcoding ohne globale Zustände.
 
 - **`pkg/rtsp/`**:
   - `server.go`: RTSP-Server auf Basis von `github.com/bluenviron/gortsplib/v4`. Multi-Stream-Routing über einen gemeinsamen Port (`:8554`) mit dynamischer Stream-Registrierung (`RegisterStream`), Profil T Audio Backchannel mit Single-Talker-Lock (exklusive Session-Belegung des Mikrofons pro Stream-Pfad), akkurates `ActiveClients()`-Tracking (Inkrement ausschließlich bei `PLAY`, dekrementiert nur bei registrierten Spielern) sowie integrierte Digest (MD5/SHA256) & Basic Authentifizierung mit bidirektionaler Session-Connection-Vererbung gegen Reconnect-Abbrüche (`wrong response on SETUP`).
