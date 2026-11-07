@@ -114,7 +114,7 @@ func getCandidateURLs(cameraIP string, port int, user, password string, streamSu
 // and feeding it into the local RTSP server and audio transcoder.
 type RTSPIngest struct {
 	candidateURLs   []string
-	rtspServer      *rtsp.Server
+	rtspServer      rtsp.MediaStream
 	audioTranscoder *audio.Transcoder
 	closeChan       chan struct{}
 	closed          atomic.Bool
@@ -123,7 +123,7 @@ type RTSPIngest struct {
 }
 
 // NewRTSPIngest creates a new RTSP Ingest client with Steinel and Xiongmai streaming paths.
-func NewRTSPIngest(cameraIP string, port int, user, password string, streamSubtype int, rtspServer *rtsp.Server, fallbackPasswords ...string) *RTSPIngest {
+func NewRTSPIngest(cameraIP string, port int, user, password string, streamSubtype int, rtspServer rtsp.MediaStream, fallbackPasswords ...string) *RTSPIngest {
 	candidateURLs := getCandidateURLs(cameraIP, port, user, password, streamSubtype, fallbackPasswords...)
 
 	var transcoder *audio.Transcoder

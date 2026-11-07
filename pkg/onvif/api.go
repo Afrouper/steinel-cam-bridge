@@ -31,9 +31,23 @@ func (s *Server) withBasicAuth(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// handleAPICameras returns the list of configured camera channels.
+func (s *Server) handleAPICameras(w http.ResponseWriter, r *http.Request) {
+	channels := s.Channels()
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(channels)
+}
+
 // handleAPIStatus returns the current camera and bridge telemetry as JSON.
 func (s *Server) handleAPIStatus(w http.ResponseWriter, r *http.Request) {
-	st := s.eventBus.GetStatus()
+	cam := r.URL.Query().Get("camera")
+	bus := s.eventBus
+	if cam != "" {
+		if ch := s.findChannel(cam); ch != nil && ch.EventBus != nil {
+			bus = ch.EventBus
+		}
+	}
+	st := bus.GetStatus()
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(st)
 }
@@ -44,8 +58,20 @@ func (s *Server) handleAPILight(w http.ResponseWriter, r *http.Request) {
 	if mode == "" {
 		mode = "auto"
 	}
-	if s.deviceIO != nil && s.deviceIO.setLampFunc != nil {
-		if err := s.deviceIO.setLampFunc(mode); err != nil {
+
+	cam := r.URL.Query().Get("camera")
+	var setLamp func(mode string) error
+	if cam != "" {
+		if ch := s.findChannel(cam); ch != nil && ch.SetLampFunc != nil {
+			setLamp = ch.SetLampFunc
+		}
+	}
+	if setLamp == nil && s.deviceIO != nil {
+		setLamp = s.deviceIO.setLampFunc
+	}
+
+	if setLamp != nil {
+		if err := setLamp(mode); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -56,11 +82,19 @@ func (s *Server) handleAPILight(w http.ResponseWriter, r *http.Request) {
 
 // handleAPISDCardEvents lists MicroSD card recording events with optional time range and pagination.
 func (s *Server) handleAPISDCardEvents(w http.ResponseWriter, r *http.Request) {
-	if s.recordingProvider == nil {
+	cam := r.URL.Query().Get("camera")
+	providerFunc := s.recordingProvider
+	if cam != "" {
+		if ch := s.findChannel(cam); ch != nil && ch.RecordingProvider != nil {
+			providerFunc = ch.RecordingProvider
+		}
+	}
+
+	if providerFunc == nil {
 		http.Error(w, `{"error":"sdcard recording feature not configured"}`, http.StatusNotImplemented)
 		return
 	}
-	provider := s.recordingProvider()
+	provider := providerFunc()
 	if provider == nil {
 		http.Error(w, `{"error":"camera offline"}`, http.StatusServiceUnavailable)
 		return
@@ -107,11 +141,19 @@ func (s *Server) handleAPISDCardEvents(w http.ResponseWriter, r *http.Request) {
 
 // handleAPISDCardItem handles single recording metadata queries or video/thumbnail streaming.
 func (s *Server) handleAPISDCardItem(w http.ResponseWriter, r *http.Request) {
-	if s.recordingProvider == nil {
+	cam := r.URL.Query().Get("camera")
+	providerFunc := s.recordingProvider
+	if cam != "" {
+		if ch := s.findChannel(cam); ch != nil && ch.RecordingProvider != nil {
+			providerFunc = ch.RecordingProvider
+		}
+	}
+
+	if providerFunc == nil {
 		http.Error(w, `{"error":"sdcard recording feature not configured"}`, http.StatusNotImplemented)
 		return
 	}
-	provider := s.recordingProvider()
+	provider := providerFunc()
 	if provider == nil {
 		http.Error(w, `{"error":"camera offline"}`, http.StatusServiceUnavailable)
 		return

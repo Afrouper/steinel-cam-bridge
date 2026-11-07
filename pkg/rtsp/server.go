@@ -5,7 +5,6 @@ import (
 	"net"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/Afrouper/steinel-cam-bridge/pkg/logger"
@@ -13,47 +12,31 @@ import (
 	"github.com/bluenviron/gortsplib/v4/pkg/auth"
 	"github.com/bluenviron/gortsplib/v4/pkg/base"
 	"github.com/bluenviron/gortsplib/v4/pkg/description"
-	"github.com/bluenviron/gortsplib/v4/pkg/format"
-	"github.com/bluenviron/gortsplib/v4/pkg/format/rtpmpeg4audio"
-	"github.com/bluenviron/mediacommon/pkg/codecs/mpeg4audio"
 	"github.com/pion/rtp"
 )
 
 type AudioBackchannelHandler func(pkt *rtp.Packet) error
 type OnPlayHandler func()
 
+// Server manages the RTSP server, authentication, and multiple camera streams.
 type Server struct {
-	server                  *gortsplib.Server
-	stream                  *gortsplib.ServerStream
-	session                 *description.Session
-	videoFormat             *format.H264
-	audioCodec              string
-	audioFormat             format.Format
-	aacRTPEncoder           *rtpmpeg4audio.Encoder
-	backchannelFormat       *format.G711
-	videoMedia              *description.Media
-	audioMedia              *description.Media
-	backchannelMedia        *description.Media
-	pathName                string
-	port                    int
-	authUser                string
-	authPass                string
-	realm                   string
-	nonce                   string
-	udpConn                 *net.UDPConn
-	audioBackchannelHandler AudioBackchannelHandler
-	onPlayHandler           OnPlayHandler
-	backchannelPacketCount  atomic.Uint64
-	activeClients           atomic.Int64
-	playingSessions         sync.Map // *gortsplib.ServerSession -> struct{}
-	backchannelMu           sync.Mutex
-	activeTalkSession       *gortsplib.ServerSession
-	lastTalkTime            time.Time
-	lastIdleLogTime         time.Time
-	started                 bool
-	mu                      sync.RWMutex
+	server           *gortsplib.Server
+	port             int
+	authUser         string
+	authPass         string
+	realm            string
+	nonce            string
+	udpConn          *net.UDPConn
+	started          bool
+	streamsMu        sync.RWMutex
+	streams          map[string]*Stream
+	primaryStream    *Stream
+	backchannelMedia *description.Media
+	sessionStreams   sync.Map // *gortsplib.ServerSession -> *Stream
+	mu               sync.RWMutex
 }
 
+// NewServer creates a new RTSP Server listening on the specified port.
 func NewServer(port int, pathName string, audioCodec string, authUser string, authPass string) (*Server, error) {
 	if port == 0 {
 		port = 8554
@@ -67,69 +50,6 @@ func NewServer(port int, pathName string, audioCodec string, authUser string, au
 		audioCodec = "aac"
 	}
 
-	// 1. Setup H.264 video format (Main Live Feed)
-	vFormat := &format.H264{
-		PayloadTyp:        96,
-		PacketizationMode: 1,
-	}
-	vMedia := &description.Media{
-		Type:    description.MediaTypeVideo,
-		Formats: []format.Format{vFormat},
-	}
-
-	// 2. Setup Audio format (AAC or PCMU)
-	var aFormat format.Format
-	var aacEncoder *rtpmpeg4audio.Encoder
-
-	if audioCodec == "pcmu" {
-		aFormat = &format.G711{
-			MULaw:        true,
-			SampleRate:   8000,
-			ChannelCount: 1,
-		}
-	} else {
-		audioCodec = "aac"
-		aacConf := &mpeg4audio.Config{
-			Type:         mpeg4audio.ObjectTypeAACLC,
-			SampleRate:   16000,
-			ChannelCount: 1,
-		}
-		aacFmt := &format.MPEG4Audio{
-			PayloadTyp:       97,
-			Config:           aacConf,
-			SizeLength:       13,
-			IndexLength:      3,
-			IndexDeltaLength: 3,
-		}
-		var err error
-		aacEncoder, err = aacFmt.CreateEncoder()
-		if err != nil {
-			return nil, fmt.Errorf("failed to create aac rtp encoder: %w", err)
-		}
-		aFormat = aacFmt
-	}
-
-	aMedia := &description.Media{
-		Type:    description.MediaTypeAudio,
-		Formats: []format.Format{aFormat},
-	}
-
-	// 3. Setup PCMU Audio Backchannel format (Client Microphone -> Camera Speaker)
-	bcFormat := &format.G711{
-		MULaw:        true,
-		SampleRate:   8000,
-		ChannelCount: 1,
-	}
-	bcMedia := &description.Media{
-		Type:          description.MediaTypeAudio,
-		Formats:       []format.Format{bcFormat},
-		IsBackChannel: true,
-	}
-
-	meds := &description.Session{
-		Medias: []*description.Media{vMedia, aMedia, bcMedia},
-	}
-
 	var nonce string
 	if authUser != "" {
 		var err error
@@ -139,23 +59,22 @@ func NewServer(port int, pathName string, audioCodec string, authUser string, au
 		}
 	}
 
-	s := &Server{
-		session:           meds,
-		videoFormat:       vFormat,
-		audioCodec:        audioCodec,
-		audioFormat:       aFormat,
-		aacRTPEncoder:     aacEncoder,
-		backchannelFormat: bcFormat,
-		videoMedia:        vMedia,
-		audioMedia:        aMedia,
-		backchannelMedia:  bcMedia,
-		pathName:          pathName,
-		port:              port,
-		authUser:          authUser,
-		authPass:          authPass,
-		realm:             "Steinel CAM Bridge",
-		nonce:             nonce,
+	st, err := NewStream(pathName, audioCodec)
+	if err != nil {
+		return nil, err
 	}
+
+	s := &Server{
+		port:             port,
+		authUser:         authUser,
+		authPass:         authPass,
+		realm:            "Steinel CAM Bridge",
+		nonce:            nonce,
+		streams:          make(map[string]*Stream),
+		primaryStream:    st,
+		backchannelMedia: st.backchannelMedia,
+	}
+	s.streams[pathName] = st
 
 	srv := &gortsplib.Server{
 		Handler:        s,
@@ -163,8 +82,8 @@ func NewServer(port int, pathName string, audioCodec string, authUser string, au
 		WriteQueueSize: 4096,
 		Listen:         s.listenInterceptor,
 	}
-
 	s.server = srv
+
 	return s, nil
 }
 
@@ -179,41 +98,120 @@ func (s *Server) listenInterceptor(network, address string) (net.Listener, error
 	}, nil
 }
 
-func (s *Server) SetAudioBackchannelHandler(handler AudioBackchannelHandler) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.audioBackchannelHandler = handler
-}
-
-func (s *Server) SetOnPlayHandler(handler OnPlayHandler) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.onPlayHandler = handler
-}
-
-// ActiveClients returns the number of clients currently playing the RTSP stream.
-func (s *Server) ActiveClients() int64 {
-	cnt := s.activeClients.Load()
-	if cnt < 0 {
-		return 0
+// RegisterStream adds or retrieves an RTSP stream for the specified path and audio codec.
+func (s *Server) RegisterStream(pathName string, audioCodec string) (*Stream, error) {
+	pathName = strings.TrimPrefix(pathName, "/")
+	if pathName == "" {
+		return nil, fmt.Errorf("stream path cannot be empty")
 	}
-	return cnt
+
+	s.streamsMu.Lock()
+	defer s.streamsMu.Unlock()
+
+	if st, ok := s.streams[pathName]; ok {
+		return st, nil
+	}
+
+	st, err := NewStream(pathName, audioCodec)
+	if err != nil {
+		return nil, err
+	}
+
+	s.mu.RLock()
+	started := s.started
+	srv := s.server
+	s.mu.RUnlock()
+
+	if started && srv != nil {
+		st.initServerStream(srv)
+	}
+
+	s.streams[pathName] = st
+	if s.primaryStream == nil {
+		s.primaryStream = st
+	}
+	logger.Info("RTSP", "📹 Registered RTSP stream at path '/%s' (codec: %s)", pathName, st.GetAudioCodec())
+	return st, nil
 }
 
+// GetStream returns the Stream instance registered for a given path, or nil if not found.
+func (s *Server) GetStream(pathName string) *Stream {
+	pathName = strings.TrimPrefix(pathName, "/")
+	s.streamsMu.RLock()
+	defer s.streamsMu.RUnlock()
+	return s.streams[pathName]
+}
+
+// PrimaryStream returns the primary / default Stream instance.
+func (s *Server) PrimaryStream() *Stream {
+	s.streamsMu.RLock()
+	defer s.streamsMu.RUnlock()
+	return s.primaryStream
+}
+
+func (s *Server) checkPath(p string) bool {
+	return s.findStreamForPath(p) != nil
+}
+
+// findStreamForPath maps a requested RTSP URI path to its corresponding Stream.
+func (s *Server) findStreamForPath(reqPath string) *Stream {
+	reqPath = strings.TrimPrefix(reqPath, "/")
+	if idx := strings.Index(reqPath, "?"); idx >= 0 {
+		reqPath = reqPath[:idx]
+	}
+
+	s.streamsMu.RLock()
+	defer s.streamsMu.RUnlock()
+
+	// 1. Direct match on full path
+	if st, ok := s.streams[reqPath]; ok {
+		return st
+	}
+
+	// 2. Base segment match (e.g. "einfahrt/main", "einfahrt/trackID=0")
+	parts := strings.Split(reqPath, "/")
+	basePath := parts[0]
+	if st, ok := s.streams[basePath]; ok {
+		return st
+	}
+
+	// 3. Aliases: "", "live", "steinel", "cam" -> fallback to primary stream
+	if basePath == "" || basePath == "live" || basePath == "steinel" || basePath == "cam" {
+		return s.primaryStream
+	}
+
+	return nil
+}
+
+// Start begins serving RTSP connections and initializes all registered streams.
 func (s *Server) Start() error {
-	if s.authUser != "" {
-		logger.Info("RTSP", "Server listening at rtsp://0.0.0.0:%d/%s (Auth: user '%s', Profile T Audio Backchannel enabled)", s.port, s.pathName, s.authUser)
-	} else {
-		logger.Info("RTSP", "Server listening at rtsp://0.0.0.0:%d/%s (Profile T Audio Backchannel enabled)", s.port, s.pathName)
+	s.streamsMu.RLock()
+	var paths []string
+	for p := range s.streams {
+		paths = append(paths, "/"+p)
 	}
+	s.streamsMu.RUnlock()
+
+	if s.authUser != "" {
+		logger.Info("RTSP", "Server listening at rtsp://0.0.0.0:%d (paths: %v, Auth: user '%s', Profile T Audio Backchannel enabled)", s.port, paths, s.authUser)
+	} else {
+		logger.Info("RTSP", "Server listening at rtsp://0.0.0.0:%d (paths: %v, Profile T Audio Backchannel enabled)", s.port, paths)
+	}
+
 	if err := s.server.Start(); err != nil {
 		return err
 	}
 
 	s.mu.Lock()
 	s.started = true
-	s.stream = gortsplib.NewServerStream(s.server, s.session)
+	srv := s.server
 	s.mu.Unlock()
+
+	s.streamsMu.RLock()
+	for _, st := range s.streams {
+		st.initServerStream(srv)
+	}
+	s.streamsMu.RUnlock()
 
 	// Start dedicated UDP Backchannel Listener on port (e.g. 8554/udp)
 	udpAddr, err := net.ResolveUDPAddr("udp", fmt.Sprintf(":%d", s.port))
@@ -233,12 +231,11 @@ func (s *Server) Start() error {
 	return nil
 }
 
+// Close gracefully stops the RTSP server and closes all stream resources.
 func (s *Server) Close() {
 	s.mu.Lock()
 	udpConn := s.udpConn
 	s.udpConn = nil
-	stream := s.stream
-	s.stream = nil
 	srv := s.server
 	s.server = nil
 	started := s.started
@@ -248,49 +245,30 @@ func (s *Server) Close() {
 	if udpConn != nil {
 		_ = udpConn.Close()
 	}
-	if stream != nil {
-		stream.Close()
+
+	s.streamsMu.RLock()
+	for _, st := range s.streams {
+		st.Close()
 	}
+	s.streamsMu.RUnlock()
+
 	if srv != nil && started {
 		srv.Close()
 	}
 }
 
 func (s *Server) handleBackchannelPacket(medi *description.Media, pkt *rtp.Packet, source string, sess *gortsplib.ServerSession) {
-	if medi == nil || medi == s.backchannelMedia || medi.IsBackChannel {
-		// Single-talker exclusivity: Only allow one session to stream audio backchannel at a time.
-		now := time.Now()
-		s.backchannelMu.Lock()
-		if s.activeTalkSession == nil || (s.activeTalkSession != sess && now.Sub(s.lastTalkTime) > 2*time.Second) {
-			s.activeTalkSession = sess
-			s.lastTalkTime = now
-			logger.Info("RTSP", "🎙️ Audio backchannel acquired by session (%s)", source)
-		} else if s.activeTalkSession != sess {
-			s.backchannelMu.Unlock()
-			logger.Trace("RTSP", "🎙️ Audio backchannel busy: dropping packet from secondary session (%s)", source)
-			return
+	var targetStream *Stream
+	if sess != nil {
+		if val, ok := s.sessionStreams.Load(sess); ok {
+			targetStream = val.(*Stream)
 		}
-		s.lastTalkTime = now
-		s.backchannelMu.Unlock()
-
-		cnt := s.backchannelPacketCount.Add(1)
-		if cnt == 1 {
-			logger.Info("RTSP", "🎙️ Audio backchannel stream started (%s, PT=%d, SSRC=%d)", source, pkt.PayloadType, pkt.SSRC)
-		} else if cnt%50 == 0 {
-			logger.Debug("RTSP", "🎙️ Forwarding audio backchannel (%s) RTP packet #%d (PT=%d, SSRC=%d, Seq=%d, Payload=%d bytes)",
-				source, cnt, pkt.PayloadType, pkt.SSRC, pkt.SequenceNumber, len(pkt.Payload))
-		} else {
-			logger.Trace("RTSP", "🎙️ Audio backchannel (%s) RTP packet #%d (PT=%d, SSRC=%d, Seq=%d, Payload=%d bytes)",
-				source, cnt, pkt.PayloadType, pkt.SSRC, pkt.SequenceNumber, len(pkt.Payload))
-		}
-
-		s.mu.RLock()
-		handler := s.audioBackchannelHandler
-		s.mu.RUnlock()
-
-		if handler != nil {
-			_ = handler(pkt)
-		}
+	}
+	if targetStream == nil {
+		targetStream = s.primaryStream
+	}
+	if targetStream != nil {
+		targetStream.handleBackchannelPacket(medi, pkt, source, sess)
 	}
 }
 
@@ -310,75 +288,27 @@ func (s *Server) readUDPBackchannelLoop(conn *net.UDPConn) {
 			continue
 		}
 
-		s.handleBackchannelPacket(s.backchannelMedia, pkt, "UDP", nil)
+		// Route UDP packet to active talk stream, or fallback to primary stream
+		var targetStream *Stream
+		s.streamsMu.RLock()
+		for _, st := range s.streams {
+			st.backchannelMu.Lock()
+			if st.activeTalkSession != nil {
+				targetStream = st
+				st.backchannelMu.Unlock()
+				break
+			}
+			st.backchannelMu.Unlock()
+		}
+		if targetStream == nil {
+			targetStream = s.primaryStream
+		}
+		s.streamsMu.RUnlock()
+
+		if targetStream != nil {
+			targetStream.handleBackchannelPacket(nil, pkt, "UDP", nil)
+		}
 	}
-}
-
-func (s *Server) checkPath(p string) bool {
-	p = strings.TrimPrefix(p, "/")
-	if idx := strings.Index(p, "?"); idx != -1 {
-		p = p[:idx]
-	}
-	cleanPath := strings.TrimPrefix(s.pathName, "/")
-	return p == "" || p == cleanPath || p == "live" || p == "steinel" ||
-		p == cleanPath+"/main" || p == cleanPath+"/sub" ||
-		p == "live/main" || p == "live/sub" ||
-		p == "cam/realmonitor"
-}
-
-// WriteVideoPacket forwards a raw H.264 RTP packet to all connected RTSP clients
-func (s *Server) WriteVideoPacket(pkt *rtp.Packet) {
-	s.mu.RLock()
-	st := s.stream
-	s.mu.RUnlock()
-
-	if st == nil {
-		return
-	}
-	pkt.PayloadType = 96
-	_ = st.WritePacketRTP(s.videoMedia, pkt)
-}
-
-// GetAudioCodec returns the configured audio codec ("aac" or "pcmu")
-func (s *Server) GetAudioCodec() string {
-	return s.audioCodec
-}
-
-// WriteAACFrame writes an encoded AAC Access Unit (AU) with Presentation Timestamp (PTS)
-func (s *Server) WriteAACFrame(au []byte, pts time.Duration) {
-	s.mu.Lock()
-	st := s.stream
-	enc := s.aacRTPEncoder
-	s.mu.Unlock()
-
-	if st == nil || enc == nil || len(au) == 0 {
-		return
-	}
-
-	pkts, err := enc.Encode([][]byte{au})
-	if err != nil {
-		return
-	}
-
-	// 16000 Hz RTP clock rate for AAC
-	ts := uint32(pts.Seconds() * 16000)
-	for _, pkt := range pkts {
-		pkt.Timestamp = ts
-		_ = st.WritePacketRTP(s.audioMedia, pkt)
-	}
-}
-
-// WriteAudioPacket forwards a PCMU RTP packet to all connected RTSP clients
-func (s *Server) WriteAudioPacket(pkt *rtp.Packet) {
-	s.mu.RLock()
-	st := s.stream
-	s.mu.RUnlock()
-
-	if st == nil {
-		return
-	}
-	pkt.PayloadType = 0
-	_ = st.WritePacketRTP(s.audioMedia, pkt)
 }
 
 // validateAuth validates incoming RTSP requests against configured authUser and authPass.
@@ -387,8 +317,6 @@ func (s *Server) validateAuth(req *base.Request, conn *gortsplib.ServerConn, ses
 		return true, nil
 	}
 
-	// Bidirectional auth inheritance between session and connection:
-	// If session or connection was already authenticated and request has no new Authorization header, allow
 	if req.Header["Authorization"] == nil {
 		if sess != nil && sess.UserData() == true {
 			if conn != nil {
@@ -443,19 +371,20 @@ func (s *Server) OnDescribe(ctx *gortsplib.ServerHandlerOnDescribeCtx) (*base.Re
 	}
 
 	logger.Trace("RTSP", "DESCRIBE request for path: %s", ctx.Path)
-	if !s.checkPath(ctx.Path) {
+	st := s.findStreamForPath(ctx.Path)
+	if st == nil {
 		return &base.Response{
 			StatusCode: base.StatusNotFound,
 		}, nil, nil
 	}
 
-	s.mu.RLock()
-	st := s.stream
-	s.mu.RUnlock()
+	st.mu.RLock()
+	sStream := st.serverStream
+	st.mu.RUnlock()
 
 	return &base.Response{
 		StatusCode: base.StatusOK,
-	}, st, nil
+	}, sStream, nil
 }
 
 func (s *Server) OnSetup(ctx *gortsplib.ServerHandlerOnSetupCtx) (*base.Response, *gortsplib.ServerStream, error) {
@@ -464,19 +393,24 @@ func (s *Server) OnSetup(ctx *gortsplib.ServerHandlerOnSetupCtx) (*base.Response
 	}
 
 	logger.Trace("RTSP", "SETUP request for path: %s", ctx.Path)
-	if !s.checkPath(ctx.Path) {
+	st := s.findStreamForPath(ctx.Path)
+	if st == nil {
 		return &base.Response{
 			StatusCode: base.StatusNotFound,
 		}, nil, nil
 	}
 
-	s.mu.RLock()
-	st := s.stream
-	s.mu.RUnlock()
+	if ctx.Session != nil {
+		s.sessionStreams.Store(ctx.Session, st)
+	}
+
+	st.mu.RLock()
+	sStream := st.serverStream
+	st.mu.RUnlock()
 
 	return &base.Response{
 		StatusCode: base.StatusOK,
-	}, st, nil
+	}, sStream, nil
 }
 
 func (s *Server) OnPlay(ctx *gortsplib.ServerHandlerOnPlayCtx) (*base.Response, error) {
@@ -484,22 +418,23 @@ func (s *Server) OnPlay(ctx *gortsplib.ServerHandlerOnPlayCtx) (*base.Response, 
 		return resp, nil
 	}
 
+	var targetStream *Stream
 	if ctx.Session != nil {
-		if _, loaded := s.playingSessions.LoadOrStore(ctx.Session, struct{}{}); !loaded {
-			count := s.activeClients.Add(1)
-			logger.Debug("RTSP", "▶️ Client connected and playing stream (%s, active clients: %d)", ctx.Path, count)
-			if count == 1 {
-				logger.Info("RTSP", "▶️ Stream active (client connected: %s)", ctx.Path)
-			}
+		if val, ok := s.sessionStreams.Load(ctx.Session); ok {
+			targetStream = val.(*Stream)
 		}
 	}
-
-	s.mu.RLock()
-	handler := s.onPlayHandler
-	s.mu.RUnlock()
-	if handler != nil {
-		go handler()
+	if targetStream == nil {
+		targetStream = s.findStreamForPath(ctx.Path)
 	}
+
+	if targetStream != nil {
+		if ctx.Session != nil {
+			s.sessionStreams.Store(ctx.Session, targetStream)
+		}
+		targetStream.handlePlay(ctx.Path, ctx.Session)
+	}
+
 	return &base.Response{
 		StatusCode: base.StatusOK,
 	}, nil
@@ -511,47 +446,125 @@ func (s *Server) OnRecord(ctx *gortsplib.ServerHandlerOnRecordCtx) (*base.Respon
 	}
 
 	logger.Debug("RTSP", "🎙️ OnRecord called on %s", ctx.Path)
+	var targetStream *Stream
 	if ctx.Session != nil {
+		if val, ok := s.sessionStreams.Load(ctx.Session); ok {
+			targetStream = val.(*Stream)
+		}
+	}
+	if targetStream == nil {
+		targetStream = s.findStreamForPath(ctx.Path)
+	}
+
+	if targetStream != nil && ctx.Session != nil {
 		for _, medi := range ctx.Session.SetuppedMedias() {
 			cmedia := medi
 			for _, forma := range medi.Formats {
 				ctx.Session.OnPacketRTP(medi, forma, func(pkt *rtp.Packet) {
-					s.handleBackchannelPacket(cmedia, pkt, "RECORD", ctx.Session)
+					targetStream.handleBackchannelPacket(cmedia, pkt, "RECORD", ctx.Session)
 				})
 			}
 		}
 	}
+
 	return &base.Response{
 		StatusCode: base.StatusOK,
 	}, nil
 }
 
 func (s *Server) OnSessionClose(ctx *gortsplib.ServerHandlerOnSessionCloseCtx) {
-	if ctx.Session != nil {
-		s.backchannelMu.Lock()
-		if s.activeTalkSession != nil && s.activeTalkSession == ctx.Session {
-			s.activeTalkSession = nil
-			logger.Info("RTSP", "🎙️ Active audio backchannel session closed, releasing talk lock")
-		}
-		s.backchannelMu.Unlock()
+	if ctx.Session == nil {
+		return
+	}
 
-		if _, loaded := s.playingSessions.LoadAndDelete(ctx.Session); loaded {
-			count := s.activeClients.Add(-1)
+	var targetStream *Stream
+	if val, ok := s.sessionStreams.LoadAndDelete(ctx.Session); ok {
+		targetStream = val.(*Stream)
+	}
+
+	if targetStream != nil {
+		if _, loaded := targetStream.playingSessions.LoadAndDelete(ctx.Session); loaded {
+			count := targetStream.activeClients.Add(-1)
 			if count < 0 {
-				s.activeClients.Store(0)
+				targetStream.activeClients.Store(0)
 				count = 0
 			}
-
-			logger.Debug("RTSP", "⏹️ Client disconnected (active clients: %d)", count)
-			if count == 0 {
-				s.mu.Lock()
-				now := time.Now()
-				if now.Sub(s.lastIdleLogTime) > 30*time.Second {
-					s.lastIdleLogTime = now
-					logger.Info("RTSP", "⏹️ Stream idle (all clients disconnected)")
-				}
-				s.mu.Unlock()
-			}
+			logger.Debug("RTSP", "⏹️ Client disconnected from '%s' (active clients: %d)", targetStream.pathName, count)
 		}
+
+		targetStream.backchannelMu.Lock()
+		if targetStream.activeTalkSession == ctx.Session {
+			targetStream.activeTalkSession = nil
+			logger.Info("RTSP", "🎙️ Active audio backchannel session closed on '%s', releasing talk lock", targetStream.pathName)
+		}
+		targetStream.backchannelMu.Unlock()
+	} else {
+		// Fallback check across all streams
+		s.streamsMu.RLock()
+		for _, st := range s.streams {
+			if _, loaded := st.playingSessions.LoadAndDelete(ctx.Session); loaded {
+				count := st.activeClients.Add(-1)
+				if count < 0 {
+					st.activeClients.Store(0)
+					count = 0
+				}
+				logger.Debug("RTSP", "⏹️ Client disconnected from '%s' (fallback) (active clients: %d)", st.pathName, count)
+			}
+			st.backchannelMu.Lock()
+			if st.activeTalkSession == ctx.Session {
+				st.activeTalkSession = nil
+			}
+			st.backchannelMu.Unlock()
+		}
+		s.streamsMu.RUnlock()
+	}
+}
+
+// --- Backward-Compatible Server Delegation Methods ---
+
+func (s *Server) SetAudioBackchannelHandler(handler AudioBackchannelHandler) {
+	if s.primaryStream != nil {
+		s.primaryStream.SetAudioBackchannelHandler(handler)
+	}
+}
+
+func (s *Server) SetOnPlayHandler(handler OnPlayHandler) {
+	if s.primaryStream != nil {
+		s.primaryStream.SetOnPlayHandler(handler)
+	}
+}
+
+func (s *Server) ActiveClients() int64 {
+	s.streamsMu.RLock()
+	defer s.streamsMu.RUnlock()
+	var total int64
+	for _, st := range s.streams {
+		total += st.ActiveClients()
+	}
+	return total
+}
+
+func (s *Server) WriteVideoPacket(pkt *rtp.Packet) {
+	if s.primaryStream != nil {
+		s.primaryStream.WriteVideoPacket(pkt)
+	}
+}
+
+func (s *Server) GetAudioCodec() string {
+	if s.primaryStream != nil {
+		return s.primaryStream.GetAudioCodec()
+	}
+	return "aac"
+}
+
+func (s *Server) WriteAACFrame(au []byte, pts time.Duration) {
+	if s.primaryStream != nil {
+		s.primaryStream.WriteAACFrame(au, pts)
+	}
+}
+
+func (s *Server) WriteAudioPacket(pkt *rtp.Packet) {
+	if s.primaryStream != nil {
+		s.primaryStream.WriteAudioPacket(pkt)
 	}
 }

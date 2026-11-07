@@ -17,15 +17,16 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
    - CoAP Signaling (`/p2p/webrtc-info` & `/webrtc/tracks`)
    - WebRTC DTLS/SRTP Media (Pion WebRTC v4) + DataChannel `test` (MCU-Frames & SD-Karten Chunks)
 2. **Steinel L 620 CAM / XLED CAM 1 (Xiongmai Sofia Driver)**:
-   - Xiongmai Sofia Binärprotokoll auf TCP-Port `34567` (Login, MCU-Lichtsteuerung, Alarme, SD-Karten-Indexierung & Chunk-Download)
-   - Nativer lokaler RTSP-Stream-Ingest von der Kamera
-   - 2-Wege-Audio Backchannel via Xiongmai Talk-Protokoll
+   - Xiongmai Sofia Binärprotokoll auf TCP-Port `34567` (Login via MD5 oder RSA `DVRIP-Xm030`, MCU-Lichtsteuerung, Alarme, SD-Karten-Indexierung & Chunk-Download)
+   - Direktes natives H.264 Video-Streaming (`OPMonitor` MsgID 1410 / 1412) über Port `34567` (vollständig unabhängig von internem RTSP-Port 554)
+   - Ressourcenschonendes On-Demand-Streaming bei aktiven RTSP-Zuschauern (mit 15s Standby-Cooldown)
+   - 2-Wege-Audio Backchannel via Xiongmai Talk-Protokoll mit automatischer PCMU $\leftrightarrow$ PCMA Transkodierung
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                       Steinel Kamera / Außenleuchte                         │
 │  ├─ L 625 CAM SC: Nabto Edge P2P (UDP 5592) + WebRTC (H.264/PCMU) + DC      │
-│  └─ L 620 CAM / XLED: Xiongmai Sofia (TCP 34567) + RTSP Ingest + XM-Talk    │
+│  └─ L 620 CAM / XLED: Xiongmai Sofia (Port 34567 Video/Control) + XM-Talk   │
 └──────────────────────────────────────┬──────────────────────────────────────┘
                                        │ Auto-Detection via Port 34567 Probe
                                        ▼
@@ -68,13 +69,14 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
 - **`cmd/steinel-bridge/`**:
   - `main.go`: Schlanker, deklarativer Programmeinstieg (64 Zeilen). Parst Konfiguration via `pkg/config`, initialisiert den Überwachungs-Lifecycle via `pkg/supervisor` und startet die Anwendung via `pkg/app`.
 
-- **`pkg/config/`** *(Neu in Milestone 2)*:
-  - `config.go`: Zentrales, validiertes Konfigurationsobjekt (`Config`) mit strenger Präzedenz:
-    1. CLI-Flags (`-ip`, `-type`, `-user`, `-pass`, `-bridge-user`, `-bridge-pass`, `-cache-recordings`, `-cache-dir`, `-qr`, `-key`, `-port`, `-path`, `-res`, `-audio-codec`, `-onvif`, `-reset-pairing`, `-mqtt-broker`, `-sync-interval`, `-log-level`, etc.)
-    2. Umgebungsvariablen (`CAMERA_IP`, `CAMERA_TYPE`, `CAMERA_USER`, `CAMERA_PASSWORD`, `BRIDGE_USER`, `BRIDGE_PASS`, `CACHE_RECORDINGS`, `CACHE_DIR`, `QR_CODE`, `KEY_PATH`, `RESOLUTION`, `AUDIO_CODEC`, `RTSP_PORT`, `ONVIF_PORT`, `MQTT_BROKER`, `SDCARD_SYNC_INTERVAL`, `USE_CGO_NABTO`, `LOG_LEVEL`, `LOG_FORMAT`, etc.)
-    3. Home Assistant Add-on Konfigurationsdatei (`/data/options.json` & Home Assistant Supervisor MQTT Auto-Discovery API via `X-Supervisor-Token`)
-    4. Sichere Standardwerte (z. B. `cache_recordings: 5` für die letzten 5 Aufnahmen im lokalen Speicher).
-  - `probe.go`: Führt bei `camera_type: "auto"` einen schnellen Non-Blocking TCP-Probe auf Port `34567` durch, um automatisch zwischen `L 620 CAM` (Xiongmai Sofia) und `L 625 CAM SC` (Nabto Edge) zu unterscheiden.
+- **`pkg/config/`** *(Neu in Milestone 2 & Multi-Camera)*:
+  - `config.go`: Zentrales, validiertes Konfigurationsobjekt (`Config`) mit nativer Multi-Kamera-Unterstützung (`Cameras []CameraConfig`) und 100 % Abwärtskompatibilität (synthetisiert bei Ein-Kamera-Setups automatisch eine kanonische Kamera).
+  - Strenge Präzedenz:
+    1. CLI-Flags (`-ip`, `-mac`, `-name`, `-type`, `-user`, `-pass`, `-bridge-user`, `-bridge-pass`, `-cache-recordings`, `-cache-dir`, `-qr`, `-key`, `-port`, `-path`, `-res`, `-audio-codec`, `-onvif`, `-reset-pairing`, `-mqtt-broker`, `-sync-interval`, `-log-level`, `-config`, etc.)
+    2. Umgebungsvariablen (`CAMERA_IP`, `CAMERA_MAC`, `CAMERA_TYPE`, `CAMERA_USER`, `CAMERA_PASSWORD`, `BRIDGE_USER`, `BRIDGE_PASS`, `CACHE_RECORDINGS`, `CACHE_DIR`, `QR_CODE`, `KEY_PATH`, `RESOLUTION`, `AUDIO_CODEC`, `RTSP_PORT`, `ONVIF_PORT`, `MQTT_BROKER`, `SDCARD_SYNC_INTERVAL`, `USE_CGO_NABTO`, `LOG_LEVEL`, `LOG_FORMAT`, etc.)
+    3. Home Assistant Add-on Konfigurationsdatei (`/data/options.json` inkl. `cameras: [...]`, `camera_mac` & Home Assistant Supervisor MQTT Auto-Discovery API via `X-Supervisor-Token`)
+    4. Sichere Standardwerte (z. B. `cache_recordings: 5` für die letzten 5 Aufnahmen im lokalen Speicher, `DefaultCameraMAC: 00:0C:43:00:01:02` für 100 % abwärtskompatible Home Assistant ONVIF Unique IDs; automatisierte deterministische MAC-Ableitung für Multi-Cam-Instanzen via `DeriveMAC`).
+  - `probe.go`: Führt bei `camera_type: "auto"` einen schnellen Non-Blocking TCP-Probe auf Port `34567` durch, um pro Kamera automatisch zwischen `L 620 CAM` (Xiongmai Sofia) und `L 625 CAM SC` (Nabto Edge) zu unterscheiden.
 
 - **`pkg/supervisor/`** *(Neu in Milestone 2)*:
   - `supervisor.go`: Robuster, autonomer Überwachungs- und Reconnect-Lifecycle.
@@ -82,11 +84,10 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
   - Guarded Goroutine-Draining (max. 3s) stellt sicher, dass zu jedem Zeitpunkt maximal eine Verbindungsinstanz aktiv ist und Sockets sauber freigegeben werden.
   - Hält definierte Cooldown-Phasen ein (15s Retry-Cooldown, 30s Kamera-Reboot-Cooldown).
 
-- **`pkg/app/`** *(Neu in Milestone 2)*:
-  - `app.go`: Subsystem-Orchestrierung und saubere Dependency Injection.
-  - Instanziiert den isolierten `events.Bus` via `events.NewBus()`.
-  - Baut den passenden `driver.CameraDriver` über die Driver-Factory.
-  - Initialisiert Server (`rtsp.Server`, `onvif.Server`, `mqtt.Client`, `storage.RecordingSyncer`).
+- **`pkg/app/`** *(Neu in Milestone 2 & Multi-Camera)*:
+  - `app.go`: Subsystem-Orchestrierung, Multi-Kamera-Lifecycle und saubere Dependency Injection.
+  - Instanziiert für jede konfigurierte Kamera einen isolierten `events.Bus`, eigenen `BridgeManager`, eigene Speichercaches und autonome Supervisors (parallele Ausführung in Goroutines).
+  - Bindet alle Kameras an den gemeinsamen `rtsp.Server` (über getrennte Pfade) und den gemeinsamen `onvif.Server` (über getrennte ONVIF-Kanäle).
   - Fängt Betriebssystem-Signale (`SIGINT`, `SIGTERM`) für unterbrechungsfreien Graceful Shutdown ab.
 
 - **`pkg/driver/`** *(Neu in Milestone 3)*:
@@ -126,11 +127,12 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
 - **`pkg/xiongmai/`**:
   - Detailspezifikation & Byte-Layout: Siehe [`AGENTS_L620.md`](file:///Users/christian/dev/git/steinel-cam-bridge/AGENTS_L620.md).
   - `client.go`: Xiongmai Sofia Binärprotokoll-Client (Port 34567, MD5-Challenge-Response & adaptiver RSA/AES-Login mit 100 % CWE-312 Passwort-Maskierung, OPTrans RS232 Serial Bridge, 1582 Telemetrie-Fragmentierungs-Puffer & `EnsureH264Encoding` via `Simplify.Encode` 1040/1042).
-  - `driver.go`: Orchestriert Sofia-Verbindung, autonomer Sofia Reconnect-Supervisor (`superviseSofiaLoop`), RTSP-Ingest, MCU-Synchronisation, SD-Karten-Verwaltung und Talk-Backchannel.
+  - `driver.go`: Orchestriert Sofia-Verbindung, autonomer Sofia Reconnect-Supervisor (`superviseSofiaLoop`), natives Sofia Video-Streaming (`sofia_stream.go`) mit automatischem Fallback auf RTSP-Ingest (`rtsp_ingest.go`), MCU-Synchronisation, SD-Karten-Verwaltung und Talk-Backchannel.
+  - `sofia_stream.go`: Natives H.264 Video-Streaming über das Sofia/NetIP-Protokoll (MsgID 1410/1412) mit On-Demand-Aktivierung bei aktiven RTSP-Zuschauern, Frame-Demuxing (I-Frames `00 00 01 FC`, P-Frames `00 00 01 FD`, Chunks) und RFC 6184 konformer RTP-Paketierung.
   - `rtsp_ingest.go`: Nimmt den nativen H.264/AAC-RTSP-Stream der L 620 entgegen mit kanonischer sauberer Pfad-Reihenfolge (ohne `?real_stream` an Position 1 gegen Kamera-Pufferüberläufe), Port-554-Unreachable-Short-Circuit & exponentiellem Backoff, SDP-Track-Prüfung, Zero-Packet Initial-Watchdog (5s) und Silence-Watchdog (15s).
   - `mcu.go`: ASCII-Frame Parser (`B...U`) & Command Builder für L 620 Licht-, Dämmerungs- und Sensorkommandos via OPTrans RS232.
   - `sdcard.go`: Xiongmai SD-Karten Dateisystemabfrage (`OPFileQuery`) und Download mit konsistenter Thumbnail-Behandlung.
-  - `talk.go`: Rückkanal-Audiokommunikation (G.711u / PCMU) über das Xiongmai Talk-Protokoll.
+  - `talk.go`: Rückkanal-Audiokommunikation (G.711u / PCMU) über das Xiongmai Talk-Protokoll mit dynamischer Audio-Aushandlung (`MsgTalkClaimV2Req`), automatischer PCMU $\leftrightarrow$ PCMA Transkodierung und thread-sicherem Audio-Framing.
 
 - **`pkg/storage/`**:
   - `storage.go`: Definiert das gemeinsame Interface `RecordingProvider`, Metadatenstrukturen (`RecordingItem`, `RecordingListResponse`) und kanonische Speicherfehler (`ErrStorageBusy`, `ErrStorageTimeout`, `ErrFeatureDisabled`).
@@ -140,31 +142,33 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
   - `syncer.go`: Hintergrund-Syncer (`RecordingSyncer`), der neue SD-Karten-Aufnahmen periodisch (abschaltbar via `0`, adaptiv gedrosselt auf 5 Minuten bei aktivem 24/7 RTSP-Streaming zur Kamera-SoC-Schonung) oder bei Bewegungstriggern (mit 35s Pufferzeit gegen I/O-Kollisionen während der 30s-Aufnahme) in den Cache lädt, redundante Upstream-Queries bei Cache-Nutzung unterbindet und neue Aufnahme-Events mit vollständiger `thumbnail_url` an MQTT / Home Assistant publiziert.
 
 - **`pkg/audio/`**:
-  - `g711.go`: ITU-T G.711 µ-law & A-law Decoder (`DecodePCMU` & `DecodePCMA`, 8-Bit $\rightarrow$ 16-Bit Linear PCM).
+  - `g711.go`: ITU-T G.711 µ-law & A-law Decoder (`DecodePCMU` & `DecodePCMA`, 8-Bit $\rightarrow$ 16-Bit Linear PCM) sowie bidirektionale Transkodierung (`TranscodePCMUToPCMA`, `TranscodePCMAToPCMU`).
   - `resample.go`: Polyphase- / Interpolations-Resampler (8 kHz $\rightarrow$ 16 kHz / 32 kHz).
-  - `transcoder.go`: Echtzeit-Audiotranscoder (`ProcessPCMU` & `ProcessPCMA`) mit persistentem VisualOn AAC-Encoder (`github.com/gen2brain/aac-go`), wiederverwendbarem `pcmReader bytes.Reader` via `Reset()` und Puffer-Kompaktierung gegen Speicherfragmentierung.
+  - `transcoder.go`: Echtzeit-Audiotranscoder (`ProcessPCMU` & `ProcessPCMA`) mit wiederverwendbarem `pcmReader bytes.Reader` via `Reset()` und Puffer-Kompaktierung gegen Speicherfragmentierung.
+  - `internal/aac`: Instanz-isolierter nativer VisualOn AAC-Encoder (`pkg/audio/internal/aac`) für thread-sicheres Multi-Kamera-Transcoding ohne globale Zustände.
 
 - **`pkg/rtsp/`**:
-  - `server.go`: RTSP-Server auf Basis von `github.com/bluenviron/gortsplib/v4`. Liefert H.264 Video, AAC/PCMU Audio, ONVIF Profile T Audio Backchannel mit Single-Talker-Lock (exklusive Session-Belegung des Mikrofons), akkurates `ActiveClients()`-Tracking (Inkrement ausschließlich bei `PLAY`, dekrementiert nur bei registrierten Spielern) sowie integrierte Digest (MD5/SHA256) & Basic Authentifizierung mit bidirektionaler Session-Connection-Vererbung gegen Reconnect-Abbrüche (`wrong response on SETUP`).
+  - `server.go`: RTSP-Server auf Basis von `github.com/bluenviron/gortsplib/v4`. Multi-Stream-Routing über einen gemeinsamen Port (`:8554`) mit dynamischer Stream-Registrierung (`RegisterStream`), Profil T Audio Backchannel mit Single-Talker-Lock (exklusive Session-Belegung des Mikrofons pro Stream-Pfad), akkurates `ActiveClients()`-Tracking (Inkrement ausschließlich bei `PLAY`, dekrementiert nur bei registrierten Spielern) sowie integrierte Digest (MD5/SHA256) & Basic Authentifizierung mit bidirektionaler Session-Connection-Vererbung gegen Reconnect-Abbrüche (`wrong response on SETUP`).
+  - `stream.go`: Kapselt H.264 Video- und AAC/PCMU Audio-Tracks, RTP-Encoder und Session-Client-Tracking pro Stream-Pfad. Definiert das gemeinsame Interface `MediaStream`, welches sowohl von einzelnen Streams (`*Stream`) als auch vom Server (`*Server`) implementiert wird.
   - `interceptor.go`: Dedizierter UDP-RTP Socket auf Port `8554/udp` sowie TCP-Interleaved Listener (`interceptingConn`) mit vorallokiertem 4-KB Lesepuffer für Zero-Allocation Socket-Reads (**0 Allokationen/Read**).
 
 - **`pkg/onvif/`**:
   - `auth.go`: RFC 2617 HTTP Digest Authentifizierung (zustandsloses HMAC-SHA256 Nonce-Management, MD5 Digest Berechnung mit `qop="auth"` & Legacy-Unterstützung), WS-Security UsernameToken (`PasswordDigest` via SHA-1 Nonce/Timestamp Hash sowie `PasswordText`), HTTP Basic Auth und Timing-Attack-sichere Validierung via `subtle.ConstantTimeCompare`.
   - `discovery.go`: **WS-Discovery Server** auf UDP Multicast `239.255.255.250:3702`.
-  - `device.go`: Device Service (`GetDeviceInformation`, `GetCapabilities`, `GetServices`, `GetSystemDateAndTime`, `GetUsers`, `GetScopes`, `<tt:Security>` Capabilities mit `UsernameToken` und `HttpDigest`).
-  - `media.go`: Media Service (`Profile_Main` 1080p, `Profile_Sub` 360p, `GetStreamUri`, `SetVideoEncoderConfiguration`).
-  - `events.go`: Event Service (WS-BaseNotification PullPoint für Motion-Events, `SetSynchronizationPoint` & `Subscribe` für Scrypted / ONVIF NVRs).
+  - `device.go`: Device Service (`GetDeviceInformation`, `GetCapabilities`, `GetServices`, `GetSystemDateAndTime`, `GetUsers`, `GetScopes`, `GetNetworkInterfaces` mit konfigurierbarer MAC-Adresse zur Vermeidung von HA Unique-ID-Konflikten bei Multi-Cam/Multi-Container-Setups, `<tt:Security>` Capabilities mit `UsernameToken` und `HttpDigest`).
+  - `media.go`: Media Service mit dynamischer Multi-Channel-Unterstützung (`CameraChannel`). Generiert pro Kamera dedizierte Video- und Audio-Quellen (`VideoSource_1`, `VideoSource_2`, ...) sowie Profile (`Profile_<path>_Main`, `Profile_<path>_Sub`; bzw. `Profile_Main`/`Profile_Sub` im abwärtskompatiblen Ein-Kamera-Modus) und routet `GetStreamUri` anhand des angeforderten `ProfileToken` auf den passenden RTSP-Pfad.
+  - `events.go`: Event Service (WS-BaseNotification PullPoint für Motion-Events mit kamera-spezifischem `VideoSourceConfigurationToken` Mapping, `SetSynchronizationPoint` & `Subscribe` für Scrypted / ONVIF NVRs).
   - `deviceio.go`: DeviceIO / Relay / Auxiliary Service für Licht- und Sirenensteuerung.
   - `recording.go`, `replay.go`, `search.go`: **ONVIF Profile G Services** zur standardisierten Suche und Wiedergabe von SD-Karten-Aufnahmen in NVRs.
-  - `server.go`: HTTP Server auf Port `8000` (SOAP Dispatcher mit Triple-Auth via `authenticateSOAP`: HTTP Digest, HTTP Basic und WS-Security).
-  - `api.go`: HTTP REST-API Endpunkte (`/api/status`, `/api/light`, `/api/sdcard/*` Chunks & Thumbnails) mit HTTP Basic Auth Schutz für Home Assistant; liefert gecachte Videos mit vollem HTTP 206 Range-Request-Support (`http.ServeFile`) und extrahierte 5s-Thumbnails (`/thumbnail.jpg`) direkt vom lokalen Speicher aus.
+  - `server.go`: HTTP Server auf Port `8000` (SOAP Dispatcher mit Triple-Auth via `authenticateSOAP`: HTTP Digest, HTTP Basic und WS-Security, Multi-Channel-Registrierung `SetChannels`/`AddChannel`).
+  - `api.go`: HTTP REST-API Endpunkte (`/api/cameras`, `/api/status`, `/api/light`, `/api/sdcard/*` Chunks & Thumbnails mit optionalem `?camera=<path>` Filter) mit HTTP Basic Auth Schutz für Home Assistant; liefert gecachte Videos mit vollem HTTP 206 Range-Request-Support (`http.ServeFile`) und extrahierte 5s-Thumbnails (`/thumbnail.jpg`) direkt vom lokalen Speicher aus.
 
 - **`pkg/mqtt/`**:
   - Modularisiert in vier fokussierte Komponenten:
-    - `client.go`: Verbindungs-Lifecycle, Auto-Reconnect, Last-Will-and-Testament (LWT).
-    - `discovery.go`: Home Assistant Auto-Discovery für alle 10 Entitäten (`light`, `select`, `sensor`, `binary_sensor`, `number`, `siren`, `event`).
-    - `state.go`: Status- und Telemetrie-Publizierung sowie Aufnahme-Events (`PublishRecordingEvent`).
-    - `command.go`: Sicheres Parsen und Dispatching eingehender MQTT-Kommandos.
+    - `client.go`: Verbindungs-Lifecycle, Auto-Reconnect, Last-Will-and-Testament (LWT), Multi-Device-Verwaltung (`RegisterCamera`) für parallelen Betrieb mehrerer Kameras über eine gemeinsame MQTT-Verbindung.
+    - `discovery.go`: Home Assistant Auto-Discovery für alle Entitäten pro Kamera unter Verwendung der technisch eindeutigen ID (`deviceID`) für Topics und konfigurierbaren Display-Namen (`name` -> `Steinel <Name>`).
+    - `state.go`: Status- und Telemetrie-Publizierung pro Kamera (`steinel/<deviceID>/...`) sowie Aufnahme-Events (`PublishRecordingEvent`).
+    - `command.go`: Sicheres Parsen und Dispatching eingehender MQTT-Kommandos an die Callbacks der jeweils adressierten Kamera.
   - Vollständige Dependency Injection über den injizierten `events.Bus` (keine Singletons).
 
 - **`pkg/events/`**:
@@ -174,9 +178,9 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
   - `mcu.go`: Parser für 18-Byte (36 Hex-Zeichen) MCU-UART-Frames (`5A0F0F...`) und Command-Builder für Dimmstufen, Nachlaufzeit, Grundlicht, PIR-Sensitivität, Lux-Schwelle und Sirene.
 
 - **`ha-addon/` & `ha-addon-beta/` (Home Assistant Add-ons)**:
-  - `config.yaml`: Manifest (Schema, `host_network: true`, `services: ["mqtt:want"]`, `reset_pairing: bool`).
+  - `config.yaml`: Manifest (Schema mit `cameras: list(schema)` und abwärtskompatiblen Einzelkamera-Optionen, `host_network: true`, `services: ["mqtt:want"]`, `reset_pairing: bool`).
   - `build.yaml`: Verknüpfung mit pre-built Multi-Arch Image `ghcr.io/afrouper/steinel-cam-bridge:{arch}`.
-  - `DOCS.md` & `CHANGELOG.md`: In-App Dokumentation und Versionshistorie.
+  - `DOCS.md` & `CHANGELOG.md`: In-App Dokumentation und Versionshistorie inkl. Multi-Kamera-Konfigurationsbeispielen.
   - `translations/`: Sprachdateien (`de.yaml`, `en.yaml`) für das Home Assistant Einstellungs-Formular.
   - *Regel*: `ha-addon` hält stets die aktuelle Stable-Version (konkreter Tag, kein `latest`). `ha-addon-beta` wird für Tests und Vorabveröffentlichungen genutzt.
 

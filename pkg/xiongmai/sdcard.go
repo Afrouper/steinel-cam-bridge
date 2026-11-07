@@ -45,7 +45,8 @@ func (m *SDCardManager) ListRecordings(ctx context.Context, start, end time.Time
 	}
 
 	if start.IsZero() {
-		start = time.Now().Add(-24 * time.Hour)
+		// Use a pragmatic 4-hour window on initial query to prevent camera SoC starvation on full SD cards
+		start = time.Now().Add(-4 * time.Hour)
 	}
 	if end.IsZero() {
 		end = time.Now()

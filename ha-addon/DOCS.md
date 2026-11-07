@@ -20,6 +20,20 @@ Der QR-Code wird initial für das Pairing benötigt. Danach muss er nicht mehr z
 3. Optional `camera_type: l620` setzen.
 4. Auf **Speichern** und **Starten** klicken!
 
+### C. Multi-Kamera-Betrieb (Mehrere Kameras)
+Wenn Sie mehr als eine Steinel Kamera betreiben, können Sie alle Kameras über die Option **`cameras`** eintragen:
+```yaml
+cameras:
+  - name: "Einfahrt"
+    camera_ip: "192.168.1.100"
+    qr_code: "did=de-xxxxxxx,pid=pr-xxxxx,sct=xxxx,pairPwd=xxxx"
+  - name: "Garten"
+    camera_ip: "192.168.1.101"
+    camera_type: "l620"
+    camera_password: "geheimes_passwort"
+```
+Die Bridge stellt alle Kameras über denselben RTSP-Port (`:8554/einfahrt`, `:8554/garten`) und ONVIF-Port (`:8000`) bereit. In Home Assistant und MQTT erscheinen separate Geräte (`Steinel Einfahrt`, `Steinel Garten`).
+
 ---
 
 ## ⚙️ Konfiguration
@@ -27,6 +41,7 @@ Der QR-Code wird initial für das Pairing benötigt. Danach muss er nicht mehr z
 | Option | Typ | Standard | Beschreibung |
 |---|---|---|---|
 | `camera_ip` | String | *(Pflichtfeld)* | Lokale IP-Adresse der Steinel-Kamera im Heimnetz (z. B. `192.168.1.100`) |
+| `camera_mac` | String | `""` | Optional: Benutzerdefinierte MAC-Adresse (Standard: `00:0C:43:00:01:02`). Zur Vermeidung von Home Assistant Unique-ID-Konflikten bei parallelem Betrieb mehrerer Kameras |
 | `camera_type` | Liste | `auto` | Kameramodell: `auto` (automatische Erkennung), `l625` (L 625 CAM SC), `l620` (L 620 CAM / XLED CAM 1) |
 | `camera_user` | String | `admin` | Benutzername für L 620 CAM (Standard: `admin`) |
 | `camera_password` | String | `""` | Geräte-Passwort für L 620 CAM (in der Steinel App vergeben) |

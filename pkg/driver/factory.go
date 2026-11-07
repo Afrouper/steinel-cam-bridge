@@ -10,7 +10,7 @@ import (
 func New(
 	cfg *config.Config,
 	isL620 bool,
-	rtspServer *rtsp.Server,
+	rtspServer rtsp.MediaStream,
 	eventBus *events.Bus,
 	onDeviceDiscovered func(deviceID, productID string),
 ) (CameraDriver, error) {

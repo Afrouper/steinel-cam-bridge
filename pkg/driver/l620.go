@@ -24,7 +24,7 @@ type L620Driver struct {
 }
 
 // NewL620Driver creates a new Driver instance for Steinel L 620 CAM.
-func NewL620Driver(cfg *config.Config, rtspServer *rtsp.Server, eventBus *events.Bus) *L620Driver {
+func NewL620Driver(cfg *config.Config, rtspServer rtsp.MediaStream, eventBus *events.Bus) *L620Driver {
 	xm := xiongmai.NewDriver(
 		cfg.NabtoConfig.CameraIP,
 		cfg.CameraUser,
@@ -64,8 +64,10 @@ func (d *L620Driver) SetResolution(res string) error {
 	return d.xmDriver.SetResolution(res)
 }
 
-// RequestKeyframe requests a keyframe (handled automatically by RTSP Ingest).
-func (d *L620Driver) RequestKeyframe() {}
+// RequestKeyframe requests an immediate keyframe or triggers on-demand stream startup.
+func (d *L620Driver) RequestKeyframe() {
+	d.xmDriver.RequestKeyframe()
+}
 
 // SetLampState switches the primary lamp on or off.
 func (d *L620Driver) SetLampState(mode string) error {

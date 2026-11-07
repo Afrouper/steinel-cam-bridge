@@ -20,7 +20,7 @@ import (
 type Bridge struct {
 	nabtoClient      nabto.Driver
 	stream           nabto.StreamDriver
-	rtspServer       *rtsp.Server
+	rtspServer       rtsp.MediaStream
 	eventBus         *events.Bus
 	resolution       string
 	pliInterval      time.Duration
@@ -42,7 +42,7 @@ type Bridge struct {
 }
 
 // NewBridge creates and initializes a new Bridge instance for the Steinel L 625 CAM SC.
-func NewBridge(client nabto.Driver, stream nabto.StreamDriver, rtspServer *rtsp.Server, eventBus *events.Bus, resolution string, pliInterval time.Duration) *Bridge {
+func NewBridge(client nabto.Driver, stream nabto.StreamDriver, rtspServer rtsp.MediaStream, eventBus *events.Bus, resolution string, pliInterval time.Duration) *Bridge {
 	if resolution == "" {
 		resolution = "1080p"
 	}
