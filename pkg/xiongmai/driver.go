@@ -50,20 +50,18 @@ func NewDriver(cameraIP string, user, password string, resolution string, rtspSe
 		eventBus = events.GlobalBus
 	}
 
-	streamSubtype := 0 // 1080p Full HD (Main stream)
 	resNormalized := "1080p"
+	sofiaStreamType := "Main"
 	if strings.EqualFold(resolution, "360p") {
-		streamSubtype = 1 // 360p SD (Sub stream)
 		resNormalized = "360p"
+		sofiaStreamType = "Extra1"
 	} else if strings.EqualFold(resolution, "720p") {
-		streamSubtype = 0
 		resNormalized = "720p"
 	}
 
 	client := NewClient(cameraIP, DefaultPort, user, password)
-	sofiaStream := NewSofiaStream(cameraIP, DefaultPort, client, rtspServer)
+	sofiaStream := NewSofiaStream(cameraIP, DefaultPort, client, rtspServer, sofiaStreamType)
 	talk := NewTalkClient(client)
-	ingest := NewRTSPIngest(cameraIP, RTSPPort, user, password, streamSubtype, rtspServer)
 	sdcard := NewSDCardManager(client, cameraIP, user, password)
 
 	return &Driver{
@@ -76,7 +74,7 @@ func NewDriver(cameraIP string, user, password string, resolution string, rtspSe
 		client:      client,
 		sofiaStream: sofiaStream,
 		talk:        talk,
-		ingest:      ingest,
+		ingest:      nil, // Only started if Sofia connection fails
 		sdcard:      sdcard,
 		closeChan:   make(chan struct{}),
 	}
@@ -154,6 +152,11 @@ func (d *Driver) Start(ctx context.Context) error {
 		d.ingest = NewRTSPIngest(d.cameraIP, RTSPPort, d.user, effectivePwd, streamSubtype, d.rtspServer, d.password)
 		if err := d.ingest.Start(ctx); err != nil {
 			logger.Warn("Xiongmai Driver", "⚠️ Failed to start RTSP Ingest fallback: %v", err)
+		}
+	} else {
+		if d.ingest != nil {
+			_ = d.ingest.Close()
+			d.ingest = nil
 		}
 	}
 
@@ -251,6 +254,12 @@ func (d *Driver) superviseSofiaLoop(ctx context.Context) {
 
 				_ = d.client.EnsureH264Encoding()
 				d.syncInitialState()
+
+				if d.ingest != nil {
+					logger.Info("Xiongmai Driver", "⏹️ Closing fallback RTSP ingest now that Sofia control is restored")
+					_ = d.ingest.Close()
+					d.ingest = nil
+				}
 
 				if d.sofiaStream != nil && !d.sofiaStream.IsRunning() && d.rtspServer != nil && d.rtspServer.ActiveClients() > 0 {
 					go func() {
@@ -440,16 +449,18 @@ func (d *Driver) SetNightlightDuration(val string) error {
 	return err
 }
 
-// SetResolution switches between 1080p/720p (stream 0) and 360p (stream 1) for the Steinel L 620 CAM.
+// SetResolution switches between 1080p/720p (stream 0 / "Main") and 360p (stream 1 / "Extra1") for the Steinel L 620 CAM.
 func (d *Driver) SetResolution(res string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
 	streamSubtype := 0
 	resNormalized := "1080p"
+	sofiaStreamType := "Main"
 	if strings.EqualFold(res, "360p") {
 		streamSubtype = 1
 		resNormalized = "360p"
+		sofiaStreamType = "Extra1"
 	} else if strings.EqualFold(res, "720p") {
 		streamSubtype = 0
 		resNormalized = "720p"
@@ -462,13 +473,44 @@ func (d *Driver) SetResolution(res string) error {
 		d.eventBus.UpdateStatus(st)
 	}
 
+	// 1. If SofiaStream is configured:
+	if d.sofiaStream != nil {
+		d.sofiaStream.SetStreamType(sofiaStreamType)
+	}
+
+	// If Sofia client is connected and active:
+	if d.client != nil && d.client.IsLoggedIn() && d.sofiaStream != nil {
+		d.streamMu.Lock()
+		defer d.streamMu.Unlock()
+
+		if d.sofiaStream.IsRunning() {
+			logger.Info("Xiongmai Driver", "🔄 Switching native Sofia video stream resolution to %s (%s)...", resNormalized, sofiaStreamType)
+			_ = d.sofiaStream.Stop()
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := d.sofiaStream.Start(ctx); err != nil {
+				logger.Warn("Xiongmai Driver", "⚠️ Failed to restart Sofia stream with %s: %v", resNormalized, err)
+				return err
+			}
+			logger.Info("Xiongmai Driver", "🎥 Native Sofia video stream active with resolution %s (%s)", resNormalized, sofiaStreamType)
+		}
+
+		// Ensure fallback Ingest is closed and nil to prevent dual streaming
+		if d.ingest != nil {
+			_ = d.ingest.Close()
+			d.ingest = nil
+		}
+		return nil
+	}
+
+	// 2. Fallback mode: RTSP Ingest on port 554
 	if d.ingest != nil {
 		effectivePwd := d.client.GetEffectivePassword()
 		if effectivePwd == "" && d.password != "" {
 			effectivePwd = d.password
 		}
 		_ = d.ingest.Close()
-		d.ingest = NewRTSPIngest(d.cameraIP, RTSPPort, d.user, effectivePwd, streamSubtype, d.rtspServer)
+		d.ingest = NewRTSPIngest(d.cameraIP, RTSPPort, d.user, effectivePwd, streamSubtype, d.rtspServer, d.password)
 		return d.ingest.Start(context.Background())
 	}
 	return nil

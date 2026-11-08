@@ -1,10 +1,13 @@
 package mqtt
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/Afrouper/steinel-cam-bridge/pkg/events"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/storage"
+	paho "github.com/eclipse/paho.mqtt.golang"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -307,4 +310,55 @@ func TestSingleCamera_NoDuplicateDiscovery(t *testing.T) {
 	assert.Equal(t, "de-m4yfowbr", cam.DeviceID)
 	assert.Equal(t, "steinel_de_m4yfowbr", cam.nodeID)
 	assert.Equal(t, "steinel/de-m4yfowbr", cam.baseTopic)
+}
+
+type mockPahoClient struct {
+	paho.Client
+	published map[string]string
+}
+
+func (m *mockPahoClient) IsConnected() bool { return true }
+func (m *mockPahoClient) Publish(topic string, qos byte, retained bool, payload interface{}) paho.Token {
+	if m.published == nil {
+		m.published = make(map[string]string)
+	}
+	m.published[topic] = fmt.Sprint(payload)
+	return &mockToken{}
+}
+
+type mockToken struct {
+	paho.Token
+}
+
+func (t *mockToken) Wait() bool                       { return true }
+func (t *mockToken) WaitTimeout(d time.Duration) bool { return true }
+func (t *mockToken) Error() error                     { return nil }
+
+func TestPublishDeviceStatus_LampMode(t *testing.T) {
+	mockCl := &mockPahoClient{published: make(map[string]string)}
+	c := NewClient(Config{
+		TopicPrefix: "steinel",
+		DeviceID:    "de-test",
+	}, Callbacks{}, nil)
+	c.client = mockCl
+
+	dev := &CameraDevice{baseTopic: "steinel/de-test"}
+
+	// 1. LampMode 1 (Dauerlicht) -> light/state = ON, mode/state = Dauerlicht
+	mockCl.published = make(map[string]string)
+	c.publishDeviceStatus(dev, events.DeviceStatus{LampMode: 1})
+	assert.Equal(t, "ON", mockCl.published["steinel/de-test/light/state"])
+	assert.Equal(t, "Dauerlicht", mockCl.published["steinel/de-test/mode/state"])
+
+	// 2. LampMode 2 (Sensor Auto) -> light/state = OFF, mode/state = Sensor
+	mockCl.published = make(map[string]string)
+	c.publishDeviceStatus(dev, events.DeviceStatus{LampMode: 2})
+	assert.Equal(t, "OFF", mockCl.published["steinel/de-test/light/state"], "Flutlicht switch in HA must be OFF when in Sensor Automatik mode")
+	assert.Equal(t, "Sensor", mockCl.published["steinel/de-test/mode/state"])
+
+	// 3. LampMode 0 (Aus) -> light/state = OFF, mode/state = Aus
+	mockCl.published = make(map[string]string)
+	c.publishDeviceStatus(dev, events.DeviceStatus{LampMode: 0})
+	assert.Equal(t, "OFF", mockCl.published["steinel/de-test/light/state"])
+	assert.Equal(t, "Aus", mockCl.published["steinel/de-test/mode/state"])
 }

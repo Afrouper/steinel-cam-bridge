@@ -609,3 +609,26 @@ func TestSofiaStreamLifecycle_EncryptedAES(t *testing.T) {
 	assert.False(t, sofiaStream.IsRunning())
 	assert.True(t, stopReceivedEncrypted.Load(), "expected encrypted OPMonitor Stop to be received")
 }
+
+func TestSofiaStream_StreamType(t *testing.T) {
+	mockStream := &mockMediaStream{}
+
+	// 1. Default stream type should be "Main"
+	sDefault := NewSofiaStream("127.0.0.1", 34567, nil, mockStream)
+	assert.Equal(t, "Main", sDefault.StreamType())
+
+	// 2. Custom stream type "Extra1"
+	sExtra := NewSofiaStream("127.0.0.1", 34567, nil, mockStream, "Extra1")
+	assert.Equal(t, "Extra1", sExtra.StreamType())
+
+	// 3. Dynamic mutation via SetStreamType
+	sDefault.SetStreamType("Extra1")
+	assert.Equal(t, "Extra1", sDefault.StreamType())
+
+	sDefault.SetStreamType("Main")
+	assert.Equal(t, "Main", sDefault.StreamType())
+
+	// 4. Empty string defaults back to "Main"
+	sDefault.SetStreamType("")
+	assert.Equal(t, "Main", sDefault.StreamType())
+}

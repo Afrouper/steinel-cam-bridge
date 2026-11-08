@@ -2,6 +2,17 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge** Add-on werden hier dokumentiert.
 
+## 1.5.1
+
+### 🐛 Bugfixes: L 620 Flutlicht-Status & SD/HD Auflösung
+
+- **Home Assistant Flutlicht-Schalter Zustand (Issue #67)**:
+  - Korrektur der MQTT-Statusmeldung bei Sensor-Automatik (`LampMode == 2`): Der Schalter `light.flutlicht` meldet nun korrekt `OFF`, wenn sich die Leuchte im Standby-/Sensor-Betrieb befindet.
+  - Verhindert das automatische Zurückspringen des Schalters auf „AN“ nach manuellem Ausschalten in Home Assistant.
+- **L 620 CAM Substream & Auflösungs-Umschaltung (Issue #67)**:
+  - Unterstützung des nativen Sofia/DVRIP Substreams (`Extra1`) für `360p`-Auflösung anstelle von fest verdrahtetem `Main` (1080p).
+  - Dynamisches Umschalten der Auflösung im laufenden Sofia-Videostream ohne parallelen RTSP-Ingest (Port 554), wodurch Bildzerreißer („Blitzer“) und RTP-Sequenzkollisionen behoben sind.
+
 ## 1.5.0
 
 ### 🚀 Hauptfeatures: Direktes L 620 Streaming & Multi-Kamera-Betrieb
