@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Afrouper/steinel-cam-bridge/pkg/audio"
+	"github.com/Afrouper/steinel-cam-bridge/pkg/events"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/rtsp"
 	"github.com/pion/rtp"
 	"github.com/stretchr/testify/assert"
@@ -2159,4 +2160,143 @@ func TestDriverOnDemandStreaming(t *testing.T) {
 	// Stop stream when clients disconnect
 	d.stopSofiaStream()
 	assert.False(t, d.sofiaStream.IsRunning(), "Sofia stream must stop when stopSofiaStream is invoked")
+}
+
+func TestDriver_SetResolution(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer func() { _ = l.Close() }()
+
+	port := l.Addr().(*net.TCPAddr).Port
+
+	var lastClaimStreamType atomic.Pointer[string]
+	var lastStartStreamType atomic.Pointer[string]
+
+	go func() {
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer func() { _ = c.Close() }()
+				buf := make([]byte, 2048)
+				for {
+					n, err := c.Read(buf)
+					if err != nil || n < HeaderLength {
+						return
+					}
+					hdr, err := DecodeHeader(buf[:HeaderLength])
+					if err != nil {
+						return
+					}
+					payload := buf[HeaderLength:n]
+					switch hdr.MsgID {
+					case MsgLoginReq:
+						resp, _ := json.Marshal(LoginResp{Ret: 100, SessionID: "0x0A"})
+						respHdr := Header{Magic: HeaderMagic, SessionID: 0x0A, Sequence: hdr.Sequence, MsgID: MsgLoginResp, DataLength: uint32(len(resp) + 2)}
+						_, _ = c.Write(append(respHdr.Encode(), append(resp, 0x0A, 0x00)...))
+					case MsgTransStartReq:
+						resp, _ := json.Marshal(map[string]interface{}{"Ret": 100, "SessionID": "0x0000000A"})
+						respHdr := Header{Magic: HeaderMagic, SessionID: 0x0A, Sequence: hdr.Sequence, MsgID: MsgTransStartResp, DataLength: uint32(len(resp) + 2)}
+						_, _ = c.Write(append(respHdr.Encode(), append(resp, 0x0A, 0x00)...))
+					case MsgMonitorClaimReq, MsgMonitorClaimResp:
+						var claimReq OPMonitorReq
+						clean := strings.TrimRight(string(payload), "\x00\r\n ")
+						if json.Unmarshal([]byte(clean), &claimReq) == nil && claimReq.OPMonitor.Parameter != nil {
+							st := claimReq.OPMonitor.Parameter.StreamType
+							lastClaimStreamType.Store(&st)
+						}
+						resp := []byte(`{"Name":"OPMonitor","Ret":100}` + "\x00")
+						respHdr := Header{Magic: HeaderMagic, SessionID: 0x0A, Sequence: hdr.Sequence, MsgID: MsgMonitorClaimResp, DataLength: uint32(len(resp))}
+						_, _ = c.Write(append(respHdr.Encode(), resp...))
+					case MsgMonitorStartReq:
+						var startReq OPMonitorReq
+						clean := strings.TrimRight(string(payload), "\x00\r\n ")
+						if json.Unmarshal([]byte(clean), &startReq) == nil && startReq.OPMonitor.Parameter != nil {
+							if startReq.OPMonitor.Action == "Start" {
+								st := startReq.OPMonitor.Parameter.StreamType
+								lastStartStreamType.Store(&st)
+							}
+						}
+						resp := []byte(`{"Name":"OPMonitor","Ret":100}` + "\x00")
+						respHdr := Header{Magic: HeaderMagic, SessionID: 0x0A, Sequence: hdr.Sequence, MsgID: MsgMonitorStartResp, DataLength: uint32(len(resp))}
+						_, _ = c.Write(append(respHdr.Encode(), resp...))
+					default:
+						resp := []byte(`{"Ret":100}` + "\x00")
+						respHdr := Header{Magic: HeaderMagic, SessionID: 0x0A, Sequence: hdr.Sequence, MsgID: hdr.MsgID + 1, DataLength: uint32(len(resp))}
+						_, _ = c.Write(append(respHdr.Encode(), resp...))
+					}
+				}
+			}(conn)
+		}
+	}()
+
+	mockStream := &mockOnDemandRTSPServer{}
+	bus := events.NewBus()
+
+	// 1. Initialize Driver with 360p resolution
+	d := NewDriver("127.0.0.1", "admin", "", "360p", mockStream, bus)
+	d.client.addr = fmt.Sprintf("127.0.0.1:%d", port)
+	d.sofiaStream.port = port
+	defer func() { _ = d.Close() }()
+
+	assert.Equal(t, "360p", d.resolution)
+	assert.Equal(t, "Extra1", d.sofiaStream.StreamType(), "360p must map to Extra1 stream type in SofiaStream")
+	assert.Nil(t, d.ingest, "Fallback RTSP ingest must remain nil when initialized")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	mockStream.clients.Store(0)
+	err = d.Start(ctx)
+	require.NoError(t, err)
+
+	// Ingest must remain nil after Sofia connects successfully
+	assert.Nil(t, d.ingest, "Ingest must not be started when Sofia connects")
+
+	// 2. Trigger on-demand streaming to start the Sofia stream
+	mockStream.clients.Store(1)
+	d.RequestKeyframe()
+
+	require.Eventually(t, func() bool {
+		return d.sofiaStream.IsRunning()
+	}, 2*time.Second, 50*time.Millisecond, "Sofia stream must start")
+
+	// Verify that claim and start used Extra1
+	if claimST := lastClaimStreamType.Load(); assert.NotNil(t, claimST) {
+		assert.Equal(t, "Extra1", *claimST)
+	}
+	if startST := lastStartStreamType.Load(); assert.NotNil(t, startST) {
+		assert.Equal(t, "Extra1", *startST)
+	}
+
+	// 3. Switch resolution to 720p via SetResolution
+	err = d.SetResolution("720p")
+	require.NoError(t, err)
+
+	assert.Equal(t, "720p", d.resolution)
+	assert.Equal(t, "Main", d.sofiaStream.StreamType(), "720p must map to Main stream type")
+	assert.Equal(t, "720p", bus.GetStatus().Resolution)
+	assert.Nil(t, d.ingest, "Ingest must NOT be started when Sofia stream switches resolution")
+
+	// Wait for restart and verify Main stream was requested
+	require.Eventually(t, func() bool {
+		st := lastStartStreamType.Load()
+		return st != nil && *st == "Main"
+	}, 2*time.Second, 50*time.Millisecond, "Sofia stream restart must request Main stream type")
+
+	// 4. Switch resolution back to 360p
+	err = d.SetResolution("360p")
+	require.NoError(t, err)
+
+	assert.Equal(t, "360p", d.resolution)
+	assert.Equal(t, "Extra1", d.sofiaStream.StreamType(), "360p must map back to Extra1 stream type")
+	assert.Equal(t, "360p", bus.GetStatus().Resolution)
+	assert.Nil(t, d.ingest, "Ingest must stay nil across resolution toggles")
+
+	require.Eventually(t, func() bool {
+		st := lastStartStreamType.Load()
+		return st != nil && *st == "Extra1"
+	}, 2*time.Second, 50*time.Millisecond, "Sofia stream restart must request Extra1 stream type")
 }

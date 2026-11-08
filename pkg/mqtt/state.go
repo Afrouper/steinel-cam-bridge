@@ -150,7 +150,7 @@ func (c *Client) publishDeviceStatus(dev *CameraDevice, st events.DeviceStatus) 
 		pub("light/state", "ON")
 		pub("mode/state", "Dauerlicht")
 	case 2:
-		pub("light/state", "ON")
+		pub("light/state", "OFF")
 		pub("mode/state", "Sensor")
 	default:
 		pub("light/state", "OFF")

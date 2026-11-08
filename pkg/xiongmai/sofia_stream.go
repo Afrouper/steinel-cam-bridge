@@ -29,6 +29,7 @@ type VideoWriter interface {
 type SofiaStream struct {
 	cameraIP        string
 	port            int
+	streamType      string
 	client          *Client
 	rtspServer      VideoWriter
 	mediaConn       net.Conn
@@ -42,16 +43,42 @@ type SofiaStream struct {
 }
 
 // NewSofiaStream creates a new Sofia native video streamer for Steinel L 620 / Xiongmai cameras.
-func NewSofiaStream(cameraIP string, port int, client *Client, rtspServer VideoWriter) *SofiaStream {
+// Optional streamType can be "Main" (1080p/720p) or "Extra1" (360p sub stream); defaults to "Main".
+func NewSofiaStream(cameraIP string, port int, client *Client, rtspServer VideoWriter, streamType ...string) *SofiaStream {
 	if port <= 0 {
 		port = DefaultPort
+	}
+	st := "Main"
+	if len(streamType) > 0 && streamType[0] != "" {
+		st = streamType[0]
 	}
 	return &SofiaStream{
 		cameraIP:   cameraIP,
 		port:       port,
+		streamType: st,
 		client:     client,
 		rtspServer: rtspServer,
 	}
+}
+
+// StreamType returns the active Sofia OPMonitor stream type ("Main" or "Extra1").
+func (s *SofiaStream) StreamType() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.streamType == "" {
+		return "Main"
+	}
+	return s.streamType
+}
+
+// SetStreamType sets the desired Sofia OPMonitor stream type ("Main" or "Extra1").
+func (s *SofiaStream) SetStreamType(streamType string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if streamType == "" {
+		streamType = "Main"
+	}
+	s.streamType = streamType
 }
 
 // Start establishes the secondary TCP media connection, claims the media channel,
@@ -82,6 +109,11 @@ func (s *SofiaStream) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to connect to Sofia media port: %w", err)
 	}
 
+	stType := s.streamType
+	if stType == "" {
+		stType = "Main"
+	}
+
 	// Step 1: OPMonitor Media Claim (MsgID 1413) on media socket
 	claimReq := OPMonitorReq{
 		Name: "OPMonitor",
@@ -91,7 +123,7 @@ func (s *SofiaStream) Start(ctx context.Context) error {
 			Parameter: &OPMonitorParam{
 				Channel:    0,
 				CombinMode: "NONE",
-				StreamType: "Main",
+				StreamType: stType,
 				TransMode:  "TCP",
 			},
 		},
@@ -165,7 +197,7 @@ func (s *SofiaStream) Start(ctx context.Context) error {
 			Parameter: &OPMonitorParam{
 				Channel:    0,
 				CombinMode: "NONE",
-				StreamType: "Main",
+				StreamType: stType,
 				TransMode:  "TCP",
 			},
 		},
@@ -202,7 +234,9 @@ func (s *SofiaStream) Start(ctx context.Context) error {
 
 	s.mediaConn = conn
 	s.stopChan = make(chan struct{})
-	s.streamStartTime = time.Now()
+	if s.streamStartTime.IsZero() {
+		s.streamStartTime = time.Now()
+	}
 	s.running.Store(true)
 
 	s.wg.Add(1)
@@ -364,6 +398,10 @@ func (s *SofiaStream) Stop() error {
 	// Send encrypted OPMonitor Stop on control socket
 	if s.client != nil && s.client.IsLoggedIn() {
 		sessionHex := fmt.Sprintf("0x%010x", s.client.GetSessionID())
+		stType := s.streamType
+		if stType == "" {
+			stType = "Main"
+		}
 		stopReq := OPMonitorReq{
 			Name: "OPMonitor",
 			OPMonitor: OPMonitorInfo{
@@ -371,7 +409,7 @@ func (s *SofiaStream) Stop() error {
 				Parameter: &OPMonitorParam{
 					Channel:    0,
 					CombinMode: "NONE",
-					StreamType: "Main",
+					StreamType: stType,
 					TransMode:  "TCP",
 				},
 			},
