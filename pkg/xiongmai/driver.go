@@ -197,7 +197,9 @@ func (d *Driver) applyMCUConfig(mcuCfg *MCUConfig) {
 		st.PIRSensitivity = 33
 	}
 	st.Lowlight = mcuCfg.Lowlight
-	if dur, err := strconv.Atoi(strings.TrimSuffix(mcuCfg.LowlightDuration, "h")); err == nil {
+	if mcuCfg.LowlightDuration == "all_night" || strings.HasPrefix(mcuCfg.LowlightDuration, "all") {
+		st.LowlightTime = 24 * 60
+	} else if dur, err := strconv.Atoi(strings.TrimSuffix(mcuCfg.LowlightDuration, "h")); err == nil {
 		st.LowlightTime = dur * 60
 	}
 	d.eventBus.UpdateStatus(st)

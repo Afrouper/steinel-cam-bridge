@@ -11,6 +11,17 @@ import (
 	paho "github.com/eclipse/paho.mqtt.golang"
 )
 
+// publishOptimistic publishes an immediate optimistic state update to Home Assistant
+// to prevent UI slider jumping and toggle rubberbanding during network latency.
+func (c *Client) publishOptimistic(baseTopic, subTopic, val string) {
+	c.mu.RLock()
+	cl := c.client
+	c.mu.RUnlock()
+	if cl != nil && cl.IsConnected() {
+		cl.Publish(fmt.Sprintf("%s/%s", baseTopic, subTopic), 1, true, val)
+	}
+}
+
 // handleCommand processes incoming command messages from Home Assistant and dispatches to Callbacks.
 func (c *Client) handleCommand(_ paho.Client, msg paho.Message) {
 	topic := msg.Topic()
@@ -36,6 +47,8 @@ func (c *Client) handleCommand(_ paho.Client, msg paho.Message) {
 			if cb.SetHighlight != nil {
 				_ = cb.SetHighlight(val)
 			}
+			c.publishOptimistic(baseTopic, "highlight/state", strconv.Itoa(val))
+			c.publishOptimistic(baseTopic, "light/brightness/state", strconv.Itoa(val))
 		}
 
 	case strings.HasSuffix(topic, "/light/set"):
@@ -43,10 +56,14 @@ func (c *Client) handleCommand(_ paho.Client, msg paho.Message) {
 			if cb.SetLampMode != nil {
 				_ = cb.SetLampMode("on")
 			}
+			c.publishOptimistic(baseTopic, "light/state", "ON")
+			c.publishOptimistic(baseTopic, "mode/state", "Dauerlicht")
 		} else {
 			if cb.SetLampMode != nil {
 				_ = cb.SetLampMode("off")
 			}
+			c.publishOptimistic(baseTopic, "light/state", "OFF")
+			c.publishOptimistic(baseTopic, "mode/state", "Sensor")
 		}
 
 	case strings.HasSuffix(topic, "/mode/set"):
@@ -55,14 +72,20 @@ func (c *Client) handleCommand(_ paho.Client, msg paho.Message) {
 			if cb.SetLampMode != nil {
 				_ = cb.SetLampMode("auto")
 			}
+			c.publishOptimistic(baseTopic, "mode/state", "Sensor")
+			c.publishOptimistic(baseTopic, "light/state", "OFF")
 		case "dauerlicht", "on", "1":
 			if cb.SetLampMode != nil {
 				_ = cb.SetLampMode("on")
 			}
+			c.publishOptimistic(baseTopic, "mode/state", "Dauerlicht")
+			c.publishOptimistic(baseTopic, "light/state", "ON")
 		case "aus", "off", "0":
 			if cb.SetLampMode != nil {
-				_ = cb.SetLampMode("off")
+				_ = cb.SetLampMode("aus")
 			}
+			c.publishOptimistic(baseTopic, "mode/state", "Aus")
+			c.publishOptimistic(baseTopic, "light/state", "OFF")
 		}
 
 	case strings.HasSuffix(topic, "/pir_sensitivity/set"):
@@ -70,6 +93,7 @@ func (c *Client) handleCommand(_ paho.Client, msg paho.Message) {
 			if cb.SetPIRSensitivity != nil {
 				_ = cb.SetPIRSensitivity(val)
 			}
+			c.publishOptimistic(baseTopic, "pir_sensitivity/state", strconv.Itoa(val))
 		}
 
 	case strings.HasSuffix(topic, "/lux_threshold/set"), strings.HasSuffix(topic, "/lux/set"):
@@ -77,13 +101,8 @@ func (c *Client) handleCommand(_ paho.Client, msg paho.Message) {
 			if cb.SetLuxThreshold != nil {
 				_ = cb.SetLuxThreshold(val)
 			}
-			c.mu.RLock()
-			cl := c.client
-			c.mu.RUnlock()
-			if cl != nil && cl.IsConnected() {
-				cl.Publish(fmt.Sprintf("%s/lux_threshold/state", baseTopic), 1, true, strconv.Itoa(val))
-				cl.Publish(fmt.Sprintf("%s/lux/state", baseTopic), 1, true, strconv.Itoa(val))
-			}
+			c.publishOptimistic(baseTopic, "lux_threshold/state", strconv.Itoa(val))
+			c.publishOptimistic(baseTopic, "lux/state", strconv.Itoa(val))
 		}
 
 	case strings.HasSuffix(topic, "/duration/set"):
@@ -91,6 +110,7 @@ func (c *Client) handleCommand(_ paho.Client, msg paho.Message) {
 			if cb.SetHighlightTime != nil {
 				_ = cb.SetHighlightTime(val)
 			}
+			c.publishOptimistic(baseTopic, "duration/state", strconv.Itoa(val))
 		}
 
 	case strings.HasSuffix(topic, "/lowlight/set"):
@@ -98,6 +118,7 @@ func (c *Client) handleCommand(_ paho.Client, msg paho.Message) {
 			if cb.SetLowlight != nil {
 				_ = cb.SetLowlight(val)
 			}
+			c.publishOptimistic(baseTopic, "lowlight/state", strconv.Itoa(val))
 		}
 
 	case strings.HasSuffix(topic, "/siren/set"):
@@ -119,16 +140,13 @@ func (c *Client) handleCommand(_ paho.Client, msg paho.Message) {
 		if on {
 			stateStr = "ON"
 		}
-		c.mu.RLock()
-		cl := c.client
-		c.mu.RUnlock()
-		if cl != nil && cl.IsConnected() {
-			cl.Publish(fmt.Sprintf("%s/siren/state", baseTopic), 1, true, stateStr)
-		}
+		c.publishOptimistic(baseTopic, "siren/state", stateStr)
 
 	case strings.HasSuffix(topic, "/resolution/set"):
 		if cb.SetResolution != nil {
-			_ = cb.SetResolution(payload)
+			if err := cb.SetResolution(payload); err == nil {
+				c.publishOptimistic(baseTopic, "resolution/state", payload)
+			}
 		}
 	}
 }

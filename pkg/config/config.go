@@ -832,12 +832,22 @@ func (c *Config) ProbeCameraModel() (isL620 bool, modelName string) {
 }
 
 // ProbePort checks if a specific TCP port is open and accepting connections within a given timeout.
+// It performs up to 3 attempts with brief backoff to accommodate sleeping Wi-Fi radios or camera reboots.
 func ProbePort(ip string, port int, timeout time.Duration) bool {
 	target := net.JoinHostPort(ip, strconv.Itoa(port))
-	conn, err := net.DialTimeout("tcp", target, timeout)
-	if err == nil {
-		_ = conn.Close()
-		return true
+	attemptTimeout := timeout
+	if attemptTimeout <= 0 {
+		attemptTimeout = 1000 * time.Millisecond
+	}
+	for attempt := 1; attempt <= 3; attempt++ {
+		conn, err := net.DialTimeout("tcp", target, attemptTimeout)
+		if err == nil {
+			_ = conn.Close()
+			return true
+		}
+		if attempt < 3 {
+			time.Sleep(150 * time.Millisecond)
+		}
 	}
 	return false
 }

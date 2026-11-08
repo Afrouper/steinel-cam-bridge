@@ -2,6 +2,19 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.5.2-beta.1
+
+### 🚀 Optimierungen & Bugfixes: Lampen-Steuerung, Modell-Erkennung & UI
+
+- **L 625 CAM SC Lichtsteuerung & PIR-Erhalt**:
+  - Das Ausschalten des Flutlichts über den Home Assistant Schalter (`light/set: OFF`) schaltet nun einheitlich in die Sensor-Automatik (`CmdLightAuto`), sodass der Bewegungsmelder nachts aktiv bleibt (statt die Leuchte und Sensorik komplett via `CmdLightOff` zu deaktivieren). Vollständiges Abschalten bleibt über den Modus `Aus` im Auswahlmenü weiterhin möglich.
+- **L 620 CAM Nachtlicht-Dauer (all_night)**:
+  - Korrektur der Parsing-Logik für `LowlightDuration == "all_night"`, sodass die 24-Stunden-Dauer korrekt verarbeitet und an Home Assistant übermittelt wird.
+- **WLAN- & Reboot-Resistente Modell-Erkennung**:
+  - Bei `camera_type: auto` führt die Port-34567-Prüfung nun bis zu 3 Verbindungsversuche mit kurzem Backoff durch, um Fehlklassifizierungen bei aufwachendem Wi-Fi oder Kamera-Neustarts zuverlässig zu verhindern.
+- **Home Assistant UI-Optimierung (Zero Rubberbanding)**:
+  - Optimistisches Status-Publishing für Helligkeit, Einschaltdauer, Nachtlicht, Dämmerung und PIR-Empfindlichkeit verhindert das Zurückspringen von Schiebereglern bei Latenzen im Netzwerk.
+
 ## 1.5.1
 
 ### 🐛 Bugfixes: L 620 Flutlicht-Status & SD/HD Auflösung
