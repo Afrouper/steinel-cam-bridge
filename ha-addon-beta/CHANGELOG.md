@@ -2,6 +2,24 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.5.2-beta.2
+
+### 🛡️ Autonomes Self-Healing & Smart Control-Plane Recovery für SD-Karten-Sync
+
+- **3-Stufen-Eskalationsmodell für SDCard Control-Plane Hänger**:
+  - Verhindert tagelange Endlosschleifen bei blockiertem Speicher-Daemon der Kamera (`get_event_list` Timeouts).
+  - Stufe 1 (0–15 Min.): Video wird priorisiert und geschützt (`Preserving session`).
+  - Stufe 2 (15–45 Min.): Exakte Protokollierung der Ausfalldauer und Timeout-Anzahl (`⚠️ SDCard control plane unresponsive for 25m...`).
+  - Stufe 3 (ab 45 Min.): Automatischer Soft-Recovery Session-Reset, um den blockierten Kamera-Dienst aufzuräumen.
+- **Loop-Schutz (`HasEverSucceeded`)**:
+  - Kameras ohne SD-Karte (oder mit unformatiertem Medium) lösen niemals automatische Resets aus, um Reboot-Loops zuverlässig auszuschließen.
+- **Schneller Soft-Reconnect (3 Sekunden Cooldown)**:
+  - Bei Control-Plane Resets wartet der Treiber nur 3 Sekunden (statt 60s wie bei Hardware-Reboots). RTSP-Clients (Home Assistant, go2rtc) behalten ihre Verbindung.
+- **Home Assistant Button Entität (`button.steinel_cam_reconnect`)**:
+  - Neue Schaltfläche *„Kamera-Session neu aufbauen“* im Home Assistant Dashboard, um jederzeit per Knopfdruck einen Reconnect auszulösen.
+- **Konfigurierbar**:
+  - Neue Option `sdcard_recovery_timeout_minutes` (Standard: 45 Min., `0` = deaktiviert).
+
 ## 1.5.2-beta.1
 
 ### 🚀 Optimierungen & Bugfixes: Lampen-Steuerung, Modell-Erkennung & UI
