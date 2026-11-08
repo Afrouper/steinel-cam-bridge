@@ -92,17 +92,19 @@ func (b *Bridge) SendMCUCommand(cmdHex string) error {
 	return dc.SendText(string(data))
 }
 
-// SetLampState turns the lamp on, off or auto.
+// SetLampState turns the lamp on, off (sensor auto) or aus (completely disabled).
 func (b *Bridge) SetLampState(mode string) error {
 	switch strings.ToLower(mode) {
-	case "on", "1":
+	case "on", "1", "dauerlicht":
 		return b.SendMCUCommand(mcu.CmdLightOn)
-	case "off", "0":
-		return b.SendMCUCommand(mcu.CmdLightOff)
-	case "auto", "2":
+	case "off", "auto", "sensor", "2":
+		// Switching light "off" returns to Sensor Auto mode so the motion sensor remains active
 		return b.SendMCUCommand(mcu.CmdLightAuto)
+	case "aus", "0":
+		// Explicit "Aus" completely disables lamp and sensor
+		return b.SendMCUCommand(mcu.CmdLightOff)
 	default:
-		return fmt.Errorf("unknown lamp mode: %s (use on, off, auto)", mode)
+		return fmt.Errorf("unknown lamp mode: %s (use on, off, auto, aus)", mode)
 	}
 }
 

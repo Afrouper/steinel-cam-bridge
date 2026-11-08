@@ -362,3 +362,34 @@ func TestPublishDeviceStatus_LampMode(t *testing.T) {
 	assert.Equal(t, "OFF", mockCl.published["steinel/de-test/light/state"])
 	assert.Equal(t, "Aus", mockCl.published["steinel/de-test/mode/state"])
 }
+
+func TestHandleCommand_OptimisticPublishing(t *testing.T) {
+	mockCl := &mockPahoClient{published: make(map[string]string)}
+	c := NewClient(Config{
+		TopicPrefix: "steinel",
+		DeviceID:    "de-test",
+	}, Callbacks{
+		SetHighlight:      func(p int) error { return nil },
+		SetHighlightTime:  func(s int) error { return nil },
+		SetLowlight:       func(p int) error { return nil },
+		SetPIRSensitivity: func(p int) error { return nil },
+	}, nil)
+	c.client = mockCl
+
+	// 1. Highlight / Dimmer
+	c.handleCommand(nil, &mockMessage{topic: "steinel/de-test/highlight/set", payload: []byte("80")})
+	assert.Equal(t, "80", mockCl.published["steinel/de-test/highlight/state"])
+	assert.Equal(t, "80", mockCl.published["steinel/de-test/light/brightness/state"])
+
+	// 2. Duration
+	c.handleCommand(nil, &mockMessage{topic: "steinel/de-test/duration/set", payload: []byte("120")})
+	assert.Equal(t, "120", mockCl.published["steinel/de-test/duration/state"])
+
+	// 3. Lowlight
+	c.handleCommand(nil, &mockMessage{topic: "steinel/de-test/lowlight/set", payload: []byte("30")})
+	assert.Equal(t, "30", mockCl.published["steinel/de-test/lowlight/state"])
+
+	// 4. PIR Sensitivity
+	c.handleCommand(nil, &mockMessage{topic: "steinel/de-test/pir_sensitivity/set", payload: []byte("66")})
+	assert.Equal(t, "66", mockCl.published["steinel/de-test/pir_sensitivity/state"])
+}

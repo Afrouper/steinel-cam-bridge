@@ -2300,3 +2300,18 @@ func TestDriver_SetResolution(t *testing.T) {
 		return st != nil && *st == "Extra1"
 	}, 2*time.Second, 50*time.Millisecond, "Sofia stream restart must request Extra1 stream type")
 }
+
+func TestApplyMCUConfig_LowlightAllNight(t *testing.T) {
+	bus := events.NewBus()
+	d := &Driver{eventBus: bus}
+
+	mcuCfg := &MCUConfig{
+		Mode:             1,
+		Lowlight:         20,
+		LowlightDuration: "all_night",
+	}
+	d.applyMCUConfig(mcuCfg)
+	st := bus.GetStatus()
+	assert.Equal(t, 24*60, st.LowlightTime)
+	assert.Equal(t, 20, st.Lowlight)
+}
