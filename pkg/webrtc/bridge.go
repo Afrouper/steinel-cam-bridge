@@ -33,6 +33,9 @@ type Bridge struct {
 	lastVideoPacket  atomic.Int64
 	motionResetTimer *time.Timer
 	sdcardManager    *SDCardManager
+	resetReason      atomic.Uint32
+	recoveryTimeout  time.Duration
+	sessCancel       context.CancelFunc
 	backchannelBuf   []byte
 	backchannelSeq   uint16
 	backchannelTs    uint32
@@ -53,12 +56,13 @@ func NewBridge(client nabto.Driver, stream nabto.StreamDriver, rtspServer rtsp.M
 		eventBus = events.GlobalBus
 	}
 	b := &Bridge{
-		nabtoClient: client,
-		stream:      stream,
-		rtspServer:  rtspServer,
-		eventBus:    eventBus,
-		resolution:  resolution,
-		pliInterval: pliInterval,
+		nabtoClient:     client,
+		stream:          stream,
+		rtspServer:      rtspServer,
+		eventBus:        eventBus,
+		resolution:      resolution,
+		pliInterval:     pliInterval,
+		recoveryTimeout: 45 * time.Minute,
 	}
 
 	// Initialize SD Card Manager using DataChannel JSON command dispatcher
@@ -79,22 +83,77 @@ func (b *Bridge) GetSDCardManager() *SDCardManager {
 	return b.sdcardManager
 }
 
+// ResetReason returns the recorded reason for session termination.
+func (b *Bridge) ResetReason() ResetReason {
+	return ResetReason(b.resetReason.Load())
+}
+
+// SetRecoveryTimeout configures the maximum duration the SD control plane is permitted to stall
+// while video is healthy before triggering a soft-recovery session reset.
+// Passing 0 disables automatic control-plane recovery.
+func (b *Bridge) SetRecoveryTimeout(d time.Duration) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.recoveryTimeout = d
+}
+
+// TriggerManualReset requests an immediate soft reset of the active session.
+func (b *Bridge) TriggerManualReset() {
+	b.mu.Lock()
+	cancel := b.sessCancel
+	b.mu.Unlock()
+	if cancel != nil {
+		b.resetReason.Store(uint32(ResetReasonManual))
+		cancel()
+	}
+}
+
 // Run executes the complete WebRTC session lifecycle (TURN exchange, PeerConnection, ICE, media, and signaling loop).
 func (b *Bridge) Run(ctx context.Context) error {
 	sessCtx, sessCancel := context.WithCancel(ctx)
 	defer sessCancel()
 
+	b.mu.Lock()
+	b.sessCancel = sessCancel
+	b.mu.Unlock()
+	defer func() {
+		b.mu.Lock()
+		b.sessCancel = nil
+		b.mu.Unlock()
+	}()
+
 	// Register control-plane health monitor to reset session if SD card queries hang
 	if b.sdcardManager != nil {
-		b.sdcardManager.SetUnresponsiveHandler(func() {
+		b.sdcardManager.SetUnresponsiveHandler(func(stallDuration time.Duration, timeouts int) bool {
 			lastNano := b.lastVideoPacket.Load()
-			if lastNano > 0 && time.Since(time.Unix(0, lastNano)) < 5*time.Second {
-				logger.Warn("Bridge", "⚠️ SDCard control plane slow/unresponsive, but video streaming is active and healthy. Preserving session.")
-				b.sdcardManager.ResetTimeouts()
-				return
+			videoHealthy := lastNano > 0 && time.Since(time.Unix(0, lastNano)) < 5*time.Second
+
+			if !videoHealthy {
+				logger.Warn("Bridge", "⚠️ SDCard control plane unresponsive (%d timeouts) and video stalled. Resetting session to trigger camera reconnect...", timeouts)
+				b.resetReason.Store(uint32(ResetReasonVideoStalled))
+				sessCancel()
+				return true
 			}
-			logger.Warn("Bridge", "⚠️ SDCard control plane unresponsive and video stalled. Resetting session to trigger camera reconnect...")
-			sessCancel()
+
+			// If video is healthy, verify whether an SD card was ever working to prevent reboot loops
+			if !b.sdcardManager.HasEverSucceeded() {
+				logger.Warn("Bridge", "⚠️ SDCard control plane unresponsive (%d timeouts), but no SD recordings were ever synced. Preserving session to prevent reboot loops.", timeouts)
+				return false
+			}
+
+			b.mu.Lock()
+			recTimeout := b.recoveryTimeout
+			b.mu.Unlock()
+
+			if recTimeout > 0 && stallDuration >= recTimeout {
+				logger.Warn("Bridge", "🚨 SDCard control plane unresponsive for %v (%d timeouts) despite healthy video. Executing planned soft-recovery reset...", stallDuration.Round(time.Second), timeouts)
+				b.resetReason.Store(uint32(ResetReasonControlPlaneRecovery))
+				sessCancel()
+				return true
+			}
+
+			logger.Warn("Bridge", "⚠️ SDCard control plane unresponsive for %v (%d timeouts), but video streaming is active and healthy. Preserving session.", stallDuration.Round(time.Second), timeouts)
+			return false
 		})
 		defer b.sdcardManager.SetUnresponsiveHandler(nil)
 	}

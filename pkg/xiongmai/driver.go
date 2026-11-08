@@ -338,7 +338,20 @@ func (d *Driver) GetMQTTCallbacks() mqtt.Callbacks {
 		SetLuxThreshold: func(lux int) error {
 			return d.SetTwilight(lux)
 		},
+		ReconnectSession: d.ReconnectSession,
 	}
+}
+
+// ReconnectSession triggers an immediate reconnect of the Xiongmai client and streams.
+func (d *Driver) ReconnectSession() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.client != nil {
+		logger.Info("Xiongmai Driver", "🔄 Manual session reconnect requested via MQTT / API")
+		_ = d.client.Close()
+		return nil
+	}
+	return errors.New("no active camera connection")
 }
 
 // SetLamp turns the main light on or off.

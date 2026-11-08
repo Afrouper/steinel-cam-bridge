@@ -59,6 +59,11 @@ func (d *L620Driver) Close() error {
 	return d.xmDriver.Close()
 }
 
+// ReconnectSession triggers an immediate reconnect of the camera session.
+func (d *L620Driver) ReconnectSession() error {
+	return d.xmDriver.ReconnectSession()
+}
+
 // SetResolution updates the video stream resolution (720p or 360p).
 func (d *L620Driver) SetResolution(res string) error {
 	return d.xmDriver.SetResolution(res)

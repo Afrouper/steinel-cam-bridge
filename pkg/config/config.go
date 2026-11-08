@@ -39,34 +39,35 @@ type CameraConfig struct {
 
 // Config encapsulates the complete resolved runtime configuration following the 12-Factor App methodology.
 type Config struct {
-	Cameras            []CameraConfig
-	CameraName         string
-	NabtoConfig        *nabto.Config
-	CameraType         string
-	CameraUser         string
-	CameraPassword     string
-	CameraMAC          string
-	Resolution         string
-	AudioCodec         string
-	RTSPPort           int
-	RTSPPath           string
-	ONVIFPort          int
-	ResetPairing       bool
-	MQTTBroker         string
-	MQTTUser           string
-	MQTTPassword       string
-	MQTTTopic          string
-	MQTTDiscovery      string
-	LogLevel           string
-	LogFormat          string
-	SDCardSyncInterval int
-	NabtoDriver        string // "cgo" (default) or "pure"
-	BridgeUser         string
-	BridgePass         string
-	CacheRecordings    int
-	CacheDir           string
-	IsBeta             bool
-	AppVersion         string
+	Cameras                      []CameraConfig
+	CameraName                   string
+	NabtoConfig                  *nabto.Config
+	CameraType                   string
+	CameraUser                   string
+	CameraPassword               string
+	CameraMAC                    string
+	Resolution                   string
+	AudioCodec                   string
+	RTSPPort                     int
+	RTSPPath                     string
+	ONVIFPort                    int
+	ResetPairing                 bool
+	MQTTBroker                   string
+	MQTTUser                     string
+	MQTTPassword                 string
+	MQTTTopic                    string
+	MQTTDiscovery                string
+	LogLevel                     string
+	LogFormat                    string
+	SDCardSyncInterval           int
+	SDCardRecoveryTimeoutMinutes int
+	NabtoDriver                  string // "cgo" (default) or "pure"
+	BridgeUser                   string
+	BridgePass                   string
+	CacheRecordings              int
+	CacheDir                     string
+	IsBeta                       bool
+	AppVersion                   string
 }
 
 // NewDefaultConfig returns a Config initialized with Layer 1 (code) defaults.
@@ -82,27 +83,28 @@ func NewDefaultConfig() *Config {
 			CameraPort: 5592,
 			KeyPath:    "data/client.key",
 		},
-		Resolution:         "1080p",
-		AudioCodec:         "aac",
-		RTSPPort:           8554,
-		RTSPPath:           "steinel",
-		ONVIFPort:          8000,
-		ResetPairing:       false,
-		MQTTBroker:         "",
-		MQTTUser:           "",
-		MQTTPassword:       "",
-		MQTTTopic:          "steinel",
-		MQTTDiscovery:      "homeassistant",
-		LogLevel:           "info",
-		LogFormat:          "",
-		SDCardSyncInterval: 120,
-		NabtoDriver:        "cgo",
-		BridgeUser:         "",
-		BridgePass:         "",
-		CacheRecordings:    5,
-		CacheDir:           cacheDir,
-		IsBeta:             false,
-		AppVersion:         "dev",
+		Resolution:                   "1080p",
+		AudioCodec:                   "aac",
+		RTSPPort:                     8554,
+		RTSPPath:                     "steinel",
+		ONVIFPort:                    8000,
+		ResetPairing:                 false,
+		MQTTBroker:                   "",
+		MQTTUser:                     "",
+		MQTTPassword:                 "",
+		MQTTTopic:                    "steinel",
+		MQTTDiscovery:                "homeassistant",
+		LogLevel:                     "info",
+		LogFormat:                    "",
+		SDCardSyncInterval:           120,
+		SDCardRecoveryTimeoutMinutes: 45,
+		NabtoDriver:                  "cgo",
+		BridgeUser:                   "",
+		BridgePass:                   "",
+		CacheRecordings:              5,
+		CacheDir:                     cacheDir,
+		IsBeta:                       false,
+		AppVersion:                   "dev",
 	}
 }
 
@@ -165,35 +167,36 @@ func LoadHomeAssistantOptionsFromPath(path string, cfg *Config) {
 	}
 
 	var opts struct {
-		CameraName          string         `json:"camera_name"`
-		CameraIP            string         `json:"camera_ip"`
-		CameraType          string         `json:"camera_type"`
-		CameraUser          string         `json:"camera_user"`
-		CameraPassword      string         `json:"camera_password"`
-		CameraMAC           string         `json:"camera_mac"`
-		QRCode              string         `json:"qr_code"`
-		Cameras             []rawCameraOpt `json:"cameras"`
-		Resolution          string         `json:"resolution"`
-		AudioCodec          string         `json:"audio_codec"`
-		RTSPPort            int            `json:"rtsp_port"`
-		ONVIFPort           int            `json:"onvif_port"`
-		ResetPairing        bool           `json:"reset_pairing"`
-		MQTTBroker          string         `json:"mqtt_broker"`
-		MQTTHost            string         `json:"mqtt_host"`
-		MQTTPort            int            `json:"mqtt_port"`
-		MQTTUser            string         `json:"mqtt_user"`
-		MQTTPassword        string         `json:"mqtt_password"`
-		MQTTTopicPrefix     string         `json:"mqtt_topic_prefix"`
-		MQTTDiscoveryPrefix string         `json:"mqtt_discovery_prefix"`
-		LogLevel            string         `json:"log_level"`
-		SDCardSyncInterval  *int           `json:"sdcard_sync_interval"`
-		NabtoDriver         string         `json:"nabto_driver"`
-		UseCGONabto         bool           `json:"use_cgo_nabto"`
-		BridgeUser          string         `json:"bridge_user"`
-		BridgePass          string         `json:"bridge_pass"`
-		BridgePassword      string         `json:"bridge_password"`
-		CacheRecordings     *int           `json:"cache_recordings"`
-		CacheDir            string         `json:"cache_dir"`
+		CameraName                   string         `json:"camera_name"`
+		CameraIP                     string         `json:"camera_ip"`
+		CameraType                   string         `json:"camera_type"`
+		CameraUser                   string         `json:"camera_user"`
+		CameraPassword               string         `json:"camera_password"`
+		CameraMAC                    string         `json:"camera_mac"`
+		QRCode                       string         `json:"qr_code"`
+		Cameras                      []rawCameraOpt `json:"cameras"`
+		Resolution                   string         `json:"resolution"`
+		AudioCodec                   string         `json:"audio_codec"`
+		RTSPPort                     int            `json:"rtsp_port"`
+		ONVIFPort                    int            `json:"onvif_port"`
+		ResetPairing                 bool           `json:"reset_pairing"`
+		MQTTBroker                   string         `json:"mqtt_broker"`
+		MQTTHost                     string         `json:"mqtt_host"`
+		MQTTPort                     int            `json:"mqtt_port"`
+		MQTTUser                     string         `json:"mqtt_user"`
+		MQTTPassword                 string         `json:"mqtt_password"`
+		MQTTTopicPrefix              string         `json:"mqtt_topic_prefix"`
+		MQTTDiscoveryPrefix          string         `json:"mqtt_discovery_prefix"`
+		LogLevel                     string         `json:"log_level"`
+		SDCardSyncInterval           *int           `json:"sdcard_sync_interval"`
+		SDCardRecoveryTimeoutMinutes *int           `json:"sdcard_recovery_timeout_minutes"`
+		NabtoDriver                  string         `json:"nabto_driver"`
+		UseCGONabto                  bool           `json:"use_cgo_nabto"`
+		BridgeUser                   string         `json:"bridge_user"`
+		BridgePass                   string         `json:"bridge_pass"`
+		BridgePassword               string         `json:"bridge_password"`
+		CacheRecordings              *int           `json:"cache_recordings"`
+		CacheDir                     string         `json:"cache_dir"`
 	}
 
 	if err := json.Unmarshal(data, &opts); err != nil {
@@ -265,6 +268,9 @@ func LoadHomeAssistantOptionsFromPath(path string, cfg *Config) {
 	}
 	if opts.SDCardSyncInterval != nil && *opts.SDCardSyncInterval >= 0 {
 		cfg.SDCardSyncInterval = *opts.SDCardSyncInterval
+	}
+	if opts.SDCardRecoveryTimeoutMinutes != nil && *opts.SDCardRecoveryTimeoutMinutes >= 0 {
+		cfg.SDCardRecoveryTimeoutMinutes = *opts.SDCardRecoveryTimeoutMinutes
 	}
 	if opts.NabtoDriver != "" {
 		cfg.NabtoDriver = opts.NabtoDriver
@@ -442,6 +448,11 @@ func Resolve(optionsPath string, fs *flag.FlagSet) *Config {
 			cfg.SDCardSyncInterval = s
 		}
 	}
+	if recStr := os.Getenv("SDCARD_RECOVERY_TIMEOUT_MINUTES"); recStr != "" {
+		if r, err := strconv.Atoi(recStr); err == nil && r >= 0 {
+			cfg.SDCardRecoveryTimeoutMinutes = r
+		}
+	}
 	if sct := os.Getenv("SCT"); sct != "" {
 		cfg.NabtoConfig.SCT = sct
 	}
@@ -538,6 +549,10 @@ func Resolve(optionsPath string, fs *flag.FlagSet) *Config {
 			case "sync-interval", "sdcard-sync-interval":
 				if s, err := strconv.Atoi(f.Value.String()); err == nil && s >= 0 {
 					cfg.SDCardSyncInterval = s
+				}
+			case "sdcard-recovery-timeout-minutes", "recovery-timeout-minutes":
+				if r, err := strconv.Atoi(f.Value.String()); err == nil && r >= 0 {
+					cfg.SDCardRecoveryTimeoutMinutes = r
 				}
 			case "cache-recordings":
 				if c, err := strconv.Atoi(f.Value.String()); err == nil && c >= 0 {

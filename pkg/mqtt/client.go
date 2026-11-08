@@ -38,6 +38,7 @@ type Callbacks struct {
 	SetLuxThreshold   func(lux int) error
 	SetSiren          func(on bool) error
 	SetResolution     func(res string) error
+	ReconnectSession  func() error
 }
 
 // CameraDevice represents an individual camera's metadata, control hooks, and event bus for MQTT.

@@ -318,6 +318,9 @@ type mockPahoClient struct {
 }
 
 func (m *mockPahoClient) IsConnected() bool { return true }
+func (m *mockPahoClient) Subscribe(topic string, qos byte, callback paho.MessageHandler) paho.Token {
+	return &mockToken{}
+}
 func (m *mockPahoClient) Publish(topic string, qos byte, retained bool, payload interface{}) paho.Token {
 	if m.published == nil {
 		m.published = make(map[string]string)
@@ -392,4 +395,27 @@ func TestHandleCommand_OptimisticPublishing(t *testing.T) {
 	// 4. PIR Sensitivity
 	c.handleCommand(nil, &mockMessage{topic: "steinel/de-test/pir_sensitivity/set", payload: []byte("66")})
 	assert.Equal(t, "66", mockCl.published["steinel/de-test/pir_sensitivity/state"])
+}
+
+func TestHandleCommand_Reconnect(t *testing.T) {
+	mockCl := &mockPahoClient{published: make(map[string]string)}
+	c := NewClient(Config{
+		TopicPrefix: "steinel",
+		DeviceID:    "de-test",
+	}, Callbacks{}, nil)
+	c.client = mockCl
+
+	reconnectCalled := false
+	c.RegisterCamera(CameraDevice{
+		Path: "cam1",
+		Callbacks: Callbacks{
+			ReconnectSession: func() error {
+				reconnectCalled = true
+				return nil
+			},
+		},
+	})
+
+	c.handleCommand(nil, &mockMessage{topic: "steinel/cam1/reconnect/set", payload: []byte("PRESS")})
+	assert.True(t, reconnectCalled, "expected ReconnectSession callback to be called")
 }

@@ -19,6 +19,7 @@ type CameraDriver interface {
 	// Lifecycle
 	Run(ctx context.Context) error
 	Close() error
+	ReconnectSession() error
 
 	// Video & Stream
 	SetResolution(res string) error

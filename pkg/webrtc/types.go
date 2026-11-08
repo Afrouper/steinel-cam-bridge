@@ -77,3 +77,26 @@ func UnmarshalSignalMessage(raw []byte) (*SignalMessage, error) {
 	}
 	return &msg, nil
 }
+
+// ResetReason indicates the cause for a Bridge session termination.
+type ResetReason uint32
+
+const (
+	ResetReasonNone ResetReason = iota
+	ResetReasonVideoStalled
+	ResetReasonControlPlaneRecovery
+	ResetReasonManual
+)
+
+func (r ResetReason) String() string {
+	switch r {
+	case ResetReasonVideoStalled:
+		return "video_stalled"
+	case ResetReasonControlPlaneRecovery:
+		return "control_plane_recovery"
+	case ResetReasonManual:
+		return "manual_reconnect"
+	default:
+		return "unknown"
+	}
+}

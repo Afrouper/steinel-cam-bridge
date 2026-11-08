@@ -141,3 +141,12 @@ func (m *BridgeManager) WriteAudioBackchannel(pkt *rtp.Packet) error {
 	}
 	return driver.ErrCameraOffline
 }
+
+// ReconnectSession triggers an immediate reconnection of the camera driver session.
+func (m *BridgeManager) ReconnectSession() error {
+	d := m.getDriver()
+	if d != nil {
+		return d.ReconnectSession()
+	}
+	return driver.ErrCameraOffline
+}

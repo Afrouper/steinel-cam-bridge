@@ -218,6 +218,7 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 					SetLuxThreshold:   camBridgeMgr.SetLuxThreshold,
 					SetSiren:          camBridgeMgr.SetSiren,
 					SetResolution:     camBridgeMgr.SetResolution,
+					ReconnectSession:  camBridgeMgr.ReconnectSession,
 				},
 				EventBus: camBus,
 			})

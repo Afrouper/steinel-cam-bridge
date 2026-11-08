@@ -176,5 +176,13 @@ func (c *Client) publishDeviceDiscovery(client paho.Client, dev *CameraDevice) {
 		"json_attributes_topic": fmt.Sprintf("%s/recording/latest", dev.baseTopic),
 	})
 
+	// 13. Button (Kamera-Session neu aufbauen / Soft Reconnect)
+	publishEntity("button", "reconnect", map[string]interface{}{
+		"name":            "Kamera-Session neu aufbauen",
+		"icon":            "mdi:camera-refresh",
+		"entity_category": "config",
+		"command_topic":   fmt.Sprintf("%s/reconnect/set", dev.baseTopic),
+	})
+
 	logger.Info("MQTT", "📢 Published Home Assistant Auto-Discovery entities for %s (%s) under %s", dev.nodeID, displayName, c.cfg.DiscoveryPrefix)
 }
