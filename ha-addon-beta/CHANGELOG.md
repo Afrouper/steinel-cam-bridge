@@ -2,6 +2,22 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.5.2-beta.3
+
+### 🛠️ Bugfixes & Resilienz: MQTT-Bewegungssensor, SD-Karten-Initialstatus & L 620 Alarm-Ingest (Fixes #70)
+
+- **Initialer Status für MQTT-Bewegungssensor (`binary_sensor.motion`)**:
+  - Sendet beim Start der Bridge, bei Reconnects und bei MQTT-Registrierung sofort den definierten Ruhezustand (`OFF`, retained).
+  - Verhindert, dass der Sensor in Home Assistant dauerhaft als *„Unbekannt“* (`unknown`) angezeigt wird (#70).
+- **Wiederherstellung des letzten Aufnahme-Status (`sensor.recording_latest`)**:
+  - Beim Start der Bridge liest der Syncer automatisch die jüngste bereits im lokalen Cache vorhandene Aufnahme aus und übermittelt deren Zeitstempel und Dateiattribute an Home Assistant (#70).
+  - Resilienter Startup-Sync: Versucht bis zu 45 Sekunden lang (im 3s-Takt), den Initial-Sync mit der Kamera auszuführen, anstatt nach einem einmaligen 3s-Sleep abzubrechen.
+- **Xiongmai Sofia (Steinel L 620 CAM) Alarm- & Motion-Handling**:
+  - Verarbeitet asynchrone `MsgAlarmReq` (1500) Alarme und beantwortet diese mit `MsgAlarmResp` (1501).
+  - Meldet Bewegungsereignisse direkt an den internen EventBus (`SetMotion`) mit 10s Auto-Reset-Timer (#70).
+- **Umfassende Testabdeckung**:
+  - Neue Unittests für Initial-Status, Retained-Flags, Cache-Wiederherstellung und L 620 Alarm-Verarbeitung.
+
 ## 1.5.2-beta.2
 
 ### 🛡️ Autonomes Self-Healing & Smart Control-Plane Recovery für SD-Karten-Sync
