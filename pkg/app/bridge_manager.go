@@ -2,6 +2,7 @@ package app
 
 import (
 	"sync"
+	"time"
 
 	"github.com/pion/rtp"
 
@@ -149,4 +150,17 @@ func (m *BridgeManager) ReconnectSession() error {
 		return d.ReconnectSession()
 	}
 	return driver.ErrCameraOffline
+}
+
+// SetSystemDateAndTime synchronizes the date, time and timezone on the camera hardware.
+func (m *BridgeManager) SetSystemDateAndTime(t time.Time, tz string) error {
+	d := m.getDriver()
+	if d != nil {
+		if timeDriver, ok := d.(interface {
+			SetSystemDateAndTime(t time.Time, tz string) error
+		}); ok {
+			return timeDriver.SetSystemDateAndTime(t, tz)
+		}
+	}
+	return nil
 }

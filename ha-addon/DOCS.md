@@ -24,15 +24,17 @@ Der QR-Code wird initial für das Pairing benötigt. Danach muss er nicht mehr z
 Wenn Sie mehr als eine Steinel Kamera betreiben, können Sie alle Kameras über die Option **`cameras`** eintragen:
 ```yaml
 cameras:
-  - name: "Einfahrt"
+  - name: "Haustür"
     camera_ip: "192.168.1.100"
     qr_code: "did=de-xxxxxxx,pid=pr-xxxxx,sct=xxxx,pairPwd=xxxx"
+    rtsp_path: "steinel-haustuer"
   - name: "Garten"
     camera_ip: "192.168.1.101"
     camera_type: "l620"
     camera_password: "geheimes_passwort"
+    rtsp_path: "steinel-garten"
 ```
-Die Bridge stellt alle Kameras über denselben RTSP-Port (`:8554/einfahrt`, `:8554/garten`) und ONVIF-Port (`:8000`) bereit. In Home Assistant und MQTT erscheinen separate Geräte (`Steinel Einfahrt`, `Steinel Garten`).
+Die Bridge stellt alle Kameras über denselben RTSP-Port (`:8554/steinel-haustuer`, `:8554/steinel-garten`) und ONVIF-Port (`:8000`) bereit. In Home Assistant und MQTT erscheinen separate Geräte (`Steinel Haustür`, `Steinel Garten`).
 
 ---
 
@@ -40,6 +42,8 @@ Die Bridge stellt alle Kameras über denselben RTSP-Port (`:8554/einfahrt`, `:85
 
 | Option | Typ | Standard | Beschreibung |
 |---|---|---|---|
+| `cameras` | Liste | `[]` | Liste mehrerer Steinel-Kameras für den Multi-Kamera-Betrieb (unterstützt pro Kamera: `name`, `camera_ip`, `camera_type`, `qr_code`, `camera_password`, `camera_user`, `camera_mac`, `rtsp_path`, `resolution`, `audio_codec`, `reset_pairing`, `nabto_driver`) |
+| `camera_name` | String | `""` | Optionaler Anzeigename bei Einzelkamera-Betrieb |
 | `camera_ip` | String | *(Pflichtfeld)* | Lokale IP-Adresse der Steinel-Kamera im Heimnetz (z. B. `192.168.1.100`) |
 | `camera_mac` | String | `""` | Optional: Benutzerdefinierte MAC-Adresse (Standard: `00:0C:43:00:01:02`). Zur Vermeidung von Home Assistant Unique-ID-Konflikten bei parallelem Betrieb mehrerer Kameras |
 | `camera_type` | Liste | `auto` | Kameramodell: `auto` (automatische Erkennung), `l625` (L 625 CAM SC), `l620` (L 620 CAM / XLED CAM 1) |

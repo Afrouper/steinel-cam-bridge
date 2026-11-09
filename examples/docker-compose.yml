@@ -3,7 +3,7 @@ services:
     image: ghcr.io/afrouper/steinel-cam-bridge:latest
     container_name: steinel-cam-bridge
     restart: unless-stopped
-    network_mode: host # Empfohlen für WS-Discovery (UDP 3702) und Direktverbindung zur Kamera
+    network_mode: host # Empfohlen für WS-Discovery (UDP 3702), mDNS und direkte P2P-Verbindungen
 
     # --- Security Hardening ---
     user: "1000:1000"
@@ -18,44 +18,26 @@ services:
       - /tmp:rw,noexec,nosuid,size=64M
 
     environment:
-      # --- Kamera-Verbindung (Ersetzen Sie die Werte durch Ihre Kamera-Daten) ---
-      - CAMERA_IP=192.168.1.100                                         # IP-Adresse der Steinel-Kamera im lokalen Netz
-      - QR_CODE=did=de-xxxxxxx,pid=pr-xxxxx,sct=xxxx,pairPwd=xxxx       # QR-Code String aus der Steinel App ("Kamera teilen")
-      - RESOLUTION=1080p                                                # Standard-Auflösung: 1080p, 720p oder 360p
-      - AUDIO_CODEC=aac                                                 # Audio-Codec: aac (Standard, nativ transkodiert) oder pcmu (Raw Passthrough)
-      - KEY_PATH=/data/client.key                                       # Pfad zum persistenten Schlüssel
-
-      # --- Für Steinel L 620 CAM / XLED CAM 1 alternativ zu QR_CODE: ---
-      # - CAMERA_TYPE=l620
-      # - CAMERA_USER=admin
-      # - CAMERA_PASSWORD=secretpassword
-
-      # --- Server-Ports & SD-Karten-Sync ---
-      - RTSP_PORT=8554
-      - ONVIF_PORT=8000
-      - RTSP_PATH=steinel
-      - SDCARD_SYNC_INTERVAL=60                                         # Hintergrund-Abfrage neuer SD-Karten-Aufnahmen in Sekunden (Standard: 60)
-      - LOG_LEVEL=info                                                  # Log-Level: trace, debug, info, warn, error (Standard: info)
-
-      # --- MQTT / Home Assistant Konfiguration (Optional) ---
-      - MQTT_BROKER=tcp://192.168.1.50:1883    # IP oder Hostname Ihres MQTT Brokers (z.B. Home Assistant Mosquitto)
-      - MQTT_USER=homeassistant                 # Optional: MQTT Benutzername
-      - MQTT_PASSWORD=secretpassword            # Optional: MQTT Passwort
-      - MQTT_TOPIC_PREFIX=steinel               # Basis-Topic (Geräte-ID wird automatisch darunter gehängt: steinel/<deviceID>/...)
-      - MQTT_DISCOVERY_PREFIX=homeassistant     # Home Assistant Auto-Discovery Prefix
+      # Pfad zur Multi-Kamera-Konfigurationsdatei (Beispiel siehe config.json)
+      - CONFIG_PATH=/config/config.json
+      # Optional: Log-Level überschreiben (trace, debug, info, warn, error)
+      - LOG_LEVEL=info
 
     volumes:
+      # Multi-Kamera Konfigurationsdatei (L 625 Haustür & L 620 Garten)
+      - ./config.json:/config/config.json:ro
+      # Persistentes Datenverzeichnis (ECC-Keys, lokaler Aufnahme-Cache in /data/recordings)
       - ./data:/data
 
     deploy:
       resources:
         limits:
-          cpus: '0.50'
-          memory: 256M
+          cpus: '0.75'
+          memory: 384M
         reservations:
-          cpus: '0.05'
+          cpus: '0.10'
           memory: 64M
-    pids_limit: 100
+    pids_limit: 150
 
     logging:
       driver: "json-file"

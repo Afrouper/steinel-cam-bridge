@@ -54,6 +54,8 @@ const (
 	MsgFileSearchResp    uint16 = 1441
 	MsgFilePlayReq       uint16 = 1442
 	MsgFilePlayResp      uint16 = 1443
+	MsgTimeSettingReq    uint16 = 1450
+	MsgTimeSettingResp   uint16 = 1451
 	MsgAlarmReq          uint16 = 1500
 	MsgAlarmResp         uint16 = 1501
 	MsgSearchDeviceReq   uint16 = 1530

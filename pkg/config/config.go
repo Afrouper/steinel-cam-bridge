@@ -606,8 +606,16 @@ func Resolve(optionsPath string, fs *flag.FlagSet) *Config {
 }
 
 // Slugify converts a string into a URL/path-safe slug (lowercase alphanumeric with underscores).
+// German umlauts and special characters are transliterated (e.g. ä->ae, ü->ue, ö->oe, ß->ss).
 func Slugify(s string) string {
 	s = strings.TrimSpace(strings.ToLower(s))
+	replacer := strings.NewReplacer(
+		"ä", "ae",
+		"ö", "oe",
+		"ü", "ue",
+		"ß", "ss",
+	)
+	s = replacer.Replace(s)
 	var sb strings.Builder
 	for _, r := range s {
 		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {

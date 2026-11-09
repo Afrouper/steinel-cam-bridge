@@ -53,6 +53,9 @@ func main() {
 	flag.Parse()
 
 	optionsFile := "/data/options.json"
+	if envConfig := os.Getenv("CONFIG_PATH"); envConfig != "" {
+		optionsFile = envConfig
+	}
 	if customConfig := flag.CommandLine.Lookup("config"); customConfig != nil && customConfig.Value.String() != "" {
 		optionsFile = customConfig.Value.String()
 	}

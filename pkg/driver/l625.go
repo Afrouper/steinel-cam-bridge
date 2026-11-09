@@ -511,3 +511,12 @@ func (d *L625Driver) WriteAudioBackchannel(pkt *rtp.Packet) error {
 	}
 	return b.WriteAudioBackchannel(pkt)
 }
+
+// SetSystemDateAndTime synchronizes the timezone and clock on the L 625 camera.
+func (d *L625Driver) SetSystemDateAndTime(t time.Time, tz string) error {
+	b := d.getBridge()
+	if b == nil {
+		return ErrCameraOffline
+	}
+	return b.SetSystemDateAndTime(t, tz)
+}

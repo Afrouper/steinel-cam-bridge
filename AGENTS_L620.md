@@ -1,6 +1,6 @@
 # Steinel L 620 CAM / XLED CAM 1 — Xiongmai Sofia Protokoll- & Treiber-Leitfaden
 
-Dieses Dokument beschreibt die hardware- und protokollspezifische Architektur der **Steinel L 620 CAM** (sowie baugleicher Modelle wie **XLED CAM 1**), basierend auf dem Xiongmai Sofia / NetIP Protokoll und den Erkenntnissen aus der Dekompilierung der offiziellen Steinel CAM Android App (`de.steinel.cam`).
+Dieses Dokument beschreibt die hardware- und protokollspezifische Architektur der **Steinel L 620 CAM** (sowie baugleicher Modelle wie **XLED CAM 1**), basierend auf dem Xiongmai Sofia / NetIP Protokoll und den Erkenntnissen aus der Dekompilierung der offiziellen Steinel CAM Android App (`de.steinel.cam`) sowie Netzwerk- und Protokollmitschnitten.
 
 ---
 
@@ -11,9 +11,11 @@ Im Gegensatz zur **Steinel L 625 CAM SC** (Nabto Edge P2P + WebRTC DataChannel) 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                       Steinel L 620 CAM Hardware                            │
-│  ├─ Video/Audio: Lokaler nativer RTSP-Stream (TCP Port 554, 1080p Full HD H.264/AAC)│
-│  ├─ Talk-Backchannel: Xiongmai Talk Protokoll (MsgID 1432/1434, G.711u)     │
-│  └─ Steuerung & MCU: Xiongmai Sofia / NetIP Protokoll (TCP Port 34567)      │
+│  ├─ Video Primär: Natives H.264 Video-Streaming (Sofia OPMonitor Port 34567)│
+│  ├─ Video Fallback: Lokaler nativer RTSP-Stream (TCP Port 554, 1080p H.264) │
+│  ├─ Talk-Backchannel: Xiongmai Talk Protokoll (MsgID 1432/1434, PCMA 8kHz)  │
+│  ├─ Steuerung & MCU: Xiongmai Sofia / NetIP Protokoll (TCP Port 34567)      │
+│  └─ Speicher: MicroSD-Karten Abfrage via OPFileQuery (MsgID 1440/1441)      │
 └──────────────────────────────────────┬──────────────────────────────────────┘
                                        │ Port 34567 (NetIP)
                                        ▼
@@ -23,7 +25,9 @@ Im Gegensatz zur **Steinel L 625 CAM SC** (Nabto Edge P2P + WebRTC DataChannel) 
 │  2. Login: MsgLoginReq (1000) mit RSA PKCS#1 v1.5 + AES-128-CBC Session-Key│
 │  3. Serieller Tunnel: MsgTransStartReq (1578) -> OPTrans RS232 aktiv        │
 │  4. Steuerbefehle: MsgTransSendData (1572) via AES-128-CBC auf Kanal 1      │
-│  5. Telemetrie: MsgTransSerialData (1582) unverschlüsselte ASCII-Frames     │
+│  5. Telemetrie & Push: MsgTransSerialData (1582) & MsgAlarmPush (1500)      │
+│  6. On-Demand Video: OPMonitor (1410/1412) bei aktiven RTSP-Zuschauern      │
+│  7. Talk Backchannel: OPTalk (1434/1432) mit PCMU <-> PCMA Transkodierung   │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -35,15 +39,16 @@ Moderne L 620 Firmware-Versionen erzwingen für Konfiguration und Steuerbefehle 
 
 1. **RSA-Claim Handshake (MsgID 1413 / 1414)**:
    - Client sendet `OPMonitor Claim` (1413).
-   - Kamera meldet Public Key (RSA 1024 Bit) und `DataEncryptionType: {"AES": true, "AESV2": true}` sowie `NotEncryptMsgID: [1000, 1001, 1008, 1009, 1413, 1414, 1432, 1434, 1435, 1580, 1582]`.
-2. **Login mit CommunicateKey (MsgID 1000 / 1001)**:
+   - Kamera meldet Public Key (RSA 1024 Bit) und `DataEncryptionType: {"AES": true, "AESV2": true}` sowie `NotEncryptMsgID: [1000, 1001, 1008, 1009, 1412, 1413, 1414, 1432, 1434, 1435, 1580, 1582]`.
+2. **Login mit CommunicateKey & 8-Character Hash (MsgID 1000 / 1001)**:
    - Client generiert einen zufälligen 16-stelligen alphanumerischen Session-Key (`CommunicateKey`).
+   - Das Passwort wird über den proprietären **Xiongmai 8-Character Base62 MD5-Hash** (z. B. `"admin"` $\rightarrow$ `"tlJwpbo6"`) oder adaptiven Login-Kandidaten (z. B. `DVRIP-FutureHome`, `DVRIP-Xm030`) verschlüsselt.
    - `UserName`, `PassWord` und `CommunicateKey` werden mit RSA PKCS#1 v1.5 verschlüsselt.
    - Äußere Payload wird mit dem NetIP-Standardschlüssel (AES-128-CBC, Zero-IV, PKCS#7 Padding) verschlüsselt und mit `0x00` terminiert.
 3. **Kanal-1 Payload-Verschlüsselung**:
-   - Alle nachfolgenden Steuerbefehle auf Kanal 1 (wie `1578` OPTrans-Start, `1572` MCU-Kommandos, `1006` KeepAlive) werden symmetrisch mit dem ausgehandelten `CommunicateKey` verschlüsselt (AES-128-CBC, Zero-IV, Base64).
-   - Eingehende Antworten auf Kanal 1 (wie `1579`, `1573`, `1007`) werden symmetrisch mit demselben Schlüssel entschlüsselt.
-   - Telemetrie (`1582`) und Talk-Audio (`1432`) verbleiben gemäß `NotEncryptMsgID` unverschlüsselt.
+   - Alle nachfolgenden Steuerbefehle auf Kanal 1 (wie `1578` OPTrans-Start, `1572` MCU-Kommandos, `1006` KeepAlive, `1440` OPFileQuery) werden symmetrisch mit dem ausgehandelten `CommunicateKey` verschlüsselt (AES-128-CBC, Zero-IV, Base64).
+   - Eingehende Antworten auf Kanal 1 (wie `1579`, `1573`, `1007`, `1441`) werden symmetrisch mit demselben Schlüssel entschlüsselt.
+   - Telemetrie (`1582`), Alarme (`1500`), Talk-Audio (`1432`) und Roh-Videochucks (`1412`) verbleiben gemäß `NotEncryptMsgID` unverschlüsselt.
 
 ---
 
@@ -153,72 +158,123 @@ Die L 620 MCU unterstützt genau 3 diskrete Stufen (`XMDetectSettingPresenter.ja
 
 ## 6. Hardware-Unterschiede L 620 CAM vs. L 625 CAM SC
 
-| Eigenschaft | Steinel L 620 CAM / XLED CAM 1 | Steinel L 625 CAM SC |
+| Eigenschaft | Steinel L 620 CAM / XLED CAM 1 | Steinel L 625 CAM SC / Spot CAM |
 |:---|:---|:---|
 | **Kamera-SoC & Treiber** | Xiongmai / JFTech Sofia (Port 34567) | Nabto Edge P2P Direct Tunnel (Port 5592) |
-| **Kamera-Stream** | Nativer lokaler RTSP-Server (Port 554, 1080p Full HD) | WebRTC Media DTLS/SRTP (1080p Full HD) |
+| **Video-Stream** | **Natives Sofia NetIP (MsgID 1410/1412)** mit RTSP-Fallback | WebRTC Media DTLS/SRTP (1080p Full HD) |
+| **Video-Aktivierung** | **Ressourcenschonendes On-Demand** (15s Standby-Cooldown)| Dauerhaft aktive P2P WebRTC-Session |
+| **Mikrofon-Audio** | G.711 A-law (PCMA, 8000 Hz Mono) | G.711 $\mu$-law (PCMU, 8000 Hz Mono) |
+| **Gegensprechen** | Xiongmai OPTalk (1434/1432) mit PCMU $\leftrightarrow$ PCMA | 20ms SRTP PCMU Chunks via WebRTC Audio |
 | **MCU-Kommunikation** | Sofia NetIP OPTrans RS232 (`MsgTransSendData` 1572) | WebRTC DataChannel `test` (18-Byte Hex Frames) |
-| **Alarmsirene / Warnton** | **Bewegungsalarm** (`Detect.MotionDetect.[0]` `VoiceEnable: true` / "Push and Alarm") | **Manuelle Sirene** (18-Byte Frame `5A...06` schaltet Sirene) |
-| **Licht-Schalten** | Modus-Umschaltung (`"BMdU"` vs. `"BMbU"`) | UART Byte-Flag (0x01 / 0x00) |
+| **MCU Frame-Format** | **12-Byte ASCII-Format** (`B...U`) | **18-Byte Binär-Hex** (`5A 0F 0F...`) |
 | **PIR-Stufen** | 3 diskrete Stufen (Min / Med / Max) | Stufenlos (0–100 % bzw. 1–10 m) |
-| **Telemetrie-Übertragung** | Plaintext ASCII-Push via MsgID 1582 (gepuffert) | Binäre UART-Frames auf DataChannel `test` |
+| **Alarmsirene / Warnton** | **Bewegungsalarm** (`Detect.MotionDetect.[0]` `VoiceEnable`) | **Manuelle Sirene** (Befehl `alarm_voice_ctl`) |
+| **SD-Karten Format** | H.264 MP4-Videos via `OPFileQuery` (MsgID 1440) | H.265 MP4-Videos via DataChannel `get_event_video` |
 | **ONVIF Model** | Dynamisch als `"L 620 CAM"` gemeldet | Dynamisch als `"L 625 CAM SC"` gemeldet |
 
 ---
 
-## 7. Video- & Audio-Ingest (RTSP Port 554 & Sofia Simplify.Encode)
+## 7. Video-Streaming Pipeline (Natives Sofia 34567 & RTSP Fallback 554)
 
-### 1. RTSP-Pfad-Reihenfolge & Kamera-Puffer-Schutz
-Die Xiongmai V4.03.R12 Firmware besitzt einen begrenzten Pfad-Puffer auf ihrem internen RTSP-Server (Port 554). Wird ein Query-Parameter wie `?real_stream` an den Pfad angehängt, bricht der interne Parser mit `buffer length exceeds 64` ab oder akzeptiert zwar `PLAY`, sendet jedoch keine RTP-Datenpakete.
-Daher gilt für Kandidaten-URLs strikt:
-1. **Kandidat #1 (Kanonischer sauberer Pfad, empfohlen)**:
-   `rtsp://<ip>:554/user=admin_password=***_channel=1_stream=0.sdp`
-2. **Kandidat #2 (Legacy Query-Parameter Pfad)**:
-   `rtsp://<ip>:554/user=admin_password=***_channel=1_stream=0.sdp?real_stream`
-3. **Kandidat #3–5 (Xiongmai Standard & Generische Fallbacks)**:
-   `/stream=0`, `/h264/ch1/main/av_stream`, `/live/ch0`
+### 1. Primärpfad: Natives Sofia Video-Streaming (`OPMonitor` MsgID 1410 / 1412)
+Die L 620 Firmware besitzt auf ihrem internen RTSP-Server (Port 554) bekannte Speicherbegrenzungen und Pufferüberläufe. Die Bridge nutzt daher das native Xiongmai Sofia/NetIP Medienprotokoll als **bevorzugten Primärpfad**:
+1. **Media Socket Connect**: Baut eine sekundäre TCP-Verbindung zu Port `34567` auf.
+2. **Claim Handshake (`MsgMonitorClaimReq` 1413)**: Sendet `OPMonitor Claim` mit `StreamType: "Main"` (1080p) oder `"Extra1"` (360p).
+3. **Monitor Start (`MsgMonitorReq` 1410)**: Startet den H.264 Datenstrom auf dem Socket.
+4. **Frame-Demuxing (`MsgMonitorData` 1412)**:
+   - Die Kamera überträgt rohe Video-Chunks mit Sofia-Headern.
+   - I-Frames beginnen mit Magic `00 00 01 FC`, P-Frames mit `00 00 01 FD`.
+   - Die Bridge extrahiert die NAL-Units und paketiert sie konform nach **RFC 6184** mittels `rtph264.Encoder` direkt in den RTSP-Server.
 
-### 2. Zero-Packet Watchdog & Silence Watchdog
-Um zu verhindern, dass ein Kandidat nach erfolgreichem `PLAY` ewig blockiert, falls die Kamera keine RTP-Pakete liefert:
-- **5-Sekunden Initial-Watchdog**: Wenn innerhalb von 5 Sekunden nach `PLAY` kein einziges RTP-Videopaket von der Kamera empfangen wurde, wird die Verbindung geschlossen und sofort auf den nächsten URL-Kandidaten umgeschaltet.
-- **15-Sekunden Silence-Watchdog**: Bleibt der RTP-Videodatenstrom während des laufenden Betriebs länger als 15 Sekunden stumm, wird die Verbindung automatisch neu initialisiert.
-- **Status-Logging**: Der Log-Eintrag `▶️ Streaming active` wird erst dann ausgegeben, wenn tatsächlich das erste Video-RTP-Paket empfangen wurde.
+### 2. Ressourcenschonendes On-Demand Streaming
+Der Xiongmai SoC erhitzt sich bei dauerhaftem 24/7-Videostreaming stark, was zu WLAN-Abbrüchen führen kann.
+- **On-Demand Steuerung**: Der Sofia Video-Socket wird erst dann geöffnet, wenn mindestens ein Client (z. B. Home Assistant, Scrypted oder VLC) den RTSP-Stream abspielt (`ActiveClients() > 0`).
+- **15s Standby-Cooldown**: Trennen alle Clients die Verbindung, bleibt der Stream für 15 Sekunden gepuffert (`defaultIdleGracePeriod`). Verbindet sich in dieser Zeit kein neuer Client, wird der Medien-Socket geschlossen und die Kamera in den Ruhemodus versetzt.
 
-### 3. SDP-Track-Validierung & Audio-Codecs
-- **H.264 Pflicht für ONVIF Profile S**: Der RTSP-Ingest prüft `desc.Medias` explizit. Fehlt ein H.264-Videotrack (oder bietet die Kamera ausschließlich H.265 an), schlägt der Kandidat sofort mit einer verständlichen Fehlermeldung fehl, anstatt stumm zu blockieren.
-- **Audio-Unterstützung**:
-  - `*format.MPEG4Audio` (AAC): Wird direkt ohne Transcoding an den RTSP-Server weitergeleitet.
-  - `*format.G711` (µ-law oder A-law): Wird über `ProcessPCMU` bzw. `ProcessPCMA` dekodiert und in AAC-LC (16 kHz) transkodiert.
+### 3. Fallback-Pfad: RTSP-Ingest (Port 554)
+Schlägt die Verbindung zu Sofia Port 34567 fehl, schaltet die Bridge nahtlos auf den internen RTSP-Server der Kamera um:
+- **Kanonischer Pfad**: `rtsp://<ip>:554/user=admin_password=***_channel=1_stream=0.sdp`
+- **Zero-Packet Watchdog (5s)**: Schaltet sofort auf alternative URL-Pfade um, wenn nach `PLAY` keine RTP-Pakete eintreffen.
+- **Silence Watchdog (15s)**: Erkennt Verbindungsabbrüche und initialisiert den Stream neu.
 
 ### 4. Sofia Video-Encoding & H.264 Erzwingung (`Simplify.Encode`)
 Beim Start prüft die Bridge über `MsgConfigGetReq` (1040) die Konfiguration `Simplify.Encode`:
 - Antwortet die Kamera mit `Compression: "H.265"` (HEVC), rekonfiguriert die Bridge die Kamera automatisch via `MsgConfigSetReq` (1042) auf `Compression: "H.264"`, um die volle Kompatibilität mit RTSP, go2rtc, Home Assistant und ONVIF Profile S sicherzustellen.
 
-### 5. Bewegungsalarm & Warnton (Siren Buzzer)
-Die L 620 CAM besitzt im Gegensatz zur L 625 CAM SC keine manuell per Befehl schaltbare Sirene, sondern einen **Bewegungsalarm-Summer** ("Push-Notification and Alarm"):
-- Gesteuert über NetIP-Konfiguration `Detect.MotionDetect.[0]` (`EventHandler.VoiceEnable: true` bzw. `BeepEnable: true`).
-- Wenn aktiviert, ertönt bei Bewegungserkennung an der Leuchte ein ca. 60-sekündiger Alarmton.
+---
+
+## 8. Zwei-Wege-Audio & Talk-Protokoll (OPTalk)
+
+Das Gegensprechen über den Kameralautsprecher erfolgt über das Xiongmai Talk-Protokoll:
+1. **Talk Claim (`MsgTalkClaimV2Req` 1434)**:
+   - Client sendet Claim mit `AudioFormat: "G711_ALAW"`, `SampleRate: 8000`, `Channels: 1`, `Bits: 16`.
+2. **Audio-Transkodierung (PCMU $\leftrightarrow$ PCMA)**:
+   - Apple HomeKit / Scrypted liefern standardmäßig G.711 $\mu$-law (**PCMU**).
+   - Der DAC-Verstärker der L 620 CAM erwartet zwingend G.711 A-law (**PCMA**).
+   - Die Bridge transkodiert Audio-RTP-Pakete in Echtzeit via `audio.TranscodePCMUToPCMA` und versendet sie als unverschlüsselte `MsgTalkAudioData` (1432) Chunks.
+3. **Auto-Aktivierung**:
+   - Der Talk-Kanal wird beim ersten eingehenden Backchannel-Audio-Paket automatisch geöffnet.
 
 ---
 
-## 8. Resilienz, Reconnect-Supervisor & Sicherheit
+## 9. Alarm- & Bewegungserkennung (MsgID 1500 & Summer)
+
+Die L 620 CAM unterstützt zwei komplementäre Mechanismen zur Bewegungsüberwachung:
+
+### 1. Live Alarm-Push (NetIP MsgID 1500)
+- Erkennt der interne Bildprozessor oder PIR der Leuchte eine Bewegung, sendet die Kamera unaufgefordert eine `MsgAlarmPush` (1500) Benachrichtigung:
+  ```json
+  {"Event": "MotionDetect", "Status": "Start"}
+  ```
+- Die Bridge empfängt diesen Event über `handleAlarmEvent`, meldet unmittelbar Bewegung an den `eventBus` (und damit an ONVIF PullPoint & MQTT) und setzt einen 10-Sekunden Auto-Reset Timer.
+- Sendet die Kamera `Status: "Stop"`, wird der Bewegungsalarm sofort zurückgesetzt.
+
+### 2. Bewegungsalarm-Summer (Siren Buzzer)
+- Über die Konfiguration `Detect.MotionDetect.[0]` (`EventHandler.VoiceEnable: true` bzw. `BeepEnable: true`) kann der physische Warnton der Leuchte aktiviert werden.
+- Bei Bewegung ertönt ein ca. 60-sekündiger Signalton direkt an der Leuchte.
+
+---
+
+## 10. MicroSD-Karten Edge Storage (OPFileQuery MsgID 1440/1441)
+
+Die L 620 CAM speichert Videoaufnahmen als H.264/MP4 Dateien auf der internen MicroSD-Karte:
+
+1. **Dateisuche (`OPFileQuery` 1440)**:
+   ```json
+   {
+     "Name": "OPFileQuery",
+     "OPFileQuery": {
+       "BeginTime": "2026-10-19 18:00:00",
+       "EndTime": "2026-10-20 18:00:00",
+       "Channel": 0,
+       "Type": "h264",
+       "Event": "*"
+     }
+   }
+   ```
+2. **SoC-Schutz bei Initial-Query**:
+   - Um bei vollen SD-Karten einen CPU-Lockout der Kamera zu verhindern, verwendet die Bridge beim Start ein pragmatisches **4-Stunden-Zeitfenster**.
+3. **Download & Playback**:
+   - Aufnahmen werden über den Sofia Dateitransfer oder HTTP heruntergeladen und lokal in `/data/recordings` gecacht.
+   - Der REST-Endpunkt liefert Videos mit vollständiger HTTP 206 Partial-Content (Range Requests) Unterstützung aus.
+
+---
+
+## 11. Resilienz, Reconnect-Supervisor & Sicherheit
 
 ### 1. Autonomer Sofia Reconnect-Supervisor (`superviseSofiaLoop`)
-Um sicherzustellen, dass die Bridge auch dann voll funktionsfähig bleibt bzw. sich selbst heilt, wenn die Kamera parallel zur Bridge bootet oder im laufenden Betrieb neu startet:
 - Startet non-blocking als autonomer Hintergrund-Worker in `pkg/xiongmai/driver.go`.
 - Versucht sofort bzw. bei Verbindungsverlust im adaptiven Backoff-Intervall (5s $\rightarrow$ 10s $\rightarrow$ 20s $\rightarrow$ 40s $\rightarrow$ 60s max) die Wiederverbindung zu Sofia Port 34567.
-- Führt bei bestehender Verbindung alle 20 Sekunden einen Keepalive-Heartbeat (`1006`) durch. Schlägt dieser fehl, wird der Socket ordnungsgemäß geschlossen und die Reconnect-Sequenz eingeleitet.
-- Nach erfolgreichem Reconnect werden automatisch `EnableRTSP()`, `EnsureH264Encoding()` und `syncInitialState()` ausgeführt.
+- Führt bei bestehender Verbindung alle 15–20 Sekunden einen Keepalive-Heartbeat (`1006`) durch. Schlägt dieser fehl, wird der Socket ordnungsgemäß geschlossen und die Reconnect-Sequenz eingeleitet.
+- Nach erfolgreichem Reconnect werden automatisch `EnsureH264Encoding()`, `syncInitialState()` und der On-Demand Media-Check ausgeführt.
 
 ### 2. Port 554 Dial Failure Short-Circuiting & Exponentieller Backoff
-Ist der RTSP-Port 554 der Kamera noch geschlossen oder unreachable (z. B. während des Kamera-Boots):
-- Erkennt der Ingest TCP Dial-Fehler (`net.OpError` / `connection refused`) sofort beim ersten Kandidaten.
+- Erkennt TCP Dial-Fehler (`net.OpError` / `connection refused`) sofort beim ersten Kandidaten.
 - Bricht die sequentielle Prüfung aller 12 Kandidaten-URLs unmittelbar ab (`short-circuit`), anstatt für jeden Kandidaten Timeouts abzuwarten.
-- Nutzt für Neuversuche einen adaptiven exponentiellen Backoff (5s $\rightarrow$ 10s $\rightarrow$ 20s $\rightarrow$ 40s $\rightarrow$ 60s max), um einen TCP-Sturm auf den SoC der Kamera zu verhindern.
+- Nutzt für Neuversuche einen adaptiven exponentiellen Backoff (5s $\rightarrow$ 10s $\rightarrow$ 20s $\rightarrow$ 40s $\rightarrow$ 60s max).
 
 ### 3. Passwort-Maskierung (CWE-312 Konformität)
-- Passwörter werden in Log-Ausgaben zu 100 % als Asterisks maskiert (`strings.Repeat("*", len(pwd))`). Es werden keinerlei Klartext-Zeichen (weder Anfang noch Ende) preisgegeben.
+- Passwörter werden in Log-Ausgaben zu 100 % maskiert (`strings.Repeat("*", len(pwd))`). Es werden keinerlei Klartext-Zeichen preisgegeben.
 
 ### 4. MQTT Initial-State Guarding
-- Beim Verbindungsaufbau zu MQTT (`OnConnect`) wird der Gerätestatus nur dann publiziert, wenn er bereits durch echte Kamera-Telemetrie befüllt wurde (`LampMode > 0 || Lux >= 2 || Highlight > 0`). Dies verhindert, dass Default-/Dummy-Werte ("Aus", 0 Lux) an Home Assistant gemeldet werden, solange die Kamera noch bootet.
-
+- Beim Verbindungsaufbau zu MQTT (`OnConnect`) wird der Gerätestatus nur dann publiziert, wenn er bereits durch echte Kamera-Telemetrie befüllt wurde (`LampMode > 0 || Lux >= 2 || Highlight > 0`). Dies verhindert falsche Dummy-Meldungen während des Bootvorgangs.

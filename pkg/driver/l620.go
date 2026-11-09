@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/pion/rtp"
 
@@ -122,6 +123,11 @@ func (d *L620Driver) SetLuxThreshold(lux int) error {
 // SetSiren is a no-op for L 620 CAM as the hardware has no built-in siren.
 func (d *L620Driver) SetSiren(on bool) error {
 	return nil
+}
+
+// SetSystemDateAndTime synchronizes the system clock on the Xiongmai L 620 camera.
+func (d *L620Driver) SetSystemDateAndTime(t time.Time, tz string) error {
+	return d.xmDriver.SetTime(t)
 }
 
 // GetRecordingProvider returns the storage manager for SD card queries.

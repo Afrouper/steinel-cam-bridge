@@ -129,11 +129,13 @@ an der Hardware.
 
 ### Option B: Standalone Docker Compose (Empfohlen für Server / NAS mit Security Hardening)
 
-Eine fertige Vorlage finden Sie unter [`examples/docker-compose.yml`](examples/docker-compose.yml).
-Starten mit:
-```bash
-docker compose up -d
-```
+Eine fertige Vorlage für Docker Compose inkl. Multi-Kamera-Konfigurationsdatei finden Sie unter [`examples/docker-compose.yml`](examples/docker-compose.yml) und [`examples/config.json`](examples/config.json).
+
+1. Vorlage und Beispiel-Konfiguration anpassen (z. B. IP-Adressen und Zugangsdaten für Haustür und Garten eintragen).
+2. Starten mit:
+   ```bash
+   docker compose up -d
+   ```
 
 ### Option C: Standalone Docker Run (Gehärtet)
 
@@ -345,10 +347,10 @@ Unter **Einstellungen ➔ Add-ons ➔ Steinel CAM Bridge ➔ Konfiguration** (Dr
 
 ```yaml
 cameras:
-  - name: "Einfahrt"
+  - name: "Haustür"
     camera_ip: "192.168.1.100"
     qr_code: "did=de-xxxxxxx,pid=pr-xxxxx,sct=xxxx,pairPwd=xxxx"
-    rtsp_path: "steinel-einfahrt"
+    rtsp_path: "steinel-haustuer"
   - name: "Garten"
     camera_ip: "192.168.1.101"
     camera_type: "l620"
@@ -364,10 +366,10 @@ log_level: "info"
 {
   "cameras": [
     {
-      "name": "Einfahrt",
+      "name": "Haustür",
       "camera_ip": "192.168.1.100",
       "qr_code": "did=de-xxxxxxx,pid=pr-xxxxx,sct=xxxx,pairPwd=xxxx",
-      "rtsp_path": "steinel-einfahrt"
+      "rtsp_path": "steinel-haustuer"
     },
     {
       "name": "Garten",
@@ -400,10 +402,10 @@ log_level: "info"
 
 #### Routing & Zugriff im Multi-Kamera-Modus
 
-- **RTSP-Streaming (:8554)**: Jede Kamera wird unter ihrem konfigurierten Pfad bereitgestellt (z. B. `rtsp://<bridge-ip>:8554/steinel-einfahrt` und `rtsp://<bridge-ip>:8554/steinel-garten`).
-- **ONVIF Mehrkanal (:8000)**: Die Bridge exportiert für jede Kamera einen eigenen VideoSource-Kanal und eigene Profile (`Profile_steinel-einfahrt_Main`, `Profile_steinel-garten_Main`). In NVRs (wie Synology Surveillance Station oder Scrypted) können alle Kanäle über dieselbe IP/Port-Kombination hinzugefügt werden.
+- **RTSP-Streaming (:8554)**: Jede Kamera wird unter ihrem konfigurierten Pfad bereitgestellt (z. B. `rtsp://<bridge-ip>:8554/steinel-haustuer` und `rtsp://<bridge-ip>:8554/steinel-garten`).
+- **ONVIF Mehrkanal (:8000)**: Die Bridge exportiert für jede Kamera einen eigenen VideoSource-Kanal und eigene Profile (`Profile_steinel-haustuer_Main`, `Profile_steinel-garten_Main`). In NVRs (wie Synology Surveillance Station oder Scrypted) können alle Kanäle über dieselbe IP/Port-Kombination hinzugefügt werden.
 - **REST-API & SD-Karten-Cache (:8000)**: REST-Endpunkte filtern Aufnahmen auf Wunsch über den Query-Parameter `?camera=<path>` (z. B. `/api/sdcard/events?camera=steinel-garten`).
-- **Home Assistant MQTT**: Jede Kamera wird automatisch als eigenständiges Gerät mit vollständigen Steuerungs-, Sensor- und Aufnahme-Entitäten registriert (`Steinel Einfahrt`, `Steinel Garten`) unter separaten Topics (`steinel/<DeviceID>/...`).
+- **Home Assistant MQTT**: Jede Kamera wird automatisch als eigenständiges Gerät mit vollständigen Steuerungs-, Sensor- und Aufnahme-Entitäten registriert (`Steinel Haustür`, `Steinel Garten`) unter separaten Topics (`steinel/<DeviceID>/...`).
 
 ---
 

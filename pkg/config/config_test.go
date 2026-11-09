@@ -292,6 +292,7 @@ func TestCameraMAC_DefaultAndCustomFlags(t *testing.T) {
 
 func TestSlugify(t *testing.T) {
 	assert.Equal(t, "einfahrt", Slugify("Einfahrt"))
+	assert.Equal(t, "haustuer", Slugify("Haustür"))
 	assert.Equal(t, "einfahrt_vorne", Slugify("Einfahrt Vorne"))
 	assert.Equal(t, "hinter_dem_haus", Slugify("Hinter-dem-Haus"))
 	assert.Equal(t, "cam_1", Slugify("Cam 1"))

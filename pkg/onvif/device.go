@@ -2,10 +2,12 @@ package onvif
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Afrouper/steinel-cam-bridge/pkg/events"
+	"github.com/Afrouper/steinel-cam-bridge/pkg/logger"
 )
 
 type DeviceHandler struct {
@@ -17,6 +19,7 @@ type DeviceHandler struct {
 	rtspPort     int
 	authUser     string
 	rebootFunc   func() error
+	setTimeFunc  func(t time.Time, tz string) error
 	eventBus     *events.Bus
 	channelsFunc func() []CameraChannel
 }
@@ -24,6 +27,11 @@ type DeviceHandler struct {
 // SetChannelsFunc sets the callback for querying registered camera channels.
 func (h *DeviceHandler) SetChannelsFunc(f func() []CameraChannel) {
 	h.channelsFunc = f
+}
+
+// SetTimeFunc sets the callback for handling SetSystemDateAndTime requests.
+func (h *DeviceHandler) SetTimeFunc(f func(t time.Time, tz string) error) {
+	h.setTimeFunc = f
 }
 
 func (h *DeviceHandler) numSources() int {
@@ -82,6 +90,9 @@ func (h *DeviceHandler) Handle(action string, reqXML string, host string) (strin
 	}
 	if strings.Contains(action, "GetSystemDateAndTime") || strings.Contains(reqXML, "GetSystemDateAndTime") {
 		return h.getSystemDateAndTime(), nil
+	}
+	if strings.Contains(action, "SetSystemDateAndTime") || strings.Contains(reqXML, "SetSystemDateAndTime") {
+		return h.setSystemDateAndTime(reqXML), nil
 	}
 	if strings.Contains(action, "GetNetworkInterfaces") || strings.Contains(reqXML, "GetNetworkInterfaces") {
 		return h.getNetworkInterfaces(), nil
@@ -417,6 +428,31 @@ func (h *DeviceHandler) getSystemDateAndTime() string {
     </tt:UTCDateTime>
   </tds:SystemDateAndTime>
 </tds:GetSystemDateAndTimeResponse>`, NS_TDS, NS_TT, now.Hour(), now.Minute(), now.Second(), now.Year(), int(now.Month()), now.Day())
+}
+
+func (h *DeviceHandler) setSystemDateAndTime(reqXML string) string {
+	year, _ := strconv.Atoi(extractXMLTag(reqXML, "Year"))
+	month, _ := strconv.Atoi(extractXMLTag(reqXML, "Month"))
+	day, _ := strconv.Atoi(extractXMLTag(reqXML, "Day"))
+	hour, _ := strconv.Atoi(extractXMLTag(reqXML, "Hour"))
+	min, _ := strconv.Atoi(extractXMLTag(reqXML, "Minute"))
+	sec, _ := strconv.Atoi(extractXMLTag(reqXML, "Second"))
+	tz := extractXMLTag(reqXML, "TZ")
+
+	targetTime := time.Now().UTC()
+	if year > 2000 && month >= 1 && month <= 12 && day >= 1 && day <= 31 {
+		targetTime = time.Date(year, time.Month(month), day, hour, min, sec, 0, time.UTC)
+	}
+
+	logger.Info("ONVIF", "⏰ SetSystemDateAndTime received: %s (TZ: %s)", targetTime.Format(time.RFC3339), tz)
+
+	if h.setTimeFunc != nil {
+		if err := h.setTimeFunc(targetTime, tz); err != nil {
+			logger.Warn("ONVIF", "⚠️ SetSystemDateAndTime backend error: %v", err)
+		}
+	}
+
+	return fmt.Sprintf(`<tds:SetSystemDateAndTimeResponse xmlns:tds="%s"/>`, NS_TDS)
 }
 
 func (h *DeviceHandler) getNetworkInterfaces() string {

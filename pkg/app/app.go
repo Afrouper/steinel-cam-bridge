@@ -307,6 +307,17 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 		primaryInst.eventBus,
 	)
 	onvifServer.SetChannels(onvifChannels)
+	onvifServer.SetTimeFunc(func(t time.Time, tz string) error {
+		var lastErr error
+		for _, cam := range camInstances {
+			if cam.bridgeMgr != nil {
+				if err := cam.bridgeMgr.SetSystemDateAndTime(t, tz); err != nil {
+					lastErr = err
+				}
+			}
+		}
+		return lastErr
+	})
 
 	app := &App{
 		cfg:             cfg,

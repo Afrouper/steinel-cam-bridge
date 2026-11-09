@@ -193,6 +193,13 @@ func (s *Server) Channels() []CameraChannel {
 	return res
 }
 
+// SetTimeFunc registers the callback for handling SetSystemDateAndTime requests.
+func (s *Server) SetTimeFunc(f func(t time.Time, tz string) error) {
+	if s.deviceHandler != nil {
+		s.deviceHandler.SetTimeFunc(f)
+	}
+}
+
 func (s *Server) findChannel(nameOrPath string) *CameraChannel {
 	s.channelsMu.RLock()
 	defer s.channelsMu.RUnlock()

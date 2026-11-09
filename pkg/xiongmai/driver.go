@@ -359,6 +359,14 @@ func (d *Driver) ReconnectSession() error {
 	return errors.New("no active camera connection")
 }
 
+// SetTime synchronizes the system clock on the L 620 camera.
+func (d *Driver) SetTime(t time.Time) error {
+	if d.client != nil {
+		return d.client.SetTime(t)
+	}
+	return errors.New("camera driver not connected")
+}
+
 // SetLamp turns the main light on or off.
 func (d *Driver) SetLamp(on bool) error {
 	logger.Trace("Xiongmai Driver", "SetLamp: on=%v", on)

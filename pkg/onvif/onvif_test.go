@@ -693,3 +693,85 @@ func TestMultiCameraONVIF_ZeepGetStreamUriAndSnapshot(t *testing.T) {
 		t.Fatalf("GetSnapshotUri for Profile_einfahrt_Main failed to include ?camera=einfahrt: %s", string(body))
 	}
 }
+
+func TestDeviceHandler_SetSystemDateAndTime(t *testing.T) {
+	var calledTime time.Time
+	var calledTZ string
+	var callCount int
+
+	srv := NewServer(
+		8000,
+		8554,
+		"steinel",
+		"aac",
+		"de-xxxxxxx",
+		"pr-xxxxx",
+		"L 620 CAM",
+		"",
+		"",
+		"",
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		events.NewBus(),
+	)
+
+	srv.SetTimeFunc(func(tm time.Time, tz string) error {
+		callCount++
+		calledTime = tm
+		calledTZ = tz
+		return nil
+	})
+
+	soapReq := `<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope" xmlns:tds="http://www.onvif.org/ver10/device/wsdl" xmlns:tt="http://www.onvif.org/ver10/schema">
+  <s:Body>
+    <tds:SetSystemDateAndTime>
+      <tds:DateTimeType>Manual</tds:DateTimeType>
+      <tds:DaylightSavings>false</tds:DaylightSavings>
+      <tds:TimeZone>
+        <tt:TZ>CET-1CEST,M3.5.0,M10.5.0/3</tt:TZ>
+      </tds:TimeZone>
+      <tds:UTCDateTime>
+        <tt:Time>
+          <tt:Hour>14</tt:Hour>
+          <tt:Minute>30</tt:Minute>
+          <tt:Second>45</tt:Second>
+        </tt:Time>
+        <tt:Date>
+          <tt:Year>2026</tt:Year>
+          <tt:Month>11</tt:Month>
+          <tt:Day>9</tt:Day>
+        </tt:Date>
+      </tds:UTCDateTime>
+    </tds:SetSystemDateAndTime>
+  </s:Body>
+</s:Envelope>`
+
+	req := httptest.NewRequest("POST", "/onvif/device_service", bytes.NewBufferString(soapReq))
+	req.Header.Set("Content-Type", "application/soap+xml")
+	w := httptest.NewRecorder()
+
+	srv.handleSOAP(w, req)
+	resp := w.Result()
+	body, _ := io.ReadAll(resp.Body)
+
+	if !strings.Contains(string(body), "SetSystemDateAndTimeResponse") {
+		t.Fatalf("expected SetSystemDateAndTimeResponse, got: %s", string(body))
+	}
+
+	if callCount != 1 {
+		t.Fatalf("expected SetTimeFunc to be called once, called %d times", callCount)
+	}
+
+	if calledTime.Year() != 2026 || calledTime.Month() != 11 || calledTime.Day() != 9 ||
+		calledTime.Hour() != 14 || calledTime.Minute() != 30 || calledTime.Second() != 45 {
+		t.Fatalf("unexpected parsed time: %v", calledTime)
+	}
+
+	if calledTZ != "CET-1CEST,M3.5.0,M10.5.0/3" {
+		t.Fatalf("unexpected parsed timezone: %q", calledTZ)
+	}
+}

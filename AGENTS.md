@@ -93,7 +93,7 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
 - **`pkg/driver/`** *(Neu in Milestone 3)*:
   - `driver.go`: Einheitliches polymorphes `CameraDriver`-Interface (`Run`, `Close`, `GetStatus`, `SetLight`, `TriggerAlarm`, etc.).
   - `l625.go`: Kapselt den autonomen Nabto Edge P2P Lifecycle (mDNS, CoAP, WebRTC-Ingest, MCU-Telemetrie und Watchdog-Handling). Enthält adaptiven exponentiellen Reconnect-Backoff (`CalculateBackoff`: 15s -> 30s -> 60s -> 120s -> 240s max), um Reconnect-Stürme nach Kamera-Reboots zu verhindern.
-  - `l620.go`: Kapselt Sofia DVRIP TCP-Ingest, RTSP-Relay, MCU-Statusabfrage und Keepalive-Worker.
+  - `l620.go`: Kapselt Sofia NetIP TCP-Ingest (natives OPMonitor 1410/1412 Streaming & On-Demand Lifecycle mit RTSP-Fallback), MCU-Statusabfrage, Alarme und Keepalive-Worker.
   - `factory.go`: Dynamische Treiber-Instanziierung über `driver.New(...)` ohne globale Zustände.
 
 - **`pkg/logger/`**:
@@ -117,6 +117,7 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
   - `packet_conn.go`: Paket-Demultiplexer und Framer mit `sync.Pool` (`udpBufPool`, 2048 Bytes) für Zero-Allocation UDP-Framing (**0 B/op, 0 allocs/op**).
 
 - **`pkg/webrtc/`**:
+  - Detailspezifikation & Byte-Layout (L 625): Siehe [`AGENTS_L625.md`](file:///Users/christian/dev/git/steinel-cam-bridge/AGENTS_L625.md).
   - Modularisiert in vier fokussierte Subsysteme:
     - `signaling.go`: TURN-Exchange, Vanilla-ICE Gathering, SDP Offer/Answer Negotiation & Sanitization; 20-Sekunden ICE Grace Period für robuste Erholung bei transienten WLAN-Schwankungen oder Kamera-CPU-Spitzen.
     - `media.go`: H.264 Video-Ingest, Audio-Ingest & AAC-Transcoder, 6s Silence-Watchdog & PLI-Burst/Intervallschleife.
@@ -132,7 +133,7 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
   - `rtsp_ingest.go`: Nimmt den nativen H.264/AAC-RTSP-Stream der L 620 entgegen mit kanonischer sauberer Pfad-Reihenfolge (ohne `?real_stream` an Position 1 gegen Kamera-Pufferüberläufe), Port-554-Unreachable-Short-Circuit & exponentiellem Backoff, SDP-Track-Prüfung, Zero-Packet Initial-Watchdog (5s) und Silence-Watchdog (15s).
   - `mcu.go`: ASCII-Frame Parser (`B...U`) & Command Builder für L 620 Licht-, Dämmerungs- und Sensorkommandos via OPTrans RS232.
   - `sdcard.go`: Xiongmai SD-Karten Dateisystemabfrage (`OPFileQuery`) und Download mit konsistenter Thumbnail-Behandlung.
-  - `talk.go`: Rückkanal-Audiokommunikation (G.711u / PCMU) über das Xiongmai Talk-Protokoll mit dynamischer Audio-Aushandlung (`MsgTalkClaimV2Req`), automatischer PCMU $\leftrightarrow$ PCMA Transkodierung und thread-sicherem Audio-Framing.
+  - `talk.go`: Rückkanal-Audiokommunikation über das Xiongmai Talk-Protokoll (MsgID 1434/1432, nativer G.711 A-law / PCMA Kamera-DAC) mit dynamischer Audio-Aushandlung (`MsgTalkClaimV2Req`), automatischer PCMU $\leftrightarrow$ PCMA Transkodierung und thread-sicherem Audio-Framing.
 
 - **`pkg/storage/`**:
   - `storage.go`: Definiert das gemeinsame Interface `RecordingProvider`, Metadatenstrukturen (`RecordingItem`, `RecordingListResponse`) und kanonische Speicherfehler (`ErrStorageBusy`, `ErrStorageTimeout`, `ErrFeatureDisabled`).

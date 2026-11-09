@@ -108,6 +108,21 @@ func (b *Bridge) SetLampState(mode string) error {
 	}
 }
 
+// SetSystemDateAndTime synchronizes the timezone and clock on the L 625 camera via WebRTC DataChannel.
+func (b *Bridge) SetSystemDateAndTime(t time.Time, tz string) error {
+	if tz == "" {
+		tz = time.Now().Location().String()
+		if tz == "Local" || tz == "" {
+			tz = "Europe/Berlin"
+		}
+	}
+	logger.Info("DataChannel", "⏰ Syncing time setting to camera (TZ: %s, Time: %s)", tz, t.Format(time.RFC3339))
+	return b.sendJSONCmd("set_time_setting", map[string]interface{}{
+		"action":   "timezone",
+		"timezone": tz,
+	})
+}
+
 func (b *Bridge) sendJSONCmd(cmdName string, info map[string]interface{}) error {
 	b.mu.Lock()
 	dc := b.dc

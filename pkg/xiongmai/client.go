@@ -1278,6 +1278,39 @@ func (c *Client) IsDataEncryptionAES() bool {
 	return c.dataEncryptionAES && len(c.communicateKey) == 16
 }
 
+// SetTime sets the system clock on the camera using OPTimeSetting (MsgID 1450).
+func (c *Client) SetTime(t time.Time) error {
+	c.mu.Lock()
+	conn := c.conn
+	isLogged := c.isLoggedIn
+	sessID := c.sessionID
+	c.mu.Unlock()
+
+	if conn == nil || !isLogged {
+		return errors.New("client not connected or logged in")
+	}
+
+	timeStr := t.Local().Format("2006-01-02 15:04:05")
+	payload := map[string]interface{}{
+		"Name":          "OPTimeSetting",
+		"OPTimeSetting": timeStr,
+		"SessionID":     fmt.Sprintf("0x%08x", sessID),
+	}
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	respBytes, err := c.SendPacket(MsgTimeSettingReq, payloadBytes)
+	if err != nil {
+		return fmt.Errorf("OPTimeSetting failed: %w", err)
+	}
+
+	logger.Info("Xiongmai", "⏰ Camera system clock updated to %s", timeStr)
+	logger.Trace("Xiongmai", "OPTimeSetting response: %s", string(respBytes))
+	return nil
+}
+
 // Close gracefully logs out and closes the connection.
 func (c *Client) Close() error {
 	c.mu.Lock()
