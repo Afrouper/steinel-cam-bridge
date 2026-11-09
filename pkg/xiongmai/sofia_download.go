@@ -9,7 +9,6 @@ import (
 	"io"
 	"net"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -20,13 +19,15 @@ import (
 // SofiaDownloader handles downloading recorded H.264 video files from a Xiongmai camera
 // over the Sofia protocol (Port 34567) using OPPlayBack (MsgID 1420 / 1424).
 // Follows Single Responsibility Principle by encapsulating all download-specific
-// socket communication, Xiongmai media demuxing, and MP4 container conversion.
+// socket communication and Xiongmai media demuxing, while delegating container
+// muxing to storage.VideoMuxer.
 type SofiaDownloader struct {
 	cameraIP string
 	port     int
 	client   *Client
 	user     string
 	password string
+	muxer    storage.VideoMuxer
 }
 
 // NewSofiaDownloader creates a new Sofia video recording downloader.
@@ -43,7 +44,13 @@ func NewSofiaDownloader(cameraIP string, port int, client *Client, user, passwor
 		client:   client,
 		user:     user,
 		password: password,
+		muxer:    storage.NewFFmpegExtractor(""),
 	}
+}
+
+// SetMuxer allows injecting a custom or mock VideoMuxer (e.g. for unit testing).
+func (d *SofiaDownloader) SetMuxer(m storage.VideoMuxer) {
+	d.muxer = m
 }
 
 // Download fetches the requested recording from the camera, demuxes Xiongmai H.264 packets,
@@ -342,9 +349,8 @@ func (d *SofiaDownloader) sendStop(sessionID uint32, sessionHex, fileName string
 }
 
 func (d *SofiaDownloader) convertAndStream(ctx context.Context, h264Path string, w io.Writer) error {
-	ffmpegPath := findFFmpeg()
-	if ffmpegPath == "" {
-		// Fallback: If ffmpeg is not available, write the H.264 stream directly to w
+	if d.muxer == nil || !d.muxer.IsAvailable() {
+		// Fallback: If muxer is not available, stream the H.264 elementary stream directly to w
 		f, err := os.Open(h264Path)
 		if err != nil {
 			return err
@@ -362,22 +368,9 @@ func (d *SofiaDownloader) convertAndStream(ctx context.Context, h264Path string,
 	_ = tmpMP4.Close()
 	defer os.Remove(tmpMP4Path)
 
-	// Mux H.264 Annex-B into MP4 container with faststart for instant streaming
-	cmd := exec.CommandContext(ctx, ffmpegPath,
-		"-y",
-		"-f", "h264",
-		"-i", h264Path,
-		"-c:v", "copy",
-		"-movflags", "+faststart",
-		tmpMP4Path,
-	)
-
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		logger.Warn("Xiongmai Download", "⚠️ FFmpeg H.264 -> MP4 muxing error (%v): %s (falling back to raw copy)",
-			err, stderr.String())
+	// Delegate MP4 remuxing to storage.VideoMuxer
+	if err := d.muxer.MuxH264ToMP4(ctx, h264Path, tmpMP4Path); err != nil {
+		logger.Warn("Xiongmai Download", "⚠️ Remuxing H.264 -> MP4 failed (%v), falling back to raw copy", err)
 		// Fallback to raw copy if muxing failed
 		f, errRaw := os.Open(h264Path)
 		if errRaw != nil {
@@ -402,16 +395,4 @@ func (d *SofiaDownloader) convertAndStream(ctx context.Context, h264Path string,
 
 	logger.Debug("Xiongmai Download", "🎬 Successfully muxed and streamed %d bytes of MP4 video", written)
 	return nil
-}
-
-func findFFmpeg() string {
-	if p, err := exec.LookPath("ffmpeg"); err == nil {
-		return p
-	}
-	for _, candidate := range []string{"/usr/local/bin/ffmpeg", "/usr/bin/ffmpeg", "/opt/homebrew/bin/ffmpeg"} {
-		if fi, err := os.Stat(candidate); err == nil && !fi.IsDir() {
-			return candidate
-		}
-	}
-	return ""
 }

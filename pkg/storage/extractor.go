@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -31,20 +32,38 @@ type FrameExtractor interface {
 	IsAvailable() bool
 }
 
-// FFmpegExtractor extracts frames using the standalone ffmpeg binary.
+// VideoMuxer defines the abstraction for container muxing (e.g. H.264 elementary streams to MP4).
+type VideoMuxer interface {
+	// MuxH264ToMP4 remuxes an elementary Annex-B H.264 stream into a standard MP4 container
+	// using -c:v copy (zero re-encoding) and -movflags +faststart for immediate web/HTTP streaming.
+	MuxH264ToMP4(ctx context.Context, h264Path, mp4Path string) error
+
+	// IsAvailable returns whether the muxer engine is available and functional.
+	IsAvailable() bool
+}
+
+// Verify interface implementations at compile time
+var (
+	_ FrameExtractor = (*FFmpegExtractor)(nil)
+	_ VideoMuxer     = (*FFmpegExtractor)(nil)
+	_ FrameExtractor = (*MockExtractor)(nil)
+	_ VideoMuxer     = (*MockExtractor)(nil)
+)
+
+// FFmpegExtractor extracts frames and muxes containers using the standalone ffmpeg binary.
 type FFmpegExtractor struct {
 	binaryPath string
 	available  bool
 }
 
 // NewFFmpegExtractor initializes an FFmpegExtractor. If binaryPath is empty, it searches PATH
-// and common system locations (/usr/local/bin/ffmpeg, /usr/bin/ffmpeg).
+// and common system locations (/usr/local/bin/ffmpeg, /usr/bin/ffmpeg, /opt/homebrew/bin/ffmpeg).
 func NewFFmpegExtractor(binaryPath string) *FFmpegExtractor {
 	if binaryPath == "" {
 		if p, err := exec.LookPath("ffmpeg"); err == nil {
 			binaryPath = p
 		} else {
-			for _, candidate := range []string{"/usr/local/bin/ffmpeg", "/usr/bin/ffmpeg"} {
+			for _, candidate := range []string{"/usr/local/bin/ffmpeg", "/usr/bin/ffmpeg", "/opt/homebrew/bin/ffmpeg"} {
 				if fi, err := os.Stat(candidate); err == nil && !fi.IsDir() {
 					binaryPath = candidate
 					break
@@ -160,10 +179,56 @@ func (e *FFmpegExtractor) runExtraction(ctx context.Context, videoPath string, o
 	return nil
 }
 
-// MockExtractor is an in-memory mock implementation of FrameExtractor for unit testing.
+// MuxH264ToMP4 remuxes an elementary Annex-B H.264 stream into a standard MP4 container
+// using -c:v copy (zero re-encoding) and -movflags +faststart for immediate web/HTTP streaming.
+func (e *FFmpegExtractor) MuxH264ToMP4(ctx context.Context, h264Path, mp4Path string) error {
+	if !e.IsAvailable() {
+		return ErrExtractorUnavailable
+	}
+
+	fi, err := os.Stat(h264Path)
+	if err != nil || fi.Size() == 0 {
+		return ErrInvalidVideoFile
+	}
+
+	destDir := filepath.Dir(mp4Path)
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		return fmt.Errorf("failed to create destination directory: %w", err)
+	}
+
+	muxCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(muxCtx, e.binaryPath,
+		"-y",
+		"-f", "h264",
+		"-i", h264Path,
+		"-c:v", "copy",
+		"-movflags", "+faststart",
+		mp4Path,
+	)
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("ffmpeg muxing failed: %w, stderr: %s", err, stderr.String())
+	}
+
+	stat, err := os.Stat(mp4Path)
+	if err != nil || stat.Size() == 0 {
+		return fmt.Errorf("ffmpeg produced empty MP4 file")
+	}
+
+	logger.Trace("Extractor", "🎬 Remuxed H.264 to MP4: %s (Size: %d bytes)", filepath.Base(mp4Path), stat.Size())
+	return nil
+}
+
+// MockExtractor is an in-memory mock implementation of FrameExtractor and VideoMuxer for unit testing.
 type MockExtractor struct {
 	Available  bool
 	ExtractErr error
+	MuxErr     error
 	DummyData  []byte
 }
 
@@ -190,7 +255,26 @@ func (m *MockExtractor) ExtractFrame(ctx context.Context, videoPath string, offs
 	return os.WriteFile(thumbPath, m.DummyData, 0644)
 }
 
-// IsAvailable implements FrameExtractor for MockExtractor.
+// MuxH264ToMP4 implements VideoMuxer for MockExtractor.
+func (m *MockExtractor) MuxH264ToMP4(ctx context.Context, h264Path, mp4Path string) error {
+	if !m.Available {
+		return ErrExtractorUnavailable
+	}
+	if m.MuxErr != nil {
+		return m.MuxErr
+	}
+
+	if err := os.MkdirAll(filepath.Dir(mp4Path), 0755); err != nil {
+		return err
+	}
+	data, err := os.ReadFile(h264Path)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(mp4Path, data, 0644)
+}
+
+// IsAvailable implements FrameExtractor and VideoMuxer for MockExtractor.
 func (m *MockExtractor) IsAvailable() bool {
 	return m.Available
 }
