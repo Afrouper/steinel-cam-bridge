@@ -315,6 +315,7 @@ func TestSingleCamera_NoDuplicateDiscovery(t *testing.T) {
 type mockPahoClient struct {
 	paho.Client
 	published map[string]string
+	retained  map[string]bool
 }
 
 func (m *mockPahoClient) IsConnected() bool { return true }
@@ -325,7 +326,11 @@ func (m *mockPahoClient) Publish(topic string, qos byte, retained bool, payload 
 	if m.published == nil {
 		m.published = make(map[string]string)
 	}
+	if m.retained == nil {
+		m.retained = make(map[string]bool)
+	}
 	m.published[topic] = fmt.Sprint(payload)
+	m.retained[topic] = retained
 	return &mockToken{}
 }
 
@@ -418,4 +423,36 @@ func TestHandleCommand_Reconnect(t *testing.T) {
 
 	c.handleCommand(nil, &mockMessage{topic: "steinel/cam1/reconnect/set", payload: []byte("PRESS")})
 	assert.True(t, reconnectCalled, "expected ReconnectSession callback to be called")
+}
+
+func TestPublishDeviceMotion_InitialAndRetained(t *testing.T) {
+	mockCl := &mockPahoClient{
+		published: make(map[string]string),
+		retained:  make(map[string]bool),
+	}
+	c := NewClient(Config{
+		TopicPrefix: "steinel",
+		DeviceID:    "de-test",
+	}, Callbacks{}, nil)
+	c.client = mockCl
+
+	dev := &CameraDevice{baseTopic: "steinel/de-test"}
+
+	// 1. Initial / motion cleared
+	c.publishDeviceMotion(dev, false)
+	assert.Equal(t, "OFF", mockCl.published["steinel/de-test/motion/state"])
+	assert.True(t, mockCl.retained["steinel/de-test/motion/state"], "motion/state MUST be retained")
+
+	// 2. Motion triggered
+	c.publishDeviceMotion(dev, true)
+	assert.Equal(t, "ON", mockCl.published["steinel/de-test/motion/state"])
+	assert.True(t, mockCl.retained["steinel/de-test/motion/state"], "motion/state MUST be retained")
+
+	// 3. RegisterCamera publishes initial OFF
+	c.RegisterCamera(CameraDevice{
+		Path:     "cam2",
+		DeviceID: "de-cam2",
+	})
+	assert.Equal(t, "OFF", mockCl.published["steinel/de-cam2/motion/state"])
+	assert.True(t, mockCl.retained["steinel/de-cam2/motion/state"], "RegisterCamera must publish retained OFF for motion")
 }

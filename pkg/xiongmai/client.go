@@ -38,6 +38,7 @@ type Client struct {
 	lastMCUConfig     *MCUConfig
 	telemetryBuf      string
 	onTelemetry       func(*MCUConfig)
+	onAlarm           func(event string, isStart bool)
 	closeChan         chan struct{}
 	closed            atomic.Bool
 }
@@ -49,6 +50,8 @@ var defaultNotEncryptMsgIDs = map[uint16]bool{
 	MsgLoginResp:        true, // 1001
 	MsgLogoutReq:        true, // 1008
 	MsgLogoutResp:       true, // 1009
+	MsgAlarmReq:         true, // 1500
+	MsgAlarmResp:        true, // 1501
 	MsgMonitorClaimReq:  true, // 1413
 	MsgMonitorClaimResp: true, // 1414
 	MsgTalkAudioData:    true, // 1432
@@ -116,6 +119,13 @@ func (c *Client) SetOnTelemetry(fn func(*MCUConfig)) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.onTelemetry = fn
+}
+
+// SetOnAlarm registers a callback invoked when motion or alarm events are pushed (MsgID 1500).
+func (c *Client) SetOnAlarm(fn func(event string, isStart bool)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.onAlarm = fn
 }
 
 // GetLastMCUConfig returns the most recently received MCU configuration frame.
@@ -921,6 +931,7 @@ func (c *Client) SendKeepAlive() error {
 	_, err := c.sendPacketLocked(MsgKeepAliveReq, payload)
 	if err == nil {
 		logger.Trace("Xiongmai", "<- KeepAlive acknowledged")
+		c.drainPendingTelemetryLocked()
 	}
 	return err
 }
@@ -1020,6 +1031,15 @@ func (c *Client) sendRawPacketWithHeaderLocked(msgID uint16, channel byte, total
 			continue
 		}
 
+		// Handle unsolicited / push Alarm notification (MsgID 1500)
+		if respHdr.MsgID == MsgAlarmReq {
+			c.handleAlarmPushLocked(respHdr, respPayload)
+			if msgID == MsgAlarmReq {
+				return []byte(cleanPayload), respHdr, nil
+			}
+			continue
+		}
+
 		return []byte(cleanPayload), respHdr, nil
 	}
 }
@@ -1094,6 +1114,64 @@ func (c *Client) drainPendingTelemetryLocked() {
 			c.handleTelemetryPushLocked(cleanPayload)
 			if c.telemetryBuf == "" && c.lastMCUConfig != nil {
 				break
+			}
+		} else if respHdr.MsgID == MsgAlarmReq {
+			c.handleAlarmPushLocked(respHdr, respPayload)
+		}
+	}
+}
+
+func (c *Client) handleAlarmPushLocked(hdr *Header, rawPayload []byte) {
+	cleanPayload := strings.Trim(string(rawPayload), "\x00\r\n ")
+	logger.Debug("Xiongmai", "🚨 Received Alarm notification (MsgID 1500): %s", cleanPayload)
+
+	// Send standard acknowledgement MsgAlarmResp (1501)
+	ack := map[string]interface{}{
+		"Name":      "AlarmInfo",
+		"SessionID": fmt.Sprintf("0x%08X", hdr.SessionID),
+		"Ret":       100,
+	}
+	ackBytes, _ := json.Marshal(ack)
+	ackBytes = append(ackBytes, 0x00)
+
+	ackHdr := Header{
+		Magic:      HeaderMagic,
+		Channel:    hdr.Channel,
+		TotalPkt:   hdr.TotalPkt,
+		SessionID:  hdr.SessionID,
+		Sequence:   hdr.Sequence,
+		MsgID:      MsgAlarmResp,
+		DataLength: uint32(len(ackBytes)),
+	}
+
+	if c.conn != nil {
+		_ = c.conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
+		_, _ = c.conn.Write(append(ackHdr.Encode(), ackBytes...))
+		_ = c.conn.SetWriteDeadline(time.Time{})
+	}
+
+	var push AlarmPushResp
+	if err := json.Unmarshal([]byte(cleanPayload), &push); err == nil {
+		eventType := push.AlarmInfo.Event
+		if eventType == "" {
+			eventType = push.Event
+		}
+		if eventType == "" {
+			eventType = "MotionDetect"
+		}
+		isStart := !strings.EqualFold(push.AlarmInfo.State, "Stop") && !strings.EqualFold(push.Status, "Stop")
+
+		if c.onAlarm != nil {
+			cb := c.onAlarm
+			go cb(eventType, isStart)
+		}
+	} else {
+		// Fallback: check if payload contains "motion" or "detect"
+		lower := strings.ToLower(cleanPayload)
+		if strings.Contains(lower, "motion") || strings.Contains(lower, "detect") {
+			if c.onAlarm != nil {
+				cb := c.onAlarm
+				go cb("MotionDetect", true)
 			}
 		}
 	}

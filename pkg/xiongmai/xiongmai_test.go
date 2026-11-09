@@ -2315,3 +2315,138 @@ func TestApplyMCUConfig_LowlightAllNight(t *testing.T) {
 	assert.Equal(t, 24*60, st.LowlightTime)
 	assert.Equal(t, 20, st.Lowlight)
 }
+
+func TestClient_AlarmPushNotification(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer func() { _ = ln.Close() }()
+
+	port := ln.Addr().(*net.TCPAddr).Port
+	var receivedAck atomic.Bool
+
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+
+		for {
+			hdrBuf := make([]byte, HeaderLength)
+			if _, err := io.ReadFull(conn, hdrBuf); err != nil {
+				return
+			}
+			hdr, _ := DecodeHeader(hdrBuf)
+			payload := make([]byte, hdr.DataLength)
+			if _, err := io.ReadFull(conn, payload); err != nil {
+				return
+			}
+
+			var respPayload []byte
+			var respMsgID uint16
+
+			switch hdr.MsgID {
+			case MsgLoginReq:
+				respMsgID = MsgLoginResp
+				resp := LoginResp{
+					Name:      "OPUserLogin",
+					Ret:       100,
+					SessionID: "0x00000042",
+				}
+				respPayload, _ = json.Marshal(resp)
+			case MsgAlarmResp:
+				receivedAck.Store(true)
+				continue
+			default:
+				respMsgID = hdr.MsgID + 1
+				respPayload = []byte(`{"Ret":100}`)
+			}
+
+			respPayloadWithTerm := append(respPayload, 0x0A, 0x00)
+			respHdr := Header{
+				Magic:      HeaderMagic,
+				Channel:    0,
+				SessionID:  0x42,
+				Sequence:   hdr.Sequence,
+				MsgID:      respMsgID,
+				DataLength: uint32(len(respPayloadWithTerm)),
+			}
+			_, _ = conn.Write(append(respHdr.Encode(), respPayloadWithTerm...))
+
+			if hdr.MsgID == MsgLoginReq {
+				// Send asynchronous MsgAlarmReq (1500)
+				alarmPayload := []byte(`{"Name":"AlarmInfo","SessionID":"0x00000042","AlarmInfo":{"Event":"MotionDetect","State":"Start","Channel":0}}` + "\x00")
+				alarmHdr := Header{
+					Magic:      HeaderMagic,
+					Channel:    0,
+					SessionID:  0x42,
+					Sequence:   999,
+					MsgID:      MsgAlarmReq,
+					DataLength: uint32(len(alarmPayload)),
+				}
+				_, _ = conn.Write(append(alarmHdr.Encode(), alarmPayload...))
+			}
+		}
+	}()
+
+	client := NewClient("127.0.0.1", port, "admin", "secret")
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	var alarmEvent string
+	var alarmStart bool
+	alarmCh := make(chan struct{}, 1)
+
+	client.SetOnAlarm(func(event string, isStart bool) {
+		alarmEvent = event
+		alarmStart = isStart
+		select {
+		case alarmCh <- struct{}{}:
+		default:
+		}
+	})
+
+	if err := client.Connect(ctx); err != nil {
+		t.Fatalf("failed to connect: %v", err)
+	}
+	defer func() { _ = client.Close() }()
+
+	// Trigger a keepalive so socket drains the pending alarm packet
+	_ = client.SendKeepAlive()
+
+	select {
+	case <-alarmCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for alarm callback")
+	}
+
+	assert.Equal(t, "MotionDetect", alarmEvent)
+	assert.True(t, alarmStart)
+	assert.Eventually(t, func() bool {
+		return receivedAck.Load()
+	}, 2*time.Second, 50*time.Millisecond, "client must send MsgAlarmResp acknowledgement")
+}
+
+func TestDriver_AlarmSetsMotion(t *testing.T) {
+	bus := events.NewBus()
+	d := &Driver{
+		eventBus: bus,
+	}
+
+	var receivedMotion bool
+	bus.SubscribeMotion(func(isMotion bool) {
+		receivedMotion = isMotion
+	})
+
+	// 1. Simulate alarm start
+	d.handleAlarmEvent("MotionDetect", true)
+	assert.True(t, receivedMotion, "eventBus should have received motion=true")
+	assert.True(t, bus.GetStatus().IsMotion, "bus status should be motion=true")
+
+	// 2. Simulate alarm stop
+	d.handleAlarmEvent("MotionDetect", false)
+	assert.False(t, receivedMotion, "eventBus should have received motion=false")
+	assert.False(t, bus.GetStatus().IsMotion, "bus status should be motion=false")
+}

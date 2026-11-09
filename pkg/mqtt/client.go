@@ -192,12 +192,15 @@ func (c *Client) RegisterCamera(dev CameraDevice) {
 		brightnessCmd := fmt.Sprintf("%s/light/brightness/set", dev.baseTopic)
 		cl.Subscribe(brightnessCmd, 1, c.handleCommand)
 
+		motionState := false
 		if dev.EventBus != nil {
 			st := dev.EventBus.GetStatus()
+			motionState = st.IsMotion
 			if st.LampMode > 0 || st.Lux >= 2 || st.Highlight > 0 {
 				c.publishDeviceStatus(&camCopy, st)
 			}
 		}
+		c.publishDeviceMotion(&camCopy, motionState)
 	}
 
 	if dev.EventBus != nil {
@@ -334,12 +337,15 @@ func (c *Client) UpdateCameraDeviceInfo(cameraPath, deviceID, productID string) 
 		brightnessCmd := fmt.Sprintf("%s/light/brightness/set", targetDev.baseTopic)
 		cl.Subscribe(brightnessCmd, 1, c.handleCommand)
 
+		motionState := false
 		if targetDev.EventBus != nil {
 			st := targetDev.EventBus.GetStatus()
+			motionState = st.IsMotion
 			if st.LampMode > 0 || st.Lux >= 2 || st.Highlight > 0 {
 				c.publishDeviceStatus(targetDev, st)
 			}
 		}
+		c.publishDeviceMotion(targetDev, motionState)
 	}
 }
 
@@ -391,12 +397,15 @@ func (c *Client) Start(_ context.Context) error {
 			brightnessCmd := fmt.Sprintf("%s/light/brightness/set", dev.baseTopic)
 			client.Subscribe(brightnessCmd, 1, c.handleCommand)
 
+			motionState := false
 			if dev.EventBus != nil {
 				st := dev.EventBus.GetStatus()
+				motionState = st.IsMotion
 				if st.LampMode > 0 || st.Lux >= 2 || st.Highlight > 0 {
 					c.publishDeviceStatus(dev, st)
 				}
 			}
+			c.publishDeviceMotion(dev, motionState)
 		}
 	}
 
