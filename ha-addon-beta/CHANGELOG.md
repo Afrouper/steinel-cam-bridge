@@ -4,21 +4,14 @@ Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hi
 
 ## 1.5.2-beta.5
 
-### ⏰ Features & ONVIF-Verbesserungen: SetSystemDateAndTime für L 620 & L 625 (Fixes #70)
+### ⏰ Features & Verbesserungen
 
-- **ONVIF Device Service `SetSystemDateAndTime` Implementierung (`pkg/onvif/device.go`, `server.go`)**:
-  - Unterstützt den ONVIF-Button *„Systemdatum und -uhrzeit einstellen“* in Home Assistant ohne Fehlermeldung (`unhandled device action: SetSystemDateAndTime`).
-  - Parst Zeit- und Datumswerte (`<UTCDateTime>`, `<LocalDateAndTime>`) sowie Zeitzonenangaben (`<TimeZone><TZ>`) aus dem SOAP-Payload.
-  - Antwortet mit standardkonformem `<tds:SetSystemDateAndTimeResponse xmlns:tds="http://www.onvif.org/ver10/device/wsdl"/>`.
-- **Steinel L 620 CAM / XLED CAM 1 Uhrzeitsynchronisation (`pkg/xiongmai`)**:
-  - Implementiert Xiongmai Sofia Kommando `OPTimeSetting` (MsgID 1450 `MsgTimeSettingReq` / 1451 `MsgTimeSettingResp`).
-  - Setzt die interne RTC-Hardwareuhr der L 620 auf das übermittelte lokale Datum und die Uhrzeit (`YYYY-MM-DD HH:MM:SS`).
-- **Steinel L 625 CAM SC Zeitzonen- & Uhrzeitsynchronisation (`pkg/webrtc`)**:
-  - Sendet über den WebRTC DataChannel das native JSON-Kommando `set_time_setting` mit `action: "timezone"`.
-  - Passt die Zeitzone des Kamerasystems dynamisch an.
-- **Konfigurationserweiterung & Pfad-Optimierung**:
-  - Unterstützung der Umgebungsvariable `CONFIG_PATH` zum flexiblen Einbinden von Konfigurationsdateien in Docker-Setups.
-  - Automatische Transliteration deutscher Umlaute in RTSP-Slugs (`Haustür` $\rightarrow$ `haustuer`).
+- **ONVIF Uhrzeitsynchronisation (`SetSystemDateAndTime`)**:
+  - Unterstützt das Einstellen von Datum und Uhrzeit über die Home Assistant ONVIF-Integration (*„Systemdatum und -uhrzeit einstellen“*).
+  - Funktioniert für alle Modelle: Steinel L 620 CAM / XLED CAM 1 (Synchronisation der Hardware-RTC) und L 625 CAM SC (Zeitzonen- und Uhrzeit-Sync).
+- **Multi-Kamera & Konfiguration**:
+  - Unterstützung der Umgebungsvariable `CONFIG_PATH` für benutzerdefinierte Konfigurationspfade (z. B. in Docker Compose).
+  - Automatische Bereinigung deutscher Umlaute in RTSP-Stream-Pfaden (z. B. `Haustür` $\rightarrow$ `haustuer`).
 
 ## 1.5.2-beta.4
 
