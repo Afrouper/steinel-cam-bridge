@@ -27,41 +27,43 @@ func TestXiongmaiSDCardManager(t *testing.T) {
 
 	// Server mock goroutine responding to MsgFileSearchReq (1440)
 	go func() {
-		buf := make([]byte, 1024)
-		n, err := server.Read(buf)
-		if err != nil {
-			return
-		}
-		if n >= 20 {
-			reqHdr, err := DecodeHeader(buf[:20])
+		for {
+			buf := make([]byte, 1024)
+			n, err := server.Read(buf)
 			if err != nil {
 				return
 			}
+			if n >= 20 {
+				reqHdr, err := DecodeHeader(buf[:20])
+				if err != nil {
+					return
+				}
 
-			queryResp := map[string]interface{}{
-				"Name": "OPFileQuery",
-				"OPFileQuery": []map[string]interface{}{
-					{
-						"BeginTime":  "2026-08-26 18:30:00",
-						"EndTime":    "2026-08-26 18:30:45",
-						"FileLength": "1048576",
-						"FileName":   "/mnt/mtd/rec/2026-08-26/001.h264",
+				queryResp := map[string]interface{}{
+					"Name": "OPFileQuery",
+					"OPFileQuery": []map[string]interface{}{
+						{
+							"BeginTime":  "2026-08-26 18:30:00",
+							"EndTime":    "2026-08-26 18:30:45",
+							"FileLength": "1048576",
+							"FileName":   "/mnt/mtd/rec/2026-08-26/001.h264",
+						},
 					},
-				},
-				"Ret":       100,
-				"SessionID": "0x00000042",
-			}
-			payload, _ := json.Marshal(queryResp)
+					"Ret":       100,
+					"SessionID": "0x00000042",
+				}
+				payload, _ := json.Marshal(queryResp)
 
-			respHdr := &Header{
-				Magic:      HeaderMagic,
-				SessionID:  reqHdr.SessionID,
-				Sequence:   reqHdr.Sequence,
-				MsgID:      MsgFileSearchResp,
-				DataLength: uint32(len(payload)),
+				respHdr := &Header{
+					Magic:      HeaderMagic,
+					SessionID:  reqHdr.SessionID,
+					Sequence:   reqHdr.Sequence,
+					MsgID:      MsgFileSearchResp,
+					DataLength: uint32(len(payload)),
+				}
+				respBytes := append(respHdr.Encode(), payload...)
+				_, _ = server.Write(respBytes)
 			}
-			respBytes := append(respHdr.Encode(), payload...)
-			_, _ = server.Write(respBytes)
 		}
 	}()
 
@@ -79,5 +81,9 @@ func TestXiongmaiSDCardManager(t *testing.T) {
 
 	// Test StreamThumbnail unsupported
 	err = prov.StreamThumbnail(ctx, resp.List[0].ID, nil)
+	assert.ErrorIs(t, err, storage.ErrFeatureDisabled)
+
+	// Test StreamVideo unsupported for Sofia raw downloading
+	err = prov.StreamVideo(ctx, resp.List[0].ID, nil, nil)
 	assert.ErrorIs(t, err, storage.ErrFeatureDisabled)
 }

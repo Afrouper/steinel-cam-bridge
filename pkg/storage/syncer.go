@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -150,6 +151,9 @@ func (s *RecordingSyncer) syncOnce(ctx context.Context, isInitial bool) {
 	}); ok {
 		newlyCached, err := cacheSyncer.SyncLatest(ctx)
 		if err != nil {
+			if errors.Is(err, ErrFeatureDisabled) {
+				goto queryFallback
+			}
 			if isInitial {
 				logger.Warn("Recording Sync", "⚠️ Initial cache sync returned error: %v", err)
 			} else {
@@ -179,6 +183,7 @@ func (s *RecordingSyncer) syncOnce(ctx context.Context, isInitial bool) {
 			if s.onNewRecording != nil {
 				s.onNewRecording(latest)
 			}
+			return
 		} else if isInitial {
 			// Cache didn't download new items (already cached), but on initial sync we restore
 			// and publish the latest item currently in cache to restore MQTT sensor state in Home Assistant.
@@ -200,13 +205,18 @@ func (s *RecordingSyncer) syncOnce(ctx context.Context, isInitial bool) {
 						if s.onNewRecording != nil {
 							s.onNewRecording(latest)
 						}
+						return
 					}
 				}
 			}
 		}
+
 		// If cacheSyncer is present and handled, never perform a redundant second query to upstream camera
 		return
 	}
+
+queryFallback:
+	// 2. Query fallback (for non-cached providers, empty cache, or when camera doesn't support video downloading)
 
 	// 2. Query fallback (for non-cached providers or when cache already holds latest items)
 	reqCtx, cancel := context.WithTimeout(ctx, 10*time.Second)

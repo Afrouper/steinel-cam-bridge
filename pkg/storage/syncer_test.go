@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRecordingSyncer(t *testing.T) {
@@ -196,4 +197,82 @@ func TestSyncer_ZeroIntervalDisablesPeriodicSync(t *testing.T) {
 		-5*time.Second,
 	)
 	assert.Equal(t, time.Duration(0), negSyncer.pollInterval, "negative pollInterval should normalize to 0")
+}
+
+type featureDisabledCachedProvider struct {
+	mockProvider
+	syncLatestCalls int
+	listCalls       int
+}
+
+func (m *featureDisabledCachedProvider) SyncLatest(ctx context.Context) ([]RecordingItem, error) {
+	m.syncLatestCalls++
+	return nil, ErrFeatureDisabled
+}
+
+func (m *featureDisabledCachedProvider) ListRecordings(ctx context.Context, start, end time.Time, page, limit int, eventType string) (*RecordingListResponse, error) {
+	m.listCalls++
+	return m.mockProvider.ListRecordings(ctx, start, end, page, limit, eventType)
+}
+
+func TestSyncer_FallsThroughOnFeatureDisabled(t *testing.T) {
+	now := time.Now().UTC()
+	prov := &featureDisabledCachedProvider{
+		mockProvider: mockProvider{
+			items: []RecordingItem{
+				{
+					ID:              "1794211717",
+					FileName:        "rec_1.h264",
+					StartTime:       now.Add(-10 * time.Minute),
+					EndTime:         now.Add(-9 * time.Minute),
+					DurationSeconds: 60,
+					EventType:       "motion",
+				},
+			},
+		},
+	}
+
+	var published []RecordingItem
+	syncer := NewRecordingSyncer(
+		func() RecordingProvider { return prov },
+		func(item RecordingItem) { published = append(published, item) },
+		100*time.Millisecond,
+	)
+
+	ctx := context.Background()
+
+	// Initial sync: falls through to ListRecordings and publishes the initial recording
+	syncer.syncOnce(ctx, true)
+	assert.Equal(t, 1, prov.syncLatestCalls, "SyncLatest should be attempted")
+	assert.Equal(t, 1, prov.listCalls, "ListRecordings must be called as fallback when video caching is disabled")
+	require.Len(t, published, 1)
+	assert.Equal(t, "1794211717", published[0].ID)
+
+	// Second poll with same recording: no duplicate publish
+	syncer.syncOnce(ctx, false)
+	assert.Len(t, published, 1, "No duplicate publication when no new recording appeared")
+
+	// Third poll with new motion recording: published!
+	prov.items = []RecordingItem{
+		{
+			ID:              "1794212320",
+			FileName:        "rec_2.h264",
+			StartTime:       now.Add(-2 * time.Minute),
+			EndTime:         now.Add(-1 * time.Minute),
+			DurationSeconds: 60,
+			EventType:       "motion",
+		},
+		{
+			ID:              "1794211717",
+			FileName:        "rec_1.h264",
+			StartTime:       now.Add(-10 * time.Minute),
+			EndTime:         now.Add(-9 * time.Minute),
+			DurationSeconds: 60,
+			EventType:       "motion",
+		},
+	}
+
+	syncer.syncOnce(ctx, false)
+	require.Len(t, published, 2, "New recording must be published when detected")
+	assert.Equal(t, "1794212320", published[1].ID)
 }

@@ -2,6 +2,23 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.5.2-beta.4
+
+### 🛠️ Bugfixes & Resilienz: SD-Karten Recording-Metadaten & L 620 Sync (Fixes #70)
+
+- **Entkopplung von Metadaten-Meldung und lokalem Video-Download (`pkg/storage/syncer.go`)**:
+  - Aufnahmen auf der SD-Karte werden nun auch dann zuverlässig an Home Assistant (`sensor.recording_latest` & `event.recording`) gemeldet, wenn das lokale Video-Caching für ein Modell deaktiviert ist oder nicht unterstützt wird (#70).
+  - Erkennt `ErrFeatureDisabled` automatisch und schaltet nahtlos auf die direkte Kamera-Metadatenabfrage um.
+- **Xiongmai Sofia (Steinel L 620 CAM) SD-Karten Stream-Harmonisierung (`pkg/xiongmai/sdcard.go`)**:
+  - `StreamVideo` liefert nun standardkonform `storage.ErrFeatureDisabled` statt eines unvollständigen Stubs mit 0 geschriebenen Bytes, wodurch fehlerhafte `.failed`-Marker und `received 0 bytes of video data` Warnungen vermieden werden.
+  - Dynamische Passwort-Auflösung via `GetEffectivePassword()`, falls kein separates Passwort in der Konfiguration hinterlegt ist.
+- **Cache-Indexierung & Bereinigung (`pkg/storage/cache.go` & `cached_provider.go`)**:
+  - `Count()`, `List()`, `Latest()` und Zeitstempel-Abfragen zählen `.failed`-Dateien nicht mehr als gecachte Videos und verhindern leere Dummy-Einträge.
+  - Bereinigt beim Start automatisch verwaiste `.failed`-Dateien, die durch frühere 0-Byte-Versuche entstanden sind.
+  - Bei `ErrFeatureDisabled` bricht das Pre-Loading sofort ressourcenschonend ab, ohne die SD-Karte oder den Festplattenspeicher zu belasten.
+- **REST-API**:
+  - Gibt bei nicht unterstütztem Direkt-Download HTTP 501 `NotImplemented` zurück.
+
 ## 1.5.2-beta.3
 
 ### 🛠️ Bugfixes & Resilienz: MQTT-Bewegungssensor, SD-Karten-Initialstatus & L 620 Alarm-Ingest (Fixes #70)

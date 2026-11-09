@@ -250,6 +250,10 @@ func (s *Server) handleAPISDCardItem(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "SD card busy", http.StatusTooManyRequests)
 				return
 			}
+			if errors.Is(err, storage.ErrFeatureDisabled) {
+				http.Error(w, "Video download is not supported for this camera model; playback is available via RTSP", http.StatusNotImplemented)
+				return
+			}
 			if !errors.Is(err, storage.ErrTransferAborted) {
 				logger.Warn("SDCard", "Video streaming error: %v", err)
 			}

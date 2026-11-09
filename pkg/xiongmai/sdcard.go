@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"time"
 
 	"github.com/Afrouper/steinel-cam-bridge/pkg/logger"
@@ -36,6 +35,16 @@ func NewSDCardManager(client *Client, cameraIP, user, password string) *SDCardMa
 		cameraUser: user,
 		cameraPwd:  password,
 	}
+}
+
+func (m *SDCardManager) getPassword() string {
+	if m.cameraPwd != "" {
+		return m.cameraPwd
+	}
+	if m.client != nil {
+		return m.client.GetEffectivePassword()
+	}
+	return ""
 }
 
 // ListRecordings implements storage.RecordingProvider
@@ -152,24 +161,17 @@ func (m *SDCardManager) StreamThumbnail(ctx context.Context, id string, w io.Wri
 
 // StreamVideo implements storage.RecordingProvider
 func (m *SDCardManager) StreamVideo(ctx context.Context, id string, w io.Writer, onStart func(name string, size int64)) error {
+	// For Sofia cameras without direct MP4 chunk streaming protocol over NetIP,
+	// raw video downloading to bridge disk is not supported.
+	// Video replay is served directly over RTSP playback on port 554.
 	rec, err := m.GetRecording(ctx, id)
 	if err != nil {
 		return err
 	}
 
-	if onStart != nil {
-		onStart(rec.FileName, rec.FileSizeBytes)
-	}
-
-	// For Xiongmai RTSP playback:
-	// rtsp://admin:pwd@cameraIP:554/playback?channel=1&starttime=...
 	playbackURL := fmt.Sprintf("rtsp://%s:%d/user=%s_password=%s_channel=1_stream=0.sdp?playback&start=%s",
-		m.cameraIP, RTSPPort, m.cameraUser, m.cameraPwd, rec.StartTime.Format("20060102150405"))
+		m.cameraIP, RTSPPort, m.cameraUser, m.getPassword(), rec.StartTime.Format("20060102150405"))
+	logger.Debug("Xiongmai SDCard", "RTSP playback URL for recording ID %s: %s", id, SanitizeRTSPURL(playbackURL))
 
-	logger.Info("Xiongmai SDCard", "Replay requested for recording ID %s (%s)", id, SanitizeRTSPURL(playbackURL))
-	if flusher, ok := w.(http.Flusher); ok {
-		flusher.Flush()
-	}
-
-	return nil
+	return storage.ErrFeatureDisabled
 }
