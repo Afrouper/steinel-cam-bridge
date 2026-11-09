@@ -93,6 +93,14 @@ func (c *RecordingCache) LoadExisting() error {
 		// Index permanently failed markers so they are skipped and pruned via FIFO
 		if !entry.IsDir() && strings.HasSuffix(name, ".failed") {
 			id := strings.TrimSuffix(name, ".failed")
+			failedPath := filepath.Join(c.dir, name)
+			if content, err := os.ReadFile(failedPath); err == nil {
+				sContent := string(content)
+				if strings.Contains(sContent, "received 0 bytes") || strings.Contains(sContent, "feature disabled") {
+					_ = os.Remove(failedPath)
+					continue
+				}
+			}
 			c.failedIDs[id] = struct{}{}
 			c.sortedIDs = append(c.sortedIDs, id)
 			continue
@@ -452,7 +460,10 @@ func (c *RecordingCache) List(start, end time.Time, page, limit int) *RecordingL
 
 	var matched []RecordingItem
 	for _, id := range c.sortedIDs {
-		item := c.items[id]
+		item, ok := c.items[id]
+		if !ok {
+			continue
+		}
 
 		if !start.IsZero() && item.EndTime.Before(start) {
 			continue
@@ -494,11 +505,11 @@ func (c *RecordingCache) List(start, end time.Time, page, limit int) *RecordingL
 	}
 }
 
-// Count returns the number of currently cached recordings.
+// Count returns the number of currently cached recordings (excluding failed markers).
 func (c *RecordingCache) Count() int {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return len(c.sortedIDs)
+	return len(c.items)
 }
 
 // MaxCount returns the configured capacity of the cache.
@@ -510,33 +521,36 @@ func (c *RecordingCache) MaxCount() int {
 func (c *RecordingCache) Latest() (*RecordingItem, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	if len(c.sortedIDs) == 0 {
-		return nil, false
+	for _, id := range c.sortedIDs {
+		if item, ok := c.items[id]; ok {
+			return &item, true
+		}
 	}
-	item := c.items[c.sortedIDs[0]]
-	return &item, true
+	return nil, false
 }
 
 // OldestStartTime returns the StartTime of the oldest cached recording.
 func (c *RecordingCache) OldestStartTime() time.Time {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	if len(c.sortedIDs) == 0 {
-		return time.Time{}
+	for i := len(c.sortedIDs) - 1; i >= 0; i-- {
+		if item, ok := c.items[c.sortedIDs[i]]; ok {
+			return item.StartTime
+		}
 	}
-	oldestID := c.sortedIDs[len(c.sortedIDs)-1]
-	return c.items[oldestID].StartTime
+	return time.Time{}
 }
 
 // NewestStartTime returns the StartTime of the newest cached recording.
 func (c *RecordingCache) NewestStartTime() time.Time {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	if len(c.sortedIDs) == 0 {
-		return time.Time{}
+	for _, id := range c.sortedIDs {
+		if item, ok := c.items[id]; ok {
+			return item.StartTime
+		}
 	}
-	newestID := c.sortedIDs[0]
-	return c.items[newestID].StartTime
+	return time.Time{}
 }
 
 // Prune manually triggers housekeeping to adhere to maxCount.

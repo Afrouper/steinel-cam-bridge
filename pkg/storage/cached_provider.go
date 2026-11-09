@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -206,7 +207,7 @@ func (p *CachedRecordingProvider) GetCachedVideoPath(id string) (string, bool) {
 // Strict concurrency lock ensures that only one sync/download is in progress at a time.
 func (p *CachedRecordingProvider) SyncLatest(ctx context.Context) ([]RecordingItem, error) {
 	if p.cache == nil || p.cache.MaxCount() <= 0 {
-		return nil, nil
+		return nil, ErrFeatureDisabled
 	}
 
 	if !p.syncMu.TryLock() {
@@ -279,6 +280,10 @@ func (p *CachedRecordingProvider) SyncLatest(ctx context.Context) ([]RecordingIt
 		dCancel()
 
 		if addErr != nil {
+			if errors.Is(streamErr, ErrFeatureDisabled) || errors.Is(addErr, ErrFeatureDisabled) {
+				logger.Debug("CacheProvider", "Video downloading is not supported by camera for recording %s; caching disabled", item.ID)
+				return nil, ErrFeatureDisabled
+			}
 			logger.Warn("CacheProvider", "⚠️ Failed to cache recording %s: %v (streamErr: %v)", item.ID, addErr, streamErr)
 			if permanentlyFailed := p.cache.RecordFailure(item.ID, addErr); permanentlyFailed {
 				logger.Warn("CacheProvider", "🛑 Marking recording %s as permanently failed (.failed marker written to disk). Will not retry.", item.ID)
