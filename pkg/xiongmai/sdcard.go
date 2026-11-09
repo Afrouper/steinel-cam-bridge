@@ -161,17 +161,11 @@ func (m *SDCardManager) StreamThumbnail(ctx context.Context, id string, w io.Wri
 
 // StreamVideo implements storage.RecordingProvider
 func (m *SDCardManager) StreamVideo(ctx context.Context, id string, w io.Writer, onStart func(name string, size int64)) error {
-	// For Sofia cameras without direct MP4 chunk streaming protocol over NetIP,
-	// raw video downloading to bridge disk is not supported.
-	// Video replay is served directly over RTSP playback on port 554.
 	rec, err := m.GetRecording(ctx, id)
 	if err != nil {
 		return err
 	}
 
-	playbackURL := fmt.Sprintf("rtsp://%s:%d/user=%s_password=%s_channel=1_stream=0.sdp?playback&start=%s",
-		m.cameraIP, RTSPPort, m.cameraUser, m.getPassword(), rec.StartTime.Format("20060102150405"))
-	logger.Debug("Xiongmai SDCard", "RTSP playback URL for recording ID %s: %s", id, SanitizeRTSPURL(playbackURL))
-
-	return storage.ErrFeatureDisabled
+	downloader := NewSofiaDownloader(m.cameraIP, DefaultPort, m.client, m.cameraUser, m.getPassword())
+	return downloader.Download(ctx, rec, w, onStart)
 }

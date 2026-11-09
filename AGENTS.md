@@ -132,7 +132,8 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
   - `sofia_stream.go`: Natives H.264 Video-Streaming über das Sofia/NetIP-Protokoll (MsgID 1410/1412) mit On-Demand-Aktivierung bei aktiven RTSP-Zuschauern, Frame-Demuxing (I-Frames `00 00 01 FC`, P-Frames `00 00 01 FD`, Chunks) und RFC 6184 konformer RTP-Paketierung.
   - `rtsp_ingest.go`: Nimmt den nativen H.264/AAC-RTSP-Stream der L 620 entgegen mit kanonischer sauberer Pfad-Reihenfolge (ohne `?real_stream` an Position 1 gegen Kamera-Pufferüberläufe), Port-554-Unreachable-Short-Circuit & exponentiellem Backoff, SDP-Track-Prüfung, Zero-Packet Initial-Watchdog (5s) und Silence-Watchdog (15s).
   - `mcu.go`: ASCII-Frame Parser (`B...U`) & Command Builder für L 620 Licht-, Dämmerungs- und Sensorkommandos via OPTrans RS232.
-  - `sdcard.go`: Xiongmai SD-Karten Dateisystemabfrage (`OPFileQuery`) und Download mit konsistenter Thumbnail-Behandlung.
+  - `sofia_download.go`: Autarker High-Speed Download von SD-Karten-Aufnahmen über das Sofia Playback-Protokoll (`OPPlayBack` 1424/1420), Frame-Demuxing in Annex-B H.264 und verlustfreies MP4-Muxing.
+  - `sdcard.go`: Xiongmai SD-Karten Dateisystemabfrage (`OPFileQuery`) und Integration in den gemeinsamen `RecordingProvider`.
   - `talk.go`: Rückkanal-Audiokommunikation über das Xiongmai Talk-Protokoll (MsgID 1434/1432, nativer G.711 A-law / PCMA Kamera-DAC) mit dynamischer Audio-Aushandlung (`MsgTalkClaimV2Req`), automatischer PCMU $\leftrightarrow$ PCMA Transkodierung und thread-sicherem Audio-Framing.
 
 - **`pkg/storage/`**:

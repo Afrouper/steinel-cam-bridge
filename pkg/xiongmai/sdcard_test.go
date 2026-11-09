@@ -79,11 +79,12 @@ func TestXiongmaiSDCardManager(t *testing.T) {
 	assert.Equal(t, 45, resp.List[0].DurationSeconds)
 	assert.Contains(t, resp.List[0].VideoURL, "/api/sdcard/events/")
 
-	// Test StreamThumbnail unsupported
+	// Test StreamThumbnail unsupported directly
 	err = prov.StreamThumbnail(ctx, resp.List[0].ID, nil)
 	assert.ErrorIs(t, err, storage.ErrFeatureDisabled)
 
-	// Test StreamVideo unsupported for Sofia raw downloading
+	// Test StreamVideo attempts Sofia download (fails gracefully with connection error against mock dummy IP)
 	err = prov.StreamVideo(ctx, resp.List[0].ID, nil, nil)
-	assert.ErrorIs(t, err, storage.ErrFeatureDisabled)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to connect to Sofia download port")
 }

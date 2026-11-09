@@ -254,8 +254,12 @@ Die L 620 CAM speichert Videoaufnahmen als H.264/MP4 Dateien auf der internen Mi
    ```
 2. **SoC-Schutz bei Initial-Query**:
    - Um bei vollen SD-Karten einen CPU-Lockout der Kamera zu verhindern, verwendet die Bridge beim Start ein pragmatisches **4-Stunden-Zeitfenster**.
-3. **Download & Playback**:
-   - Aufnahmen werden über den Sofia Dateitransfer oder HTTP heruntergeladen und lokal in `/data/recordings` gecacht.
+3. **Nativer Sofia Download (`OPPlayBack` 1424 / 1420)**:
+   - Der dedizierte `SofiaDownloader` (`pkg/xiongmai/sofia_download.go`) baut einen isolierten TCP-Socket auf Port 34567 auf.
+   - Beansprucht den Kanal via `OPPlayBack Claim` (MsgID 1424) und startet den High-Speed Transfer mit `DownloadStart` (MsgID 1420).
+   - Liest `MsgPlayData` (1422) Binärpakete, demuxt Xiongmai Header (`00 00 01 FC` I-Frames, `00 00 01 FD` P-Frames) in reines Annex-B H.264 und schließt bei `MsgPlayEOF` (1423) bzw. `DownloadStop` (1420) ab.
+   - Verpackt den H.264-Stream über den integrierten Container-Muxer (`ffmpeg -c:v copy -movflags +faststart`) in ein abspielbares MP4 in `/data/recordings/<cam>/<id>.mp4`.
+   - Der integrierte `FFmpegExtractor` schneidet anschließend automatisch bei Sekunde 5 ein Standbild (`thumbnail.jpg`) heraus und publiziert das Event samt `thumbnail_url` an MQTT / Home Assistant.
    - Der REST-Endpunkt liefert Videos mit vollständiger HTTP 206 Partial-Content (Range Requests) Unterstützung aus.
 
 ---
