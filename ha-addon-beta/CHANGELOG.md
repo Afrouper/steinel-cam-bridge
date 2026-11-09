@@ -2,6 +2,16 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.5.2-beta.6
+
+### 🎬 Features & Verbesserungen
+
+- **Nativer SD-Karten-Download & Standbilder für L 620 CAM / XLED CAM 1 (Fixes #70)**:
+  - Ermöglicht das Herunterladen von Videoaufnahmen der internen MicroSD-Karte direkt über das Sofia-NetIP-Protokoll (Port 34567).
+  - Automatische Erstellung von Standbild-Vorschauen (`thumbnail_url`) und verlustfreies MP4-Streaming für Home Assistant und ONVIF Profile G NVRs.
+- **Zentralisierte Medienverarbeitung**:
+  - Vereinheitlichte Standbild-Extraktion und Video-Muxing für alle Kameramodelle (L 625 CAM SC und L 620 CAM).
+
 ## 1.5.2-beta.5
 
 ### ⏰ Features & Verbesserungen
