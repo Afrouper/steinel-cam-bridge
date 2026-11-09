@@ -2,6 +2,7 @@ package driver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -55,9 +56,10 @@ func (d *L625Driver) setBridge(b *webrtc.Bridge) {
 }
 
 const (
-	reconnectCooldown  = 60 * time.Second
-	baseReconnectDelay = 15 * time.Second
-	maxReconnectDelay  = 240 * time.Second
+	reconnectCooldown    = 60 * time.Second
+	softRecoveryCooldown = 3 * time.Second
+	baseReconnectDelay   = 15 * time.Second
+	maxReconnectDelay    = 240 * time.Second
 )
 
 // CalculateBackoff returns the exponential backoff duration based on consecutive failure count.
@@ -319,11 +321,19 @@ connectionLoop:
 		logger.Info("Bridge", "🛰️ [ONVIF] Endpoints active at http://0.0.0.0:%d/onvif/device_service", d.cfg.ONVIFPort)
 
 		bridge := webrtc.NewBridge(client, stream, d.rtspServer, d.eventBus, d.cfg.Resolution, 1*time.Second)
+		if d.cfg != nil {
+			if d.cfg.SDCardRecoveryTimeoutMinutes > 0 {
+				bridge.SetRecoveryTimeout(time.Duration(d.cfg.SDCardRecoveryTimeoutMinutes) * time.Minute)
+			} else if d.cfg.SDCardRecoveryTimeoutMinutes == 0 {
+				bridge.SetRecoveryTimeout(0)
+			}
+		}
 		d.setBridge(bridge)
 
 		sessionStart := time.Now()
 		_ = bridge.Run(ctx)
 
+		reason := bridge.ResetReason()
 		d.setBridge(nil)
 		stream.Close()
 		logger.Info("Supervisor", "🧹 Closing camera session and releasing connection...")
@@ -335,15 +345,34 @@ connectionLoop:
 			} else {
 				consecutiveFailures++
 			}
-			logger.Info("Supervisor", "⏳ Stream session disconnected / Watchdog reset. Waiting %v cooldown before reconnecting to allow camera reboot...", reconnectCooldown)
+
+			cooldown := reconnectCooldown
+			if reason == webrtc.ResetReasonControlPlaneRecovery || reason == webrtc.ResetReasonManual {
+				cooldown = softRecoveryCooldown
+				logger.Info("Supervisor", "🔄 Soft-recovery session reset complete (%s). Reconnecting in %v (skipping full hardware reboot cooldown)...", reason, cooldown)
+			} else {
+				logger.Info("Supervisor", "⏳ Stream session disconnected / Watchdog reset. Waiting %v cooldown before reconnecting to allow camera reboot...", cooldown)
+			}
+
 			select {
 			case <-ctx.Done():
 				break connectionLoop
-			case <-time.After(reconnectCooldown):
+			case <-time.After(cooldown):
 			}
 		}
 	}
 	return nil
+}
+
+// ReconnectSession triggers an immediate soft reconnect of the camera session.
+func (d *L625Driver) ReconnectSession() error {
+	b := d.getBridge()
+	if b != nil {
+		logger.Info("Supervisor", "🔄 Manual session reconnect requested via MQTT / API")
+		b.TriggerManualReset()
+		return nil
+	}
+	return errors.New("no active camera bridge session")
 }
 
 // Close disconnects the active bridge.

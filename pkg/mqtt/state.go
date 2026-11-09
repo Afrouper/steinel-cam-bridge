@@ -106,7 +106,7 @@ func (c *Client) publishDeviceMotion(dev *CameraDevice, isMotion bool) {
 	if isMotion {
 		state = "ON"
 	}
-	cl.Publish(fmt.Sprintf("%s/motion/state", dev.baseTopic), 1, false, state)
+	cl.Publish(fmt.Sprintf("%s/motion/state", dev.baseTopic), 1, true, state)
 }
 
 // publishStatus publishes telemetry and device status to Home Assistant for the primary device.

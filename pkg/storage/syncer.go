@@ -63,12 +63,31 @@ func (s *RecordingSyncer) Start(ctx context.Context) {
 		logger.Info("Recording Sync", "ℹ️ Periodic background sync is disabled (Interval <= 0). Syncing will only occur on startup and motion triggers.")
 	}
 
-	// Step 1: Initial Sync / Startup Publication after 3 seconds startup delay
-	select {
-	case <-ctx.Done():
-		return
-	case <-time.After(3 * time.Second):
-		s.syncOnce(ctx, true)
+	// Step 1: Initial Sync / Startup Publication
+	// Retry every 3s (up to 45s) until a provider is ready and has performed initial sync
+	initialDeadline := time.After(45 * time.Second)
+	initialTicker := time.NewTicker(3 * time.Second)
+	defer initialTicker.Stop()
+
+initialLoop:
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-initialDeadline:
+			logger.Debug("Recording Sync", "Initial sync window completed, continuing with background sync")
+			break initialLoop
+		case <-initialTicker.C:
+			if s.providerFunc != nil && s.providerFunc() != nil {
+				s.syncOnce(ctx, true)
+				s.mu.Lock()
+				seen := (s.lastSeenID != "")
+				s.mu.Unlock()
+				if seen {
+					break initialLoop
+				}
+			}
+		}
 	}
 
 	var tickerChan <-chan time.Time
@@ -159,6 +178,30 @@ func (s *RecordingSyncer) syncOnce(ctx context.Context, isInitial bool) {
 
 			if s.onNewRecording != nil {
 				s.onNewRecording(latest)
+			}
+		} else if isInitial {
+			// Cache didn't download new items (already cached), but on initial sync we restore
+			// and publish the latest item currently in cache to restore MQTT sensor state in Home Assistant.
+			s.mu.Lock()
+			needInitialPublish := (s.lastSeenID == "")
+			s.mu.Unlock()
+
+			if needInitialPublish {
+				if cachedResp, err := provider.ListRecordings(ctx, time.Time{}, time.Time{}, 0, 1, ""); err == nil && cachedResp != nil && len(cachedResp.List) > 0 {
+					latest := cachedResp.List[0]
+					if latest.ID != "" && !latest.StartTime.IsZero() {
+						s.mu.Lock()
+						s.lastSeenID = latest.ID
+						s.lastSeenTime = latest.StartTime
+						s.mu.Unlock()
+
+						logger.Info("Recording Sync", "📌 Restored latest recording from cache: %s (%s, %.1f MB, Thumb: %t)",
+							latest.ID, latest.FileName, float64(latest.FileSizeBytes)/(1024*1024), latest.ThumbnailURL != "")
+						if s.onNewRecording != nil {
+							s.onNewRecording(latest)
+						}
+					}
+				}
 			}
 		}
 		// If cacheSyncer is present and handled, never perform a redundant second query to upstream camera

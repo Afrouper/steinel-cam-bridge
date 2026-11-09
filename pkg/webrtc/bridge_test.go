@@ -123,3 +123,109 @@ func TestICEStateManager_ImmediateFail(t *testing.T) {
 		t.Fatal("expected cancelFunc to be called immediately on Failed state")
 	}
 }
+
+func TestResetReasonString(t *testing.T) {
+	if ResetReasonVideoStalled.String() != "video_stalled" {
+		t.Errorf("expected 'video_stalled', got %s", ResetReasonVideoStalled.String())
+	}
+	if ResetReasonControlPlaneRecovery.String() != "control_plane_recovery" {
+		t.Errorf("expected 'control_plane_recovery', got %s", ResetReasonControlPlaneRecovery.String())
+	}
+	if ResetReasonManual.String() != "manual_reconnect" {
+		t.Errorf("expected 'manual_reconnect', got %s", ResetReasonManual.String())
+	}
+	if ResetReasonNone.String() != "unknown" {
+		t.Errorf("expected 'unknown', got %s", ResetReasonNone.String())
+	}
+}
+
+func TestBridgeManualReset(t *testing.T) {
+	b := &Bridge{}
+	if b.ResetReason() != ResetReasonNone {
+		t.Fatalf("expected initial ResetReasonNone, got %v", b.ResetReason())
+	}
+
+	cancelled := false
+	b.sessCancel = func() {
+		cancelled = true
+	}
+
+	b.TriggerManualReset()
+
+	if !cancelled {
+		t.Fatal("expected sessCancel to be called on TriggerManualReset")
+	}
+	if b.ResetReason() != ResetReasonManual {
+		t.Fatalf("expected ResetReasonManual, got %v", b.ResetReason())
+	}
+}
+
+func TestBridgeControlPlaneEscalationHandler(t *testing.T) {
+	b := &Bridge{
+		recoveryTimeout: 10 * time.Minute,
+	}
+	sdm := NewSDCardManager(func(_ string, _ map[string]interface{}) error { return nil })
+	b.sdcardManager = sdm
+
+	var cancelled bool
+	sessCancel := func() { cancelled = true }
+
+	handler := func(stallDuration time.Duration, timeouts int) bool {
+		lastNano := b.lastVideoPacket.Load()
+		videoHealthy := lastNano > 0 && time.Since(time.Unix(0, lastNano)) < 5*time.Second
+
+		if !videoHealthy {
+			b.resetReason.Store(uint32(ResetReasonVideoStalled))
+			sessCancel()
+			return true
+		}
+
+		if !b.sdcardManager.HasEverSucceeded() {
+			return false
+		}
+
+		b.mu.Lock()
+		recTimeout := b.recoveryTimeout
+		b.mu.Unlock()
+
+		if recTimeout > 0 && stallDuration >= recTimeout {
+			b.resetReason.Store(uint32(ResetReasonControlPlaneRecovery))
+			sessCancel()
+			return true
+		}
+
+		return false
+	}
+
+	// 1. Video stalled -> immediate reset
+	cancelled = false
+	b.lastVideoPacket.Store(0)
+	res := handler(1*time.Minute, 3)
+	if !res || !cancelled || b.ResetReason() != ResetReasonVideoStalled {
+		t.Fatalf("expected video stalled reset, got res=%v, cancelled=%v, reason=%v", res, cancelled, b.ResetReason())
+	}
+
+	// 2. Video healthy, but HasEverSucceeded is false (no SD card) -> preserve session, NO reset
+	cancelled = false
+	b.resetReason.Store(uint32(ResetReasonNone))
+	b.lastVideoPacket.Store(time.Now().UnixNano())
+	res = handler(15*time.Minute, 5)
+	if res || cancelled || b.ResetReason() != ResetReasonNone {
+		t.Fatalf("expected preserved session when HasEverSucceeded is false, got res=%v, cancelled=%v", res, cancelled)
+	}
+
+	// 3. Video healthy, HasEverSucceeded is true, but stallDuration < recoveryTimeout -> preserve session
+	sdm.markSuccess()
+	cancelled = false
+	res = handler(5*time.Minute, 5)
+	if res || cancelled || b.ResetReason() != ResetReasonNone {
+		t.Fatalf("expected preserved session when stallDuration < recoveryTimeout, got res=%v, cancelled=%v", res, cancelled)
+	}
+
+	// 4. Video healthy, HasEverSucceeded is true, stallDuration >= recoveryTimeout -> soft recovery reset
+	cancelled = false
+	res = handler(11*time.Minute, 12)
+	if !res || !cancelled || b.ResetReason() != ResetReasonControlPlaneRecovery {
+		t.Fatalf("expected control plane recovery reset, got res=%v, cancelled=%v, reason=%v", res, cancelled, b.ResetReason())
+	}
+}

@@ -22,23 +22,25 @@ const (
 
 // Driver implements the Steinel Camera Driver for Generation 1 devices (Steinel L 620 CAM / XLED CAM 1).
 type Driver struct {
-	cameraIP       string
-	user           string
-	password       string
-	resolution     string
-	rtspServer     rtsp.MediaStream
-	eventBus       *events.Bus
-	client         *Client
-	sofiaStream    *SofiaStream
-	ingest         *RTSPIngest
-	talk           *TalkClient
-	sdcard         *SDCardManager
-	ctx            context.Context
-	mu             sync.Mutex
-	streamMu       sync.Mutex
-	lastClientSeen time.Time
-	running        bool
-	closeChan      chan struct{}
+	cameraIP         string
+	user             string
+	password         string
+	resolution       string
+	rtspServer       rtsp.MediaStream
+	eventBus         *events.Bus
+	client           *Client
+	sofiaStream      *SofiaStream
+	ingest           *RTSPIngest
+	talk             *TalkClient
+	sdcard           *SDCardManager
+	ctx              context.Context
+	motionResetTimer *time.Timer
+	motionMu         sync.Mutex
+	mu               sync.Mutex
+	streamMu         sync.Mutex
+	lastClientSeen   time.Time
+	running          bool
+	closeChan        chan struct{}
 }
 
 // NewDriver creates a new driver instance for a Steinel L 620 CAM.
@@ -102,6 +104,9 @@ func (d *Driver) Start(ctx context.Context) error {
 	d.client.SetOnTelemetry(func(mcuCfg *MCUConfig) {
 		d.applyMCUConfig(mcuCfg)
 	})
+
+	// Register live alarm/motion push handler (MsgID 1500)
+	d.client.SetOnAlarm(d.handleAlarmEvent)
 
 	// Step 1: Connect & Login on Sofia port 34567
 	var sofiaAvailable bool
@@ -338,7 +343,20 @@ func (d *Driver) GetMQTTCallbacks() mqtt.Callbacks {
 		SetLuxThreshold: func(lux int) error {
 			return d.SetTwilight(lux)
 		},
+		ReconnectSession: d.ReconnectSession,
 	}
+}
+
+// ReconnectSession triggers an immediate reconnect of the Xiongmai client and streams.
+func (d *Driver) ReconnectSession() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.client != nil {
+		logger.Info("Xiongmai Driver", "🔄 Manual session reconnect requested via MQTT / API")
+		_ = d.client.Close()
+		return nil
+	}
+	return errors.New("no active camera connection")
 }
 
 // SetLamp turns the main light on or off.
@@ -518,6 +536,36 @@ func (d *Driver) SetResolution(res string) error {
 	return nil
 }
 
+func (d *Driver) handleAlarmEvent(event string, isStart bool) {
+	logger.Info("Xiongmai Driver", "🚨 Alarm/Motion event received from camera: %s (isStart: %v)", event, isStart)
+	if isStart {
+		if d.eventBus != nil {
+			d.eventBus.SetMotion(true)
+		}
+		d.motionMu.Lock()
+		if d.motionResetTimer != nil {
+			d.motionResetTimer.Stop()
+		}
+		d.motionResetTimer = time.AfterFunc(10*time.Second, func() {
+			logger.Info("Xiongmai Driver", "⚪ Motion cleared (10s timeout)")
+			if d.eventBus != nil {
+				d.eventBus.SetMotion(false)
+			}
+		})
+		d.motionMu.Unlock()
+	} else {
+		d.motionMu.Lock()
+		if d.motionResetTimer != nil {
+			d.motionResetTimer.Stop()
+			d.motionResetTimer = nil
+		}
+		d.motionMu.Unlock()
+		if d.eventBus != nil {
+			d.eventBus.SetMotion(false)
+		}
+	}
+}
+
 // Close shuts down all driver connections and streams.
 func (d *Driver) Close() error {
 	d.mu.Lock()
@@ -528,6 +576,13 @@ func (d *Driver) Close() error {
 	}
 	d.running = false
 	close(d.closeChan)
+
+	d.motionMu.Lock()
+	if d.motionResetTimer != nil {
+		d.motionResetTimer.Stop()
+		d.motionResetTimer = nil
+	}
+	d.motionMu.Unlock()
 
 	if d.sofiaStream != nil {
 		_ = d.sofiaStream.Stop()

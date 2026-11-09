@@ -48,6 +48,10 @@ type activeTransfer struct {
 	lastData  time.Time
 }
 
+// UnresponsiveHandler is called when get_event_list queries experience consecutive timeouts.
+// Returning true indicates that the session was reset and the timeout tracking should be reset.
+type UnresponsiveHandler func(stallDuration time.Duration, consecutiveTimeouts int) bool
+
 // SDCardManager manages querying recordings, snapshots, and streaming video files from the SD card
 type SDCardManager struct {
 	sendJSONCmd func(cmd string, info map[string]interface{}) error
@@ -62,7 +66,9 @@ type SDCardManager struct {
 
 	// Control-plane health tracking
 	consecutiveTimeouts int
-	onUnresponsive      func()
+	firstTimeoutAt      time.Time
+	hasEverSucceeded    bool
+	onUnresponsive      UnresponsiveHandler
 }
 
 // NewSDCardManager creates a new SD-Card manager instance
@@ -76,10 +82,17 @@ func NewSDCardManager(sendJSONCmd func(cmd string, info map[string]interface{}) 
 func (m *SDCardManager) SetDebug(_ bool) {}
 
 // SetUnresponsiveHandler registers a callback invoked when consecutive get_event_list queries time out.
-func (m *SDCardManager) SetUnresponsiveHandler(handler func()) {
+func (m *SDCardManager) SetUnresponsiveHandler(handler UnresponsiveHandler) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.onUnresponsive = handler
+}
+
+// HasEverSucceeded reports whether at least one get_event_list query succeeded since initialization.
+func (m *SDCardManager) HasEverSucceeded() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.hasEverSucceeded
 }
 
 // GetEventList queries the list of recordings from the camera's SD card within a given time range
@@ -142,7 +155,7 @@ func (m *SDCardManager) GetEventList(ctx context.Context, startTime, endTime int
 		m.recordTimeout()
 		return nil, ErrSDCardTimeout
 	case resp := <-respChan:
-		m.resetTimeouts()
+		m.markSuccess()
 		if resp == nil {
 			return &EventListResponse{Count: 0, Total: 0, List: []EventItem{}}, nil
 		}
@@ -155,19 +168,33 @@ func (m *SDCardManager) GetEventList(ctx context.Context, startTime, endTime int
 func (m *SDCardManager) recordTimeout() {
 	m.mu.Lock()
 	m.consecutiveTimeouts++
+	if m.firstTimeoutAt.IsZero() {
+		m.firstTimeoutAt = time.Now()
+	}
 	timeouts := m.consecutiveTimeouts
+	stallDuration := time.Since(m.firstTimeoutAt)
 	handler := m.onUnresponsive
 	m.mu.Unlock()
 
 	if timeouts >= 3 && handler != nil {
-		logger.Error("SDCard", "🚨 Camera control plane unresponsive (%d consecutive get_event_list timeouts). Requesting session reset...", timeouts)
-		handler()
+		if handler(stallDuration, timeouts) {
+			m.ResetTimeouts()
+		}
 	}
+}
+
+func (m *SDCardManager) markSuccess() {
+	m.mu.Lock()
+	m.consecutiveTimeouts = 0
+	m.firstTimeoutAt = time.Time{}
+	m.hasEverSucceeded = true
+	m.mu.Unlock()
 }
 
 func (m *SDCardManager) resetTimeouts() {
 	m.mu.Lock()
 	m.consecutiveTimeouts = 0
+	m.firstTimeoutAt = time.Time{}
 	m.mu.Unlock()
 }
 

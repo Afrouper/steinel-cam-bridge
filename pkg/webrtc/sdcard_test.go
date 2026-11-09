@@ -334,10 +334,13 @@ func TestSDCardConsecutiveTimeoutTriggersReset(t *testing.T) {
 
 	var mu sync.Mutex
 	resetCount := 0
-	sdm.SetUnresponsiveHandler(func() {
+	var receivedTimeouts int
+	sdm.SetUnresponsiveHandler(func(stallDuration time.Duration, timeouts int) bool {
 		mu.Lock()
 		resetCount++
+		receivedTimeouts = timeouts
 		mu.Unlock()
+		return true
 	})
 
 	// 1st timeout
@@ -362,6 +365,7 @@ func TestSDCardConsecutiveTimeoutTriggersReset(t *testing.T) {
 	_, _ = sdm.GetEventList(ctx3, 0, 0, 0, 10)
 	mu.Lock()
 	assert.Equal(t, 1, resetCount)
+	assert.Equal(t, 3, receivedTimeouts)
 	mu.Unlock()
 }
 
@@ -370,12 +374,15 @@ func TestSDCardResetCounterOnSuccess(t *testing.T) {
 		return nil
 	})
 
+	assert.False(t, sdm.HasEverSucceeded(), "should be false before first success")
+
 	var mu sync.Mutex
 	resetCount := 0
-	sdm.SetUnresponsiveHandler(func() {
+	sdm.SetUnresponsiveHandler(func(stallDuration time.Duration, timeouts int) bool {
 		mu.Lock()
 		resetCount++
 		mu.Unlock()
+		return true
 	})
 
 	// 2 timeouts
@@ -401,6 +408,7 @@ func TestSDCardResetCounterOnSuccess(t *testing.T) {
 	}()
 	_, err := sdm.GetEventList(ctxSuccess, 0, 0, 0, 10)
 	require.NoError(t, err)
+	assert.True(t, sdm.HasEverSucceeded(), "should be true after successful query")
 
 	// Another single timeout: count is now 1, NOT 3 -> should NOT trigger reset
 	ctxSingle, cancelSingle := context.WithTimeout(context.Background(), 10*time.Millisecond)

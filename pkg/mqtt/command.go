@@ -148,5 +148,14 @@ func (c *Client) handleCommand(_ paho.Client, msg paho.Message) {
 				c.publishOptimistic(baseTopic, "resolution/state", payload)
 			}
 		}
+
+	case strings.HasSuffix(topic, "/reconnect/set"), strings.HasSuffix(topic, "/reconnect"):
+		if cb.ReconnectSession != nil {
+			if err := cb.ReconnectSession(); err != nil {
+				logger.Warn("MQTT", "⚠️ Failed to reconnect camera session: %v", err)
+			} else {
+				logger.Info("MQTT", "✅ Camera session reconnect triggered successfully")
+			}
+		}
 	}
 }
