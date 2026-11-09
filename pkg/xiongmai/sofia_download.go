@@ -82,7 +82,7 @@ func (d *SofiaDownloader) Download(ctx context.Context, rec *storage.RecordingIt
 	if err != nil {
 		return fmt.Errorf("failed to connect to Sofia download port %s: %w", targetAddr, err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	// Step 1: Send OPPlayBack Claim (MsgID 1424)
 	startTimeStr := rec.StartTime.Local().Format("2006-01-02 15:04:05")
@@ -152,59 +152,47 @@ func (d *SofiaDownloader) Download(ctx context.Context, rec *storage.RecordingIt
 	}
 
 	// Step 2: Send OPPlayBack DownloadStart (MsgID 1420)
-	startActions := []string{"DownloadStart", "Start"}
-	var startSucceeded bool
-
-	for _, action := range startActions {
-		startReq := OPPlayBackReq{
-			Name:      "OPPlayBack",
-			SessionID: sessionHex,
-			OPPlayBack: OPPlayBackInfo{
-				Action: action,
-				Parameter: &OPPlayBackParam{
-					PlayMode:   "ByName",
-					FileName:   rec.FileName,
-					StreamType: 0,
-					Value:      0,
-					TransMode:  "TCP",
-				},
-				StartTime: startTimeStr,
-				EndTime:   endTimeStr,
+	startReq := OPPlayBackReq{
+		Name:      "OPPlayBack",
+		SessionID: sessionHex,
+		OPPlayBack: OPPlayBackInfo{
+			Action: "DownloadStart",
+			Parameter: &OPPlayBackParam{
+				PlayMode:   "ByName",
+				FileName:   rec.FileName,
+				StreamType: 0,
+				Value:      0,
+				TransMode:  "TCP",
 			},
-		}
-
-		startPayload, err := json.Marshal(startReq)
-		if err != nil {
-			return fmt.Errorf("failed to marshal OPPlayBack %s: %w", action, err)
-		}
-		startPayload = append(startPayload, 0x00)
-
-		startHdr := Header{
-			Magic:      HeaderMagic,
-			Channel:    0x00,
-			SessionID:  sessionID,
-			Sequence:   29,
-			TotalPkt:   0x00,
-			CurPkt:     0x00,
-			MsgID:      MsgPlayReq, // 1420
-			DataLength: uint32(len(startPayload)),
-		}
-
-		_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
-		if _, err := conn.Write(append(startHdr.Encode(), startPayload...)); err != nil {
-			return fmt.Errorf("failed to send OPPlayBack %s: %w", action, err)
-		}
-
-		startSucceeded = true
-		break
+			StartTime: startTimeStr,
+			EndTime:   endTimeStr,
+		},
 	}
 
-	if !startSucceeded {
-		return errors.New("failed to start OPPlayBack stream")
+	startPayload, err := json.Marshal(startReq)
+	if err != nil {
+		return fmt.Errorf("failed to marshal OPPlayBack DownloadStart: %w", err)
+	}
+	startPayload = append(startPayload, 0x00)
+
+	startHdr := Header{
+		Magic:      HeaderMagic,
+		Channel:    0x00,
+		SessionID:  sessionID,
+		Sequence:   29,
+		TotalPkt:   0x00,
+		CurPkt:     0x00,
+		MsgID:      MsgPlayReq, // 1420
+		DataLength: uint32(len(startPayload)),
+	}
+
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	if _, err := conn.Write(append(startHdr.Encode(), startPayload...)); err != nil {
+		return fmt.Errorf("failed to send OPPlayBack DownloadStart: %w", err)
 	}
 
 	if onStart != nil {
-		onStart(rec.FileName, int64(rec.FileSizeBytes))
+		onStart(rec.FileName, rec.FileSizeBytes)
 	}
 
 	// Create temporary file to buffer demuxed Annex-B H.264 elementary stream
@@ -355,7 +343,7 @@ func (d *SofiaDownloader) convertAndStream(ctx context.Context, h264Path string,
 		if err != nil {
 			return err
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		_, err = io.Copy(w, f)
 		return err
 	}
@@ -366,7 +354,7 @@ func (d *SofiaDownloader) convertAndStream(ctx context.Context, h264Path string,
 	}
 	tmpMP4Path := tmpMP4.Name()
 	_ = tmpMP4.Close()
-	defer os.Remove(tmpMP4Path)
+	defer func() { _ = os.Remove(tmpMP4Path) }()
 
 	// Delegate MP4 remuxing to storage.VideoMuxer
 	if err := d.muxer.MuxH264ToMP4(ctx, h264Path, tmpMP4Path); err != nil {
@@ -376,7 +364,7 @@ func (d *SofiaDownloader) convertAndStream(ctx context.Context, h264Path string,
 		if errRaw != nil {
 			return errRaw
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		_, err = io.Copy(w, f)
 		return err
 	}
@@ -386,7 +374,7 @@ func (d *SofiaDownloader) convertAndStream(ctx context.Context, h264Path string,
 	if err != nil {
 		return fmt.Errorf("failed to open converted MP4 file: %w", err)
 	}
-	defer mp4File.Close()
+	defer func() { _ = mp4File.Close() }()
 
 	written, err := io.Copy(w, mp4File)
 	if err != nil {

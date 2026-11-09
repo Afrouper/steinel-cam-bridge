@@ -45,7 +45,7 @@ func TestSofiaDownloader_ConnectionFailure(t *testing.T) {
 func TestSofiaDownloader_DownloadSuccess(t *testing.T) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 
 	port := l.Addr().(*net.TCPAddr).Port
 
@@ -55,7 +55,7 @@ func TestSofiaDownloader_DownloadSuccess(t *testing.T) {
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 
 		hdrBuf := make([]byte, HeaderLength)
 
