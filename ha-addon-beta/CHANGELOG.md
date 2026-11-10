@@ -2,6 +2,15 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.5.2-beta.7
+
+### 🛠️ Bugfixes & Kompatibilität
+
+- **RTSP-Authentifizierung für Home Assistant & FFmpeg (Fixes #64)**:
+  - Optimierung der RTSP-Challenge-Header für Home Assistant (Generic Camera) und FFmpeg durch ausschließliche Bereitstellung von Digest MD5 (verhindert das Überschreiben von MD5 durch SHA-256 in FFmpeg und löst den `401 Unauthorized`-Fehler).
+- **RTSP-Server Stabilitäts- & Log-Verbesserung (Fixes #70)**:
+  - Unterdrückung von `write queue is full` Log-Meldungen bei langsamen oder stockenden TCP-RTSP-Clients durch dedizierten Error-Handler mit Drosselung auf Debug-Ebene.
+
 ## 1.5.2-beta.6
 
 ### 🎬 Features & Verbesserungen
