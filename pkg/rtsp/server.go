@@ -5,6 +5,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Afrouper/steinel-cam-bridge/pkg/logger"
@@ -20,21 +21,31 @@ type OnPlayHandler func()
 
 // Server manages the RTSP server, authentication, and multiple camera streams.
 type Server struct {
-	server           *gortsplib.Server
-	port             int
-	authUser         string
-	authPass         string
-	realm            string
-	nonce            string
-	udpConn          *net.UDPConn
-	started          bool
-	streamsMu        sync.RWMutex
-	streams          map[string]*Stream
-	primaryStream    *Stream
-	backchannelMedia *description.Media
-	sessionStreams   sync.Map // *gortsplib.ServerSession -> *Stream
-	mu               sync.RWMutex
+	server            *gortsplib.Server
+	port              int
+	authUser          string
+	authPass          string
+	realm             string
+	nonce             string
+	udpConn           *net.UDPConn
+	started           bool
+	streamsMu         sync.RWMutex
+	streams           map[string]*Stream
+	primaryStream     *Stream
+	backchannelMedia  *description.Media
+	sessionStreams    sync.Map // *gortsplib.ServerSession -> *Stream
+	lastWriteErrorLog atomic.Int64
+	mu                sync.RWMutex
 }
+
+var (
+	_ gortsplib.ServerHandlerOnDescribe         = (*Server)(nil)
+	_ gortsplib.ServerHandlerOnSetup            = (*Server)(nil)
+	_ gortsplib.ServerHandlerOnPlay             = (*Server)(nil)
+	_ gortsplib.ServerHandlerOnRecord           = (*Server)(nil)
+	_ gortsplib.ServerHandlerOnSessionClose     = (*Server)(nil)
+	_ gortsplib.ServerHandlerOnStreamWriteError = (*Server)(nil)
+)
 
 // NewServer creates a new RTSP Server listening on the specified port.
 func NewServer(port int, pathName string, audioCodec string, authUser string, authPass string) (*Server, error) {
@@ -345,8 +356,10 @@ func (s *Server) validateAuth(req *base.Request, conn *gortsplib.ServerConn, ses
 		return false, &base.Response{
 			StatusCode: base.StatusUnauthorized,
 			Header: base.Header{
+				// Only advertise Basic and Digest MD5 to prevent FFmpeg/Home Assistant from overwriting MD5
+				// with unsupported SHA-256 (RFC 2617 standard). SHA-256 remains accepted in auth.Validate above.
 				"WWW-Authenticate": auth.GenerateWWWAuthenticate(
-					[]auth.ValidateMethod{auth.ValidateMethodBasic, auth.ValidateMethodDigestMD5, auth.ValidateMethodSHA256},
+					[]auth.ValidateMethod{auth.ValidateMethodBasic, auth.ValidateMethodDigestMD5},
 					s.realm,
 					s.nonce,
 				),
@@ -517,6 +530,18 @@ func (s *Server) OnSessionClose(ctx *gortsplib.ServerHandlerOnSessionCloseCtx) {
 			st.backchannelMu.Unlock()
 		}
 		s.streamsMu.RUnlock()
+	}
+}
+
+// OnStreamWriteError is called when a ServerStream is unable to write packets to a session (e.g. slow client write queue full).
+// Implements gortsplib.ServerHandlerOnStreamWriteError to log at DEBUG level (throttled) and prevent gortsplib from spamming standard logging.
+func (s *Server) OnStreamWriteError(ctx *gortsplib.ServerHandlerOnStreamWriteErrorCtx) {
+	now := time.Now().Unix()
+	last := s.lastWriteErrorLog.Load()
+	if now-last >= 5 {
+		if s.lastWriteErrorLog.CompareAndSwap(last, now) {
+			logger.Debug("RTSP", "⚠️ RTSP client write queue full (stalled or slow client connection, dropping packet): %v", ctx.Error)
+		}
 	}
 }
 
