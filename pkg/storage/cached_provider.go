@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -296,10 +297,16 @@ func (p *CachedRecordingProvider) SyncLatest(ctx context.Context) ([]RecordingIt
 		// Brief delay to let the camera's embedded CPU breathe between downloads
 		select {
 		case <-ctx.Done():
+			sort.Slice(newlyCached, func(i, j int) bool {
+				return newlyCached[i].StartTime.After(newlyCached[j].StartTime)
+			})
 			return newlyCached, ctx.Err()
 		case <-time.After(500 * time.Millisecond):
 		}
 	}
 
+	sort.Slice(newlyCached, func(i, j int) bool {
+		return newlyCached[i].StartTime.After(newlyCached[j].StartTime)
+	})
 	return newlyCached, nil
 }

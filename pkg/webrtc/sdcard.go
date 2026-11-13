@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -253,6 +254,11 @@ func (m *SDCardManager) ListRecordings(ctx context.Context, start, end time.Time
 			VideoURL:        fmt.Sprintf("/api/sdcard/events/%s/video.mp4", id),
 		})
 	}
+
+	// Sort recordings descending by StartTime (newest first) to guarantee consistent ordering
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].StartTime.After(items[j].StartTime)
+	})
 
 	return &storage.RecordingListResponse{
 		Count: len(items),

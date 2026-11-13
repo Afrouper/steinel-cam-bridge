@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"time"
 
 	"github.com/Afrouper/steinel-cam-bridge/pkg/logger"
@@ -126,6 +127,11 @@ func (m *SDCardManager) ListRecordings(ctx context.Context, start, end time.Time
 			VideoURL:        fmt.Sprintf("/api/sdcard/events/%s/video.mp4", id),
 		})
 	}
+
+	// Sort recordings descending by StartTime (newest first) to ensure consistent indexing
+	sort.Slice(recordings, func(i, j int) bool {
+		return recordings[i].StartTime.After(recordings[j].StartTime)
+	})
 
 	logger.Trace("Xiongmai SDCard", "OPFileQuery [%s - %s]: found %d recordings", beginStr, endStr, len(recordings))
 
