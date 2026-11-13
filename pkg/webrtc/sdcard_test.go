@@ -258,6 +258,58 @@ func TestSDCardRecordingProvider(t *testing.T) {
 	assert.ErrorIs(t, sdm.StreamThumbnail(ctx, "1723812345", &thumbBuf), storage.ErrFeatureDisabled)
 }
 
+func TestSDCardManager_ListRecordings_SortingDescending(t *testing.T) {
+	sdm := NewSDCardManager(func(_ string, _ map[string]interface{}) error {
+		return nil
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		sdm.HandleJSONMessage(map[string]interface{}{
+			"resp": "get_event_list",
+			"info": map[string]interface{}{
+				"count": float64(3),
+				"total": float64(3),
+				"list": []interface{}{
+					map[string]interface{}{
+						"time_tag":    float64(1700000100),
+						"record_time": float64(30),
+						"type":        "pir",
+						"name":        "oldest.mp4",
+					},
+					map[string]interface{}{
+						"time_tag":    float64(1700000200),
+						"record_time": float64(30),
+						"type":        "pir",
+						"name":        "middle.mp4",
+					},
+					map[string]interface{}{
+						"time_tag":    float64(1700000300),
+						"record_time": float64(30),
+						"type":        "pir",
+						"name":        "newest.mp4",
+					},
+				},
+			},
+		})
+	}()
+
+	resp, err := sdm.ListRecordings(ctx, time.Unix(1700000000, 0), time.Unix(1700001000, 0), 0, 10, "")
+	assert.NoError(t, err)
+	require.NotNil(t, resp)
+	require.Equal(t, 3, resp.Count)
+
+	// Verify descending order: newest recording must be first
+	assert.Equal(t, "1700000300", resp.List[0].ID)
+	assert.Equal(t, "1700000200", resp.List[1].ID)
+	assert.Equal(t, "1700000100", resp.List[2].ID)
+	assert.True(t, resp.List[0].StartTime.After(resp.List[1].StartTime))
+	assert.True(t, resp.List[1].StartTime.After(resp.List[2].StartTime))
+}
+
 func TestSDCardStreamSnapshot(t *testing.T) {
 	var mu sync.Mutex
 	var sentCmd string

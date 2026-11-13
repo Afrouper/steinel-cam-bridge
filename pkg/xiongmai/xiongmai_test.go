@@ -2074,6 +2074,7 @@ func (m *mockOnDemandRTSPServer) WriteAudioPacket(pkt *rtp.Packet)              
 func (m *mockOnDemandRTSPServer) GetAudioCodec() string                                           { return "aac" }
 func (m *mockOnDemandRTSPServer) SetAudioBackchannelHandler(handler rtsp.AudioBackchannelHandler) {}
 func (m *mockOnDemandRTSPServer) SetOnPlayHandler(handler rtsp.OnPlayHandler)                     {}
+func (m *mockOnDemandRTSPServer) SetH264Parameters(sps, pps []byte)                               {}
 func (m *mockOnDemandRTSPServer) ActiveClients() int64                                            { return m.clients.Load() }
 
 var _ rtsp.MediaStream = (*mockOnDemandRTSPServer)(nil)
@@ -2449,4 +2450,15 @@ func TestDriver_AlarmSetsMotion(t *testing.T) {
 	d.handleAlarmEvent("MotionDetect", false)
 	assert.False(t, receivedMotion, "eventBus should have received motion=false")
 	assert.False(t, bus.GetStatus().IsMotion, "bus status should be motion=false")
+}
+
+func TestDriver_ForceRTSPIngest(t *testing.T) {
+	d := &Driver{}
+	assert.False(t, d.ForceRTSPIngest())
+
+	d.SetForceRTSPIngest(true)
+	assert.True(t, d.ForceRTSPIngest())
+
+	d.SetForceRTSPIngest(false)
+	assert.False(t, d.ForceRTSPIngest())
 }

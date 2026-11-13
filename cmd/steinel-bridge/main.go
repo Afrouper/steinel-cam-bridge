@@ -31,6 +31,7 @@ func registerFlags(fs *flag.FlagSet) {
 	fs.String("path", "", "RTSP stream path (e.g. steinel -> rtsp://host:port/steinel)")
 	fs.Int("onvif", 0, "ONVIF HTTP server port")
 	fs.Bool("reset-pairing", false, "Reset local client key and force re-pairing with camera")
+	fs.Bool("force-rtsp-ingest", false, "Force RTSP Port 554 video ingest for L 620 CAM instead of native Sofia stream")
 	fs.String("mqtt-broker", "", "MQTT broker URL (e.g. tcp://192.168.1.100:1883)")
 	fs.String("mqtt-user", "", "MQTT username")
 	fs.String("mqtt-pass", "", "MQTT password")

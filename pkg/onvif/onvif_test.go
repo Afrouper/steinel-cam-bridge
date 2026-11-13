@@ -5,12 +5,16 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Afrouper/steinel-cam-bridge/pkg/events"
+	"github.com/Afrouper/steinel-cam-bridge/pkg/storage"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestONVIFServices(t *testing.T) {
@@ -774,4 +778,81 @@ func TestDeviceHandler_SetSystemDateAndTime(t *testing.T) {
 	if calledTZ != "CET-1CEST,M3.5.0,M10.5.0/3" {
 		t.Fatalf("unexpected parsed timezone: %q", calledTZ)
 	}
+}
+
+func TestONVIF_SnapshotLatestFallback(t *testing.T) {
+	tempDir := t.TempDir()
+	mockExt := storage.NewMockExtractor()
+	cache := storage.NewRecordingCache(tempDir, 5, mockExt)
+
+	// Create CachedRecordingProvider wrapping the empty cache
+	provider := storage.NewCachedRecordingProvider(cache, nil)
+
+	srv := &Server{
+		recordingProvider: func() storage.RecordingProvider {
+			return provider
+		},
+	}
+
+	// 1. When no recordings exist, requesting latest snapshot.jpg must return 200 OK with fallback JPEG
+	req := httptest.NewRequest("GET", "/api/sdcard/events/latest/snapshot.jpg", nil)
+	w := httptest.NewRecorder()
+	srv.handleAPISDCardItem(w, req)
+
+	resp := w.Result()
+	body, _ := io.ReadAll(resp.Body)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, "image/jpeg", resp.Header.Get("Content-Type"))
+	assert.Equal(t, fallbackSnapshotJPEG, body)
+
+	// 2. Add a recording with a thumbnail to the cache
+	now := time.Now().UTC()
+	item := storage.RecordingItem{ID: "event_999", StartTime: now}
+	_, err := cache.Add(context.Background(), item, bytes.NewReader([]byte("video-content-999")))
+	require.NoError(t, err)
+
+	// Now requesting latest snapshot.jpg must return the real thumbnail from the cache
+	w2 := httptest.NewRecorder()
+	srv.handleAPISDCardItem(w2, req)
+
+	resp2 := w2.Result()
+	body2, _ := io.ReadAll(resp2.Body)
+	assert.Equal(t, http.StatusOK, resp2.StatusCode)
+	assert.Equal(t, "image/jpeg", resp2.Header.Get("Content-Type"))
+	assert.NotEmpty(t, body2)
+	assert.NotEqual(t, fallbackSnapshotJPEG, body2)
+}
+
+func TestONVIF_DynamicResolution720p(t *testing.T) {
+	bus := events.NewBus()
+	st := bus.GetStatus()
+	st.Resolution = "720p"
+	bus.UpdateStatus(st)
+
+	handler := NewMediaHandler(8554, "cam", "aac", 8000, nil, bus)
+	handler.SetChannels([]CameraChannel{
+		{
+			Index:      1,
+			Name:       "Einfahrt",
+			Path:       "cam",
+			AudioCodec: "aac",
+			Resolution: "720p",
+			EventBus:   bus,
+		},
+	})
+
+	// 1. GetProfiles should report 1280x720 for Main profile
+	profiles := handler.getProfiles()
+	assert.Contains(t, profiles, "<tt:Width>1280</tt:Width>")
+	assert.Contains(t, profiles, "<tt:Height>720</tt:Height>")
+	assert.Contains(t, profiles, "MainStream 720p")
+
+	// 2. GetVideoSources should report 1280x720
+	sources := handler.getVideoSources()
+	assert.Contains(t, sources, "<tt:Width>1280</tt:Width>")
+	assert.Contains(t, sources, "<tt:Height>720</tt:Height>")
+
+	// 3. GetVideoSourceConfigurations should report width="1280" height="720"
+	sourceConfigs := handler.getVideoSourceConfigurations()
+	assert.Contains(t, sourceConfigs, `width="1280" height="720"`)
 }

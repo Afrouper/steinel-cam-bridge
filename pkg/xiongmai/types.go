@@ -50,6 +50,12 @@ const (
 	MsgTalkAudioDataResp uint16 = 1433
 	MsgTalkClaimV2Req    uint16 = 1434
 	MsgTalkClaimV2Resp   uint16 = 1435
+	MsgPlayReq           uint16 = 1420
+	MsgPlayResp          uint16 = 1421
+	MsgPlayData          uint16 = 1422
+	MsgPlayEOF           uint16 = 1423
+	MsgPlayClaimReq      uint16 = 1424
+	MsgPlayClaimResp     uint16 = 1425
 	MsgFileSearchReq     uint16 = 1440
 	MsgFileSearchResp    uint16 = 1441
 	MsgFilePlayReq       uint16 = 1442
@@ -312,4 +318,28 @@ type OPMonitorReq struct {
 	Name      string        `json:"Name"`
 	OPMonitor OPMonitorInfo `json:"OPMonitor"`
 	SessionID string        `json:"SessionID"`
+}
+
+// OPPlayBackParam defines parameters for recorded file playback/download.
+type OPPlayBackParam struct {
+	PlayMode   string `json:"PlayMode,omitempty"` // "ByName" or "ByTime"
+	FileName   string `json:"FileName,omitempty"`
+	StreamType int    `json:"StreamType"`
+	Value      int    `json:"Value"`
+	TransMode  string `json:"TransMode"` // "TCP"
+}
+
+// OPPlayBackInfo defines the inner OPPlayBack object for playback claim (1424) and start/stop (1420).
+type OPPlayBackInfo struct {
+	Action    string           `json:"Action"` // "Claim", "DownloadStart", "Start", "DownloadStop", "Stop"
+	Parameter *OPPlayBackParam `json:"Parameter,omitempty"`
+	StartTime string           `json:"StartTime,omitempty"`
+	EndTime   string           `json:"EndTime,omitempty"`
+}
+
+// OPPlayBackReq represents the complete OPPlayBack JSON structure.
+type OPPlayBackReq struct {
+	Name       string         `json:"Name"`
+	OPPlayBack OPPlayBackInfo `json:"OPPlayBack"`
+	SessionID  string         `json:"SessionID"`
 }

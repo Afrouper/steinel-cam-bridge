@@ -416,3 +416,37 @@ func TestSingleCam_DefaultNameRemainsEmpty(t *testing.T) {
 	assert.Equal(t, "steinel", cfg.Cameras[0].Path)
 	assert.Equal(t, "00:0C:43:00:01:02", cfg.Cameras[0].MAC)
 }
+
+func TestConfig_ForceRTSPIngest(t *testing.T) {
+	// 1. JSON options parsing
+	tmpDir := t.TempDir()
+	optsPath := filepath.Join(tmpDir, "options.json")
+	optsJSON := `{
+		"camera_ip": "192.168.1.50",
+		"force_rtsp_ingest": true
+	}`
+	err := os.WriteFile(optsPath, []byte(optsJSON), 0600)
+	require.NoError(t, err)
+
+	cfg := Resolve(optsPath, nil)
+	assert.True(t, cfg.ForceRTSPIngest)
+	require.Len(t, cfg.Cameras, 1)
+	assert.True(t, cfg.Cameras[0].ForceRTSPIngest)
+
+	// Test ForCamera propagation
+	camCfg := cfg.ForCamera(&cfg.Cameras[0])
+	assert.True(t, camCfg.ForceRTSPIngest)
+
+	// 2. Env variable
+	t.Setenv("FORCE_RTSP_INGEST", "1")
+	cfgEnv := Resolve("", nil)
+	assert.True(t, cfgEnv.ForceRTSPIngest)
+
+	// 3. CLI flag
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.Bool("force-rtsp-ingest", false, "")
+	err = fs.Parse([]string{"-force-rtsp-ingest=true"})
+	require.NoError(t, err)
+	cfgCLI := Resolve("", fs)
+	assert.True(t, cfgCLI.ForceRTSPIngest)
+}

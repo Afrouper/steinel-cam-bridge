@@ -34,6 +34,9 @@ func NewL620Driver(cfg *config.Config, rtspServer rtsp.MediaStream, eventBus *ev
 		rtspServer,
 		eventBus,
 	)
+	if cfg.ForceRTSPIngest {
+		xm.SetForceRTSPIngest(true)
+	}
 
 	return &L620Driver{
 		cfg:      cfg,

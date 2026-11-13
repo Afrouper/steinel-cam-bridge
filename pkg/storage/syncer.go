@@ -13,7 +13,7 @@ import (
 // and pushes new recording events to Home Assistant / MQTT.
 type RecordingSyncer struct {
 	providerFunc     func() RecordingProvider
-	onNewRecording   func(RecordingItem)
+	onNewRecording   func(item RecordingItem, isInitial bool)
 	pollInterval     time.Duration
 	isStreamActive   func() bool
 	lastPeriodicPoll time.Time
@@ -26,7 +26,7 @@ type RecordingSyncer struct {
 // NewRecordingSyncer creates a new RecordingSyncer instance.
 func NewRecordingSyncer(
 	providerFunc func() RecordingProvider,
-	onNewRecording func(RecordingItem),
+	onNewRecording func(item RecordingItem, isInitial bool),
 	pollInterval time.Duration,
 ) *RecordingSyncer {
 	if pollInterval < 0 {
@@ -181,7 +181,7 @@ func (s *RecordingSyncer) syncOnce(ctx context.Context, isInitial bool) {
 			logger.Trace("Recording Sync", "Recording details: %+v", latest)
 
 			if s.onNewRecording != nil {
-				s.onNewRecording(latest)
+				s.onNewRecording(latest, isFirst)
 			}
 			return
 		} else if isInitial {
@@ -203,7 +203,7 @@ func (s *RecordingSyncer) syncOnce(ctx context.Context, isInitial bool) {
 						logger.Info("Recording Sync", "📌 Restored latest recording from cache: %s (%s, %.1f MB, Thumb: %t)",
 							latest.ID, latest.FileName, float64(latest.FileSizeBytes)/(1024*1024), latest.ThumbnailURL != "")
 						if s.onNewRecording != nil {
-							s.onNewRecording(latest)
+							s.onNewRecording(latest, true)
 						}
 						return
 					}
@@ -270,7 +270,7 @@ queryFallback:
 		logger.Trace("Recording Sync", "Recording details: %+v", latest)
 
 		if s.onNewRecording != nil {
-			s.onNewRecording(latest)
+			s.onNewRecording(latest, isFirst)
 		}
 	} else {
 		s.mu.Unlock()
