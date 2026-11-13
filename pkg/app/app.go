@@ -167,16 +167,35 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 			return camBridgeMgr.GetRecordingProvider()
 		}
 
-		// Recording Syncer
-		var onNewRec func(storage.RecordingItem)
-		if mqttClient != nil {
-			camID := cam.Path
-			if cam.Nabto != nil && cam.Nabto.DeviceID != "" {
-				camID = cam.Nabto.DeviceID
-			}
-			onNewRec = func(item storage.RecordingItem) {
+		// Recording Syncer & Motion Trigger
+		var motionResetTimer *time.Timer
+		var motionTimerMu sync.Mutex
+
+		onNewRec := func(item storage.RecordingItem, isInitial bool) {
+			if mqttClient != nil {
+				camID := cam.Path
+				if cam.Nabto != nil && cam.Nabto.DeviceID != "" {
+					camID = cam.Nabto.DeviceID
+				}
 				item.Camera = camID
 				mqttClient.PublishRecordingEvent(item)
+			}
+
+			// Model-agnostic motion trigger: A newly recorded clip on the SD card (non-initial)
+			// reliably indicates motion detection across all camera models (L 620, L 625, XLED).
+			if !isInitial {
+				logger.Info("Recording Sync", "🚨 Motion event triggered by new SD card recording: %s (%s)", item.ID, item.FileName)
+				camBus.SetMotion(true)
+
+				motionTimerMu.Lock()
+				if motionResetTimer != nil {
+					motionResetTimer.Stop()
+				}
+				motionResetTimer = time.AfterFunc(10*time.Second, func() {
+					logger.Info("Recording Sync", "⚪ Motion cleared (10s timeout after recording)")
+					camBus.SetMotion(false)
+				})
+				motionTimerMu.Unlock()
 			}
 		}
 
