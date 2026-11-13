@@ -398,11 +398,7 @@ func findNextSofiaRecord(buf []byte) int {
 // processStreamBufferLocked parses Xiongmai media markers (I-Frame, P-Frame, Audio) using exact record lengths
 // and demuxes H.264 Annex-B data immediately without waiting for the next frame delimiter.
 func (s *SofiaStream) processStreamBufferLocked() {
-	for {
-		if len(s.streamBuf) < 4 {
-			break
-		}
-
+	for len(s.streamBuf) >= 4 {
 		// Resynchronize on MPEG-PS / Sofia record start code (0x00 0x00 0x01)
 		if !bytes.HasPrefix(s.streamBuf, []byte{0x00, 0x00, 0x01}) {
 			idx := bytes.Index(s.streamBuf, []byte{0x00, 0x00, 0x01})
@@ -497,10 +493,11 @@ func (s *SofiaStream) processStreamBufferLocked() {
 		record := s.streamBuf[:totalRecordSize]
 		s.streamBuf = s.streamBuf[totalRecordSize:]
 
-		if pType == 0xFC || pType == 0xFE || pType == 0xFD {
+		switch pType {
+		case 0xFC, 0xFE, 0xFD:
 			h264Data := record[headerLen:]
 			s.dispatchFrameLocked(h264Data)
-		} else if pType == 0xFA || pType == 0xF9 {
+		case 0xFA, 0xF9:
 			audioData := record[headerLen:]
 			s.dispatchAudioLocked(audioData)
 		}

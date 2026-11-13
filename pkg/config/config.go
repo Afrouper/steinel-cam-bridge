@@ -21,15 +21,15 @@ const DefaultCameraMAC = "00:0C:43:00:01:02"
 
 // CameraConfig defines the configuration for a single Steinel camera in multicam setups.
 type CameraConfig struct {
-	Name        string        `json:"name"`
-	IP          string        `json:"ip"`
-	Type        string        `json:"type"` // "auto", "l625", "l620"
-	User        string        `json:"user"`
-	Password    string        `json:"password"`
-	QRCode      string        `json:"qr_code"`
-	MAC         string        `json:"mac"`
-	Path        string        `json:"path"` // RTSP stream path (e.g. "einfahrt")
-	Resolution  string        `json:"resolution"`
+	Name            string        `json:"name"`
+	IP              string        `json:"ip"`
+	Type            string        `json:"type"` // "auto", "l625", "l620"
+	User            string        `json:"user"`
+	Password        string        `json:"password"`
+	QRCode          string        `json:"qr_code"`
+	MAC             string        `json:"mac"`
+	Path            string        `json:"path"` // RTSP stream path (e.g. "einfahrt")
+	Resolution      string        `json:"resolution"`
 	AudioCodec      string        `json:"audio_codec"`
 	ResetPair       bool          `json:"reset_pairing"`
 	ForceRTSPIngest bool          `json:"force_rtsp_ingest"`
@@ -138,26 +138,26 @@ func (c *Config) ForCamera(cam *CameraConfig) *Config {
 }
 
 type rawCameraOpt struct {
-	Name        string `json:"name"`
-	IP          string `json:"ip"`
-	CameraIP    string `json:"camera_ip"`
-	Type        string `json:"type"`
-	CameraType  string `json:"camera_type"`
-	User        string `json:"user"`
-	CameraUser  string `json:"camera_user"`
-	Password    string `json:"password"`
-	CameraPass  string `json:"camera_password"`
-	QRCode      string `json:"qr_code"`
-	MAC         string `json:"mac"`
-	CameraMAC   string `json:"camera_mac"`
-	Path        string `json:"path"`
-	RTSPPath    string `json:"rtsp_path"`
-	Resolution  string `json:"resolution"`
-	AudioCodec  string `json:"audio_codec"`
+	Name            string `json:"name"`
+	IP              string `json:"ip"`
+	CameraIP        string `json:"camera_ip"`
+	Type            string `json:"type"`
+	CameraType      string `json:"camera_type"`
+	User            string `json:"user"`
+	CameraUser      string `json:"camera_user"`
+	Password        string `json:"password"`
+	CameraPass      string `json:"camera_password"`
+	QRCode          string `json:"qr_code"`
+	MAC             string `json:"mac"`
+	CameraMAC       string `json:"camera_mac"`
+	Path            string `json:"path"`
+	RTSPPath        string `json:"rtsp_path"`
+	Resolution      string `json:"resolution"`
+	AudioCodec      string `json:"audio_codec"`
 	ResetPair       bool   `json:"reset_pairing"`
 	ForceRTSPIngest bool   `json:"force_rtsp_ingest"`
 	NabtoDriver     string `json:"nabto_driver"`
-	KeyPath     string `json:"key_path"`
+	KeyPath         string `json:"key_path"`
 }
 
 // LoadHomeAssistantOptionsFromPath reads and unmarshals options from a JSON file (e.g. /data/options.json).
@@ -326,14 +326,14 @@ func LoadHomeAssistantOptionsFromPath(path string, cfg *Config) {
 			path = raw.RTSPPath
 		}
 		cfg.Cameras = append(cfg.Cameras, CameraConfig{
-			Name:        raw.Name,
-			IP:          ip,
-			Type:        camType,
-			User:        user,
-			Password:    pass,
-			QRCode:      raw.QRCode,
-			MAC:         mac,
-			Path:        path,
+			Name:            raw.Name,
+			IP:              ip,
+			Type:            camType,
+			User:            user,
+			Password:        pass,
+			QRCode:          raw.QRCode,
+			MAC:             mac,
+			Path:            path,
 			Resolution:      raw.Resolution,
 			AudioCodec:      raw.AudioCodec,
 			ResetPair:       raw.ResetPair,
@@ -602,20 +602,20 @@ func Resolve(optionsPath string, fs *flag.FlagSet) *Config {
 	// Synthesize legacy single camera if cameras list was not explicitly configured
 	if len(cfg.Cameras) == 0 && cfg.NabtoConfig.CameraIP != "" {
 		cfg.Cameras = append(cfg.Cameras, CameraConfig{
-			Name:        cfg.CameraName,
-			IP:          cfg.NabtoConfig.CameraIP,
-			Type:        cfg.CameraType,
-			User:        cfg.CameraUser,
-			Password:    cfg.CameraPassword,
-			MAC:         cfg.CameraMAC,
-			Path:        cfg.RTSPPath,
-			Resolution:  cfg.Resolution,
+			Name:            cfg.CameraName,
+			IP:              cfg.NabtoConfig.CameraIP,
+			Type:            cfg.CameraType,
+			User:            cfg.CameraUser,
+			Password:        cfg.CameraPassword,
+			MAC:             cfg.CameraMAC,
+			Path:            cfg.RTSPPath,
+			Resolution:      cfg.Resolution,
 			AudioCodec:      cfg.AudioCodec,
 			ResetPair:       cfg.ResetPairing,
 			ForceRTSPIngest: cfg.ForceRTSPIngest,
 			NabtoDriver:     cfg.NabtoDriver,
-			KeyPath:     cfg.NabtoConfig.KeyPath,
-			Nabto:       cfg.NabtoConfig,
+			KeyPath:         cfg.NabtoConfig.KeyPath,
+			Nabto:           cfg.NabtoConfig,
 		})
 	}
 
@@ -668,20 +668,20 @@ func (c *Config) Validate() error {
 	// Synthesize fallback camera if Cameras slice is empty but legacy IP is set
 	if len(c.Cameras) == 0 && c.NabtoConfig.CameraIP != "" {
 		c.Cameras = append(c.Cameras, CameraConfig{
-			Name:        c.CameraName,
-			IP:          c.NabtoConfig.CameraIP,
-			Type:        c.CameraType,
-			User:        c.CameraUser,
-			Password:    c.CameraPassword,
-			MAC:         c.CameraMAC,
-			Path:        c.RTSPPath,
-			Resolution:  c.Resolution,
+			Name:            c.CameraName,
+			IP:              c.NabtoConfig.CameraIP,
+			Type:            c.CameraType,
+			User:            c.CameraUser,
+			Password:        c.CameraPassword,
+			MAC:             c.CameraMAC,
+			Path:            c.RTSPPath,
+			Resolution:      c.Resolution,
 			AudioCodec:      c.AudioCodec,
 			ResetPair:       c.ResetPairing,
 			ForceRTSPIngest: c.ForceRTSPIngest,
 			NabtoDriver:     c.NabtoDriver,
-			KeyPath:     c.NabtoConfig.KeyPath,
-			Nabto:       c.NabtoConfig,
+			KeyPath:         c.NabtoConfig.KeyPath,
+			Nabto:           c.NabtoConfig,
 		})
 	}
 
