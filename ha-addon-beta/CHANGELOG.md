@@ -2,6 +2,17 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.5.2-beta.8
+
+### 🛠️ Verbesserungen & Bugfixes
+
+- **Bewegungserkennung über SD-Aufnahmen (Fixes #70)**:
+  - Jede neu auf der SD-Karte gespeicherte Videoaufnahme schaltet nun zuverlässig den Bewegungssensor (`binary_sensor.motion`) in Home Assistant für 10 Sekunden ein – ideal für Modelle ohne lokalen Alarm-Push (wie die L 620 CAM).
+- **Korrektur der Aufnahme-Reihenfolge (Fixes #70)**:
+  - Behebt ein Problem bei der L 620 CAM, durch das ältere statt der neuesten Aufnahmen als aktuellste Aufnahme angezeigt und heruntergeladen wurden.
+- **Stabilität & Video-Wiedergabe (Fixes #73, #74)**:
+  - Behebt Hänger und Abbrüche bei der H.264-Videowiedergabe und Standbild-Vorschau bei Sofia-Kameras.
+
 ## 1.5.2-beta.7
 
 ### 🛠️ Bugfixes & Kompatibilität
