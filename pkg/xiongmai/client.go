@@ -37,6 +37,8 @@ type Client struct {
 	serialTransActive bool
 	lastMCUConfig     *MCUConfig
 	telemetryBuf      string
+	videoFPS          int
+	videoResolution   string
 	onTelemetry       func(*MCUConfig)
 	onAlarm           func(event string, isStart bool)
 	closeChan         chan struct{}
@@ -728,6 +730,8 @@ func (c *Client) EnsureH264Encoding() error {
 	}
 
 	mainVideo := &items[0].MainFormat.Video
+	c.videoFPS = mainVideo.FPS
+	c.videoResolution = mainVideo.Resolution
 	logger.Info("Xiongmai", "🎥 Video encode config: Compression=%s, Resolution=%s, FPS=%d, BitRate=%d kbps, AudioEnable=%v",
 		mainVideo.Compression, mainVideo.Resolution, mainVideo.FPS, mainVideo.BitRate, items[0].MainFormat.AudioEnable)
 
@@ -773,6 +777,20 @@ func (c *Client) EnsureH264Encoding() error {
 	}
 
 	return nil
+}
+
+// GetVideoFPS returns the video frame rate reported by the camera, if known.
+func (c *Client) GetVideoFPS() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.videoFPS
+}
+
+// GetVideoResolution returns the video resolution reported by the camera (e.g. "720P"), if known.
+func (c *Client) GetVideoResolution() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.videoResolution
 }
 
 // StartSerialTrans establishes the OPTrans RS232 transparent serial channel (MsgID 1578).

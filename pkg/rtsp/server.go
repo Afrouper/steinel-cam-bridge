@@ -593,3 +593,10 @@ func (s *Server) WriteAudioPacket(pkt *rtp.Packet) {
 		s.primaryStream.WriteAudioPacket(pkt)
 	}
 }
+
+// SetH264Parameters updates the SPS and PPS parameter sets on the primary stream.
+func (s *Server) SetH264Parameters(sps, pps []byte) {
+	if s.primaryStream != nil {
+		s.primaryStream.SetH264Parameters(sps, pps)
+	}
+}

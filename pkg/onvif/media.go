@@ -178,7 +178,35 @@ func (h *MediaHandler) Handle(action string, reqXML string, host string) (string
 	return `<trt:UnknownActionResponse xmlns:trt="http://www.onvif.org/ver10/media/wsdl"/>`, nil
 }
 
-func (h *MediaHandler) formatProfileXML(token, name string, chIndex int, path string, isMain bool, audioCodec string) string {
+func (h *MediaHandler) getChannelResolution(ch *CameraChannel, isMain bool) (width, height int, resName string) {
+	if !isMain {
+		return 640, 360, "360p"
+	}
+	res := "1080p"
+	if ch != nil {
+		if ch.Resolution != "" {
+			res = ch.Resolution
+		}
+		if ch.EventBus != nil {
+			if busRes := ch.EventBus.GetStatus().Resolution; busRes != "" {
+				res = busRes
+			}
+		}
+	} else if h.eventBus != nil {
+		if busRes := h.eventBus.GetStatus().Resolution; busRes != "" {
+			res = busRes
+		}
+	}
+	resLower := strings.ToLower(res)
+	if strings.Contains(resLower, "720") {
+		return 1280, 720, "720p"
+	} else if strings.Contains(resLower, "360") {
+		return 640, 360, "360p"
+	}
+	return 1920, 1080, "1080p"
+}
+
+func (h *MediaHandler) formatProfileXML(token, name string, ch *CameraChannel, isMain bool, audioCodec string) string {
 	audioEncoding := "AAC"
 	sampleRate := 16
 	if strings.ToLower(audioCodec) == "pcmu" {
@@ -186,13 +214,24 @@ func (h *MediaHandler) formatProfileXML(token, name string, chIndex int, path st
 		sampleRate = 8
 	}
 
-	width, height, quality, bitrate, fps := 1920, 1080, "5.0", 2048, 15
+	width, height, resName := h.getChannelResolution(ch, isMain)
+	quality, bitrate, fps := "5.0", 2048, 15
 	h264Profile := "High"
 	encSuffix := "Main"
 	if !isMain {
-		width, height, quality, bitrate, fps = 640, 360, "3.0", 512, 10
+		quality, bitrate, fps = "3.0", 512, 10
 		h264Profile = "Baseline"
 		encSuffix = "Sub"
+	}
+	if strings.Contains(name, "1080p") && resName != "1080p" {
+		name = strings.Replace(name, "1080p", resName, 1)
+	}
+
+	chIndex := 1
+	path := h.rtspPath
+	if ch != nil {
+		chIndex = ch.Index
+		path = ch.Path
 	}
 
 	encToken := fmt.Sprintf("VideoEncoderConfig_%s", encSuffix)
@@ -269,11 +308,15 @@ func (h *MediaHandler) getProfiles() string {
 	channels := h.Channels()
 	if len(channels) <= 1 {
 		codec := h.audioCodec
-		if len(channels) == 1 && channels[0].AudioCodec != "" {
-			codec = channels[0].AudioCodec
+		var ch0 *CameraChannel
+		if len(channels) == 1 {
+			ch0 = &channels[0]
+			if channels[0].AudioCodec != "" {
+				codec = channels[0].AudioCodec
+			}
 		}
-		pMain := h.formatProfileXML("Profile_Main", "MainStream 1080p", 1, h.rtspPath, true, codec)
-		pSub := h.formatProfileXML("Profile_Sub", "SubStream 360p", 1, h.rtspPath, false, codec)
+		pMain := h.formatProfileXML("Profile_Main", "MainStream 1080p", ch0, true, codec)
+		pSub := h.formatProfileXML("Profile_Sub", "SubStream 360p", ch0, false, codec)
 
 		return fmt.Sprintf(`<trt:GetProfilesResponse xmlns:trt="%s" xmlns:tt="%s">
 %s
@@ -290,16 +333,16 @@ func (h *MediaHandler) getProfiles() string {
 		subName := fmt.Sprintf("%s SubStream 360p", ch.Name)
 
 		sb.WriteString("\n")
-		sb.WriteString(h.formatProfileXML(mainToken, mainName, ch.Index, ch.Path, true, ch.AudioCodec))
+		sb.WriteString(h.formatProfileXML(mainToken, mainName, &ch, true, ch.AudioCodec))
 		sb.WriteString("\n")
-		sb.WriteString(h.formatProfileXML(subToken, subName, ch.Index, ch.Path, false, ch.AudioCodec))
+		sb.WriteString(h.formatProfileXML(subToken, subName, &ch, false, ch.AudioCodec))
 	}
 	sb.WriteString("\n</trt:GetProfilesResponse>")
 	return sb.String()
 }
 
-func (h *MediaHandler) formatSingleProfileXML(token, name string, chIndex int, path string, isMain bool, audioCodec string) string {
-	p := h.formatProfileXML(token, name, chIndex, path, isMain, audioCodec)
+func (h *MediaHandler) formatSingleProfileXML(token, name string, ch *CameraChannel, isMain bool, audioCodec string) string {
+	p := h.formatProfileXML(token, name, ch, isMain, audioCodec)
 	p = strings.Replace(p, "<trt:Profiles ", "<trt:Profile ", 1)
 	p = strings.Replace(p, "</trt:Profiles>", "</trt:Profile>", 1)
 	return p
@@ -311,8 +354,12 @@ func (h *MediaHandler) getProfile(reqXML string) string {
 
 	if len(channels) <= 1 {
 		codec := h.audioCodec
-		if len(channels) == 1 && channels[0].AudioCodec != "" {
-			codec = channels[0].AudioCodec
+		var ch0 *CameraChannel
+		if len(channels) == 1 {
+			ch0 = &channels[0]
+			if channels[0].AudioCodec != "" {
+				codec = channels[0].AudioCodec
+			}
 		}
 		isMain := !strings.Contains(reqToken, "Sub")
 		token := "Profile_Main"
@@ -321,7 +368,7 @@ func (h *MediaHandler) getProfile(reqXML string) string {
 			token = "Profile_Sub"
 			name = "SubStream 360p"
 		}
-		pXML := h.formatSingleProfileXML(token, name, 1, h.rtspPath, isMain, codec)
+		pXML := h.formatSingleProfileXML(token, name, ch0, isMain, codec)
 		return fmt.Sprintf(`<trt:GetProfileResponse xmlns:trt="%s" xmlns:tt="%s">
 %s
 </trt:GetProfileResponse>`, NS_TRT, NS_TT, pXML)
@@ -353,7 +400,7 @@ func (h *MediaHandler) getProfile(reqXML string) string {
 		name = fmt.Sprintf("%s SubStream 360p", targetCh.Name)
 	}
 
-	pXML := h.formatSingleProfileXML(token, name, targetCh.Index, targetCh.Path, isMain, targetCh.AudioCodec)
+	pXML := h.formatSingleProfileXML(token, name, targetCh, isMain, targetCh.AudioCodec)
 	return fmt.Sprintf(`<trt:GetProfileResponse xmlns:trt="%s" xmlns:tt="%s">
 %s
 </trt:GetProfileResponse>`, NS_TRT, NS_TT, pXML)
@@ -559,22 +606,28 @@ func (h *MediaHandler) getAudioEncoderConfigurationOptions() string {
 func (h *MediaHandler) getVideoSources() string {
 	channels := h.Channels()
 	if len(channels) <= 1 {
+		var ch0 *CameraChannel
+		if len(channels) == 1 {
+			ch0 = &channels[0]
+		}
+		w, hRes, _ := h.getChannelResolution(ch0, true)
 		return fmt.Sprintf(`<trt:GetVideoSourcesResponse xmlns:trt="%s" xmlns:tt="%s">
   <trt:VideoSources token="VideoSource_1">
     <tt:Framerate>15.0</tt:Framerate>
-    <tt:Resolution><tt:Width>1920</tt:Width><tt:Height>1080</tt:Height></tt:Resolution>
+    <tt:Resolution><tt:Width>%d</tt:Width><tt:Height>%d</tt:Height></tt:Resolution>
   </trt:VideoSources>
-</trt:GetVideoSourcesResponse>`, NS_TRT, NS_TT)
+</trt:GetVideoSourcesResponse>`, NS_TRT, NS_TT, w, hRes)
 	}
 
 	var sb strings.Builder
 	fmt.Fprintf(&sb, `<trt:GetVideoSourcesResponse xmlns:trt="%s" xmlns:tt="%s">`, NS_TRT, NS_TT)
 	for _, ch := range channels {
+		w, hRes, _ := h.getChannelResolution(&ch, true)
 		fmt.Fprintf(&sb, `
   <trt:VideoSources token="VideoSource_%d">
     <tt:Framerate>15.0</tt:Framerate>
-    <tt:Resolution><tt:Width>1920</tt:Width><tt:Height>1080</tt:Height></tt:Resolution>
-  </trt:VideoSources>`, ch.Index)
+    <tt:Resolution><tt:Width>%d</tt:Width><tt:Height>%d</tt:Height></tt:Resolution>
+  </trt:VideoSources>`, ch.Index, w, hRes)
 	}
 	sb.WriteString("\n</trt:GetVideoSourcesResponse>")
 	return sb.String()
@@ -583,26 +636,32 @@ func (h *MediaHandler) getVideoSources() string {
 func (h *MediaHandler) getVideoSourceConfigurations() string {
 	channels := h.Channels()
 	if len(channels) <= 1 {
+		var ch0 *CameraChannel
+		if len(channels) == 1 {
+			ch0 = &channels[0]
+		}
+		w, hRes, _ := h.getChannelResolution(ch0, true)
 		return fmt.Sprintf(`<trt:GetVideoSourceConfigurationsResponse xmlns:trt="%s" xmlns:tt="%s">
   <trt:Configurations token="VideoSourceConfig_1">
     <tt:Name>VideoSourceConfig_1</tt:Name>
     <tt:UseCount>2</tt:UseCount>
     <tt:SourceToken>VideoSource_1</tt:SourceToken>
-    <tt:Bounds x="0" y="0" width="1920" height="1080"/>
+    <tt:Bounds x="0" y="0" width="%d" height="%d"/>
   </trt:Configurations>
-</trt:GetVideoSourceConfigurationsResponse>`, NS_TRT, NS_TT)
+</trt:GetVideoSourceConfigurationsResponse>`, NS_TRT, NS_TT, w, hRes)
 	}
 
 	var sb strings.Builder
 	fmt.Fprintf(&sb, `<trt:GetVideoSourceConfigurationsResponse xmlns:trt="%s" xmlns:tt="%s">`, NS_TRT, NS_TT)
 	for _, ch := range channels {
+		w, hRes, _ := h.getChannelResolution(&ch, true)
 		fmt.Fprintf(&sb, `
   <trt:Configurations token="VideoSourceConfig_%d">
     <tt:Name>VideoSourceConfig_%d</tt:Name>
     <tt:UseCount>2</tt:UseCount>
     <tt:SourceToken>VideoSource_%d</tt:SourceToken>
-    <tt:Bounds x="0" y="0" width="1920" height="1080"/>
-  </trt:Configurations>`, ch.Index, ch.Index, ch.Index)
+    <tt:Bounds x="0" y="0" width="%d" height="%d"/>
+  </trt:Configurations>`, ch.Index, ch.Index, ch.Index, w, hRes)
 	}
 	sb.WriteString("\n</trt:GetVideoSourceConfigurationsResponse>")
 	return sb.String()

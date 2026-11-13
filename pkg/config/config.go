@@ -30,11 +30,12 @@ type CameraConfig struct {
 	MAC         string        `json:"mac"`
 	Path        string        `json:"path"` // RTSP stream path (e.g. "einfahrt")
 	Resolution  string        `json:"resolution"`
-	AudioCodec  string        `json:"audio_codec"`
-	ResetPair   bool          `json:"reset_pairing"`
-	NabtoDriver string        `json:"nabto_driver"`
-	KeyPath     string        `json:"key_path"`
-	Nabto       *nabto.Config `json:"-"`
+	AudioCodec      string        `json:"audio_codec"`
+	ResetPair       bool          `json:"reset_pairing"`
+	ForceRTSPIngest bool          `json:"force_rtsp_ingest"`
+	NabtoDriver     string        `json:"nabto_driver"`
+	KeyPath         string        `json:"key_path"`
+	Nabto           *nabto.Config `json:"-"`
 }
 
 // Config encapsulates the complete resolved runtime configuration following the 12-Factor App methodology.
@@ -52,6 +53,7 @@ type Config struct {
 	RTSPPath                     string
 	ONVIFPort                    int
 	ResetPairing                 bool
+	ForceRTSPIngest              bool
 	MQTTBroker                   string
 	MQTTUser                     string
 	MQTTPassword                 string
@@ -120,6 +122,7 @@ func (c *Config) ForCamera(cam *CameraConfig) *Config {
 	clone.AudioCodec = cam.AudioCodec
 	clone.RTSPPath = cam.Path
 	clone.ResetPairing = cam.ResetPair
+	clone.ForceRTSPIngest = cam.ForceRTSPIngest
 	if cam.NabtoDriver != "" {
 		clone.NabtoDriver = cam.NabtoDriver
 	}
@@ -151,8 +154,9 @@ type rawCameraOpt struct {
 	RTSPPath    string `json:"rtsp_path"`
 	Resolution  string `json:"resolution"`
 	AudioCodec  string `json:"audio_codec"`
-	ResetPair   bool   `json:"reset_pairing"`
-	NabtoDriver string `json:"nabto_driver"`
+	ResetPair       bool   `json:"reset_pairing"`
+	ForceRTSPIngest bool   `json:"force_rtsp_ingest"`
+	NabtoDriver     string `json:"nabto_driver"`
 	KeyPath     string `json:"key_path"`
 }
 
@@ -180,6 +184,7 @@ func LoadHomeAssistantOptionsFromPath(path string, cfg *Config) {
 		RTSPPort                     int            `json:"rtsp_port"`
 		ONVIFPort                    int            `json:"onvif_port"`
 		ResetPairing                 bool           `json:"reset_pairing"`
+		ForceRTSPIngest              bool           `json:"force_rtsp_ingest"`
 		MQTTBroker                   string         `json:"mqtt_broker"`
 		MQTTHost                     string         `json:"mqtt_host"`
 		MQTTPort                     int            `json:"mqtt_port"`
@@ -241,6 +246,9 @@ func LoadHomeAssistantOptionsFromPath(path string, cfg *Config) {
 	}
 	if opts.ResetPairing {
 		cfg.ResetPairing = true
+	}
+	if opts.ForceRTSPIngest {
+		cfg.ForceRTSPIngest = true
 	}
 	if opts.MQTTBroker != "" {
 		cfg.MQTTBroker = opts.MQTTBroker
@@ -326,11 +334,12 @@ func LoadHomeAssistantOptionsFromPath(path string, cfg *Config) {
 			QRCode:      raw.QRCode,
 			MAC:         mac,
 			Path:        path,
-			Resolution:  raw.Resolution,
-			AudioCodec:  raw.AudioCodec,
-			ResetPair:   raw.ResetPair,
-			NabtoDriver: raw.NabtoDriver,
-			KeyPath:     raw.KeyPath,
+			Resolution:      raw.Resolution,
+			AudioCodec:      raw.AudioCodec,
+			ResetPair:       raw.ResetPair,
+			ForceRTSPIngest: raw.ForceRTSPIngest || cfg.ForceRTSPIngest,
+			NabtoDriver:     raw.NabtoDriver,
+			KeyPath:         raw.KeyPath,
 		})
 	}
 }
@@ -383,6 +392,9 @@ func Resolve(optionsPath string, fs *flag.FlagSet) *Config {
 	}
 	if envReset := os.Getenv("RESET_PAIRING"); envReset == "true" || envReset == "1" {
 		cfg.ResetPairing = true
+	}
+	if envForceRTSP := os.Getenv("FORCE_RTSP_INGEST"); envForceRTSP == "true" || envForceRTSP == "1" {
+		cfg.ForceRTSPIngest = true
 	}
 	if portStr := os.Getenv("RTSP_PORT"); portStr != "" {
 		if p, err := strconv.Atoi(portStr); err == nil && p > 0 {
@@ -534,6 +546,10 @@ func Resolve(optionsPath string, fs *flag.FlagSet) *Config {
 				if b, err := strconv.ParseBool(f.Value.String()); err == nil {
 					cfg.ResetPairing = b
 				}
+			case "force-rtsp-ingest":
+				if b, err := strconv.ParseBool(f.Value.String()); err == nil {
+					cfg.ForceRTSPIngest = b
+				}
 			case "mqtt-broker":
 				cfg.MQTTBroker = f.Value.String()
 			case "mqtt-user":
@@ -594,9 +610,10 @@ func Resolve(optionsPath string, fs *flag.FlagSet) *Config {
 			MAC:         cfg.CameraMAC,
 			Path:        cfg.RTSPPath,
 			Resolution:  cfg.Resolution,
-			AudioCodec:  cfg.AudioCodec,
-			ResetPair:   cfg.ResetPairing,
-			NabtoDriver: cfg.NabtoDriver,
+			AudioCodec:      cfg.AudioCodec,
+			ResetPair:       cfg.ResetPairing,
+			ForceRTSPIngest: cfg.ForceRTSPIngest,
+			NabtoDriver:     cfg.NabtoDriver,
 			KeyPath:     cfg.NabtoConfig.KeyPath,
 			Nabto:       cfg.NabtoConfig,
 		})
@@ -659,9 +676,10 @@ func (c *Config) Validate() error {
 			MAC:         c.CameraMAC,
 			Path:        c.RTSPPath,
 			Resolution:  c.Resolution,
-			AudioCodec:  c.AudioCodec,
-			ResetPair:   c.ResetPairing,
-			NabtoDriver: c.NabtoDriver,
+			AudioCodec:      c.AudioCodec,
+			ResetPair:       c.ResetPairing,
+			ForceRTSPIngest: c.ForceRTSPIngest,
+			NabtoDriver:     c.NabtoDriver,
 			KeyPath:     c.NabtoConfig.KeyPath,
 			Nabto:       c.NabtoConfig,
 		})
