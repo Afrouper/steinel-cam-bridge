@@ -224,3 +224,27 @@ func TestCachedRecordingProviderSyncLatest_FastFailOnError(t *testing.T) {
 	// Verify fast-fail: only 1 attempt made, did not hammer the camera with remaining recordings 402 and 403!
 	assert.Equal(t, int32(1), atomic.LoadInt32(&upstream.videoCalls), "Must fast-fail immediately on stream error without trying subsequent recordings")
 }
+
+func TestCachedRecordingProviderSyncLatest_BreaksOnStreamActive(t *testing.T) {
+	tempDir := t.TempDir()
+	mockExt := NewMockExtractor()
+	cache := NewRecordingCache(tempDir, 5, mockExt)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	upstream := &mockUpstreamProvider{
+		recordings: []RecordingItem{
+			{ID: "501", StartTime: now, FileName: "event_501.mp4", DurationSeconds: 30},
+			{ID: "502", StartTime: now.Add(-time.Minute), FileName: "event_502.mp4", DurationSeconds: 30},
+			{ID: "503", StartTime: now.Add(-2 * time.Minute), FileName: "event_503.mp4", DurationSeconds: 30},
+		},
+	}
+
+	provider := NewCachedRecordingProvider(cache, func() RecordingProvider { return upstream })
+	// Stream is active
+	provider.SetStreamActiveFunc(func() bool { return true })
+
+	newlyCached, err := provider.SyncLatest(context.Background())
+	require.NoError(t, err)
+	assert.Empty(t, newlyCached)
+	assert.Equal(t, int32(0), atomic.LoadInt32(&upstream.videoCalls), "Must not download any recordings when stream is active")
+}

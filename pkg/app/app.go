@@ -159,6 +159,9 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 		camCacheDir := filepath.Join(cfg.CacheDir, cam.Path)
 		recordingCache := storage.NewRecordingCache(camCacheDir, cfg.CacheRecordings, extractor)
 		cachedProvider := storage.NewCachedRecordingProvider(recordingCache, camBridgeMgr.GetRecordingProvider)
+		cachedProvider.SetStreamActiveFunc(func() bool {
+			return camStream.ActiveClients() > 0
+		})
 
 		getRecProvider := func() storage.RecordingProvider {
 			if cfg.CacheRecordings > 0 {

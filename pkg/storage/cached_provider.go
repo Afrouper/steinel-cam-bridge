@@ -20,9 +20,10 @@ var _ RecordingProvider = (*CachedRecordingProvider)(nil)
 // (Decorator Pattern). It serves queries, video streams, and snapshot thumbnails directly
 // from disk when available, avoiding expensive camera SD-card operations.
 type CachedRecordingProvider struct {
-	cache        *RecordingCache
-	upstreamFunc func() RecordingProvider
-	syncMu       sync.Mutex
+	cache          *RecordingCache
+	upstreamFunc   func() RecordingProvider
+	syncMu         sync.Mutex
+	isStreamActive func() bool
 }
 
 // NewCachedRecordingProvider creates a new CachedRecordingProvider.
@@ -36,6 +37,13 @@ func NewCachedRecordingProvider(cache *RecordingCache, upstreamFunc func() Recor
 // Cache returns the underlying RecordingCache.
 func (p *CachedRecordingProvider) Cache() *RecordingCache {
 	return p.cache
+}
+
+// SetStreamActiveFunc registers an optional callback to check whether live streaming is active.
+func (p *CachedRecordingProvider) SetStreamActiveFunc(fn func() bool) {
+	p.syncMu.Lock()
+	defer p.syncMu.Unlock()
+	p.isStreamActive = fn
 }
 
 // ListRecordings implements RecordingProvider.
@@ -248,6 +256,12 @@ func (p *CachedRecordingProvider) SyncLatest(ctx context.Context) ([]RecordingIt
 	// Process recordings from newest to oldest
 	for _, item := range resp.List {
 		if ctx.Err() != nil {
+			break
+		}
+
+		// Check if live RTSP stream became active during loop; if so, break early to prioritize live video
+		if p.isStreamActive != nil && p.isStreamActive() {
+			logger.Debug("CacheProvider", "RTSP stream is actively playing; pausing further background recording downloads to protect live video")
 			break
 		}
 
