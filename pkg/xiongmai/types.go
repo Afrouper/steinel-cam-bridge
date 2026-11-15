@@ -56,6 +56,7 @@ const (
 	MsgPlayEOF           uint16 = 1423
 	MsgPlayClaimReq      uint16 = 1424
 	MsgPlayClaimResp     uint16 = 1425
+	MsgPlayClaimData     uint16 = 1426
 	MsgFileSearchReq     uint16 = 1440
 	MsgFileSearchResp    uint16 = 1441
 	MsgFilePlayReq       uint16 = 1442

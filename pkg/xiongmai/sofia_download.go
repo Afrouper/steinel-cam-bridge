@@ -173,22 +173,35 @@ func (d *SofiaDownloader) Download(ctx context.Context, rec *storage.RecordingIt
 	if err != nil {
 		return fmt.Errorf("failed to marshal OPPlayBack DownloadStart: %w", err)
 	}
-	startPayload = append(startPayload, 0x00)
 
-	startHdr := Header{
-		Magic:      HeaderMagic,
-		Channel:    0x00,
-		SessionID:  sessionID,
-		Sequence:   29,
-		TotalPkt:   0x00,
-		CurPkt:     0x00,
-		MsgID:      MsgPlayReq, // 1420
-		DataLength: uint32(len(startPayload)),
+	sentOnControl := false
+	if d.client != nil && d.client.IsLoggedIn() {
+		logger.Debug("Xiongmai Download", "📡 Sending OPPlayBack DownloadStart (MsgID 1420) on control socket...")
+		if _, err := d.client.SendPacket(MsgPlayReq, startPayload); err == nil {
+			sentOnControl = true
+			logger.Debug("Xiongmai Download", "✅ OPPlayBack DownloadStart acknowledged on control socket")
+		} else {
+			logger.Warn("Xiongmai Download", "⚠️ OPPlayBack DownloadStart on control socket failed: %v, attempting fallback on media socket", err)
+		}
 	}
 
-	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
-	if _, err := conn.Write(append(startHdr.Encode(), startPayload...)); err != nil {
-		return fmt.Errorf("failed to send OPPlayBack DownloadStart: %w", err)
+	if !sentOnControl {
+		startPayloadWithNul := append(startPayload, 0x00)
+		startHdr := Header{
+			Magic:      HeaderMagic,
+			Channel:    0x00,
+			SessionID:  sessionID,
+			Sequence:   29,
+			TotalPkt:   0x00,
+			CurPkt:     0x00,
+			MsgID:      MsgPlayReq, // 1420
+			DataLength: uint32(len(startPayloadWithNul)),
+		}
+
+		_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+		if _, err := conn.Write(append(startHdr.Encode(), startPayloadWithNul...)); err != nil {
+			return fmt.Errorf("failed to send OPPlayBack DownloadStart: %w", err)
+		}
 	}
 
 	if onStart != nil {
@@ -262,11 +275,13 @@ func (d *SofiaDownloader) Download(ctx context.Context, rec *storage.RecordingIt
 			break
 		}
 
-		// Handle Media Packets (MsgID 1422 MsgPlayData or 1412 MsgMonitorData)
-		if hdr.MsgID == MsgPlayData || hdr.MsgID == MsgMonitorData {
+		// Handle Media Packets (MsgID 1422 MsgPlayData, 1426 MsgPlayClaimData, or 1412 MsgMonitorData)
+		if hdr.MsgID == MsgPlayData || hdr.MsgID == MsgPlayClaimData || hdr.MsgID == MsgMonitorData {
 			packetCount++
 			written := d.demuxAndWriteH264(payload, tmpH264)
 			totalBytesWritten += int64(written)
+		} else {
+			logger.Trace("Xiongmai Download", "Ignored non-media packet during download: MsgID=%d, Len=%d", hdr.MsgID, hdr.DataLength)
 		}
 	}
 
