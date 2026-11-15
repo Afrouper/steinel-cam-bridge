@@ -237,13 +237,17 @@ func (d *Driver) syncInitialState() {
 
 	// Propagate detected FPS and Resolution from client Simplify.Encode
 	if d.client != nil {
-		if fps := d.client.GetVideoFPS(); fps > 0 {
+		targetStream := "Main"
+		if strings.EqualFold(d.resolution, "360p") || strings.EqualFold(d.resolution, "sub") {
+			targetStream = "Extra1"
+		}
+		if fps := d.client.GetVideoFPS(targetStream); fps > 0 {
 			if d.sofiaStream != nil {
 				d.sofiaStream.SetFPS(fps)
 			}
-			logger.Info("Xiongmai Driver", "📹 Detected camera video framerate: %d FPS", fps)
+			logger.Info("Xiongmai Driver", "📹 Detected camera video framerate: %d FPS (%s)", fps, targetStream)
 		}
-		if res := d.client.GetVideoResolution(); res != "" {
+		if res := d.client.GetVideoResolution(targetStream); res != "" {
 			if strings.EqualFold(res, "720p") || strings.EqualFold(res, "720") {
 				if d.resolution != "360p" {
 					d.resolution = "720p"
@@ -545,6 +549,11 @@ func (d *Driver) SetResolution(res string) error {
 	// 1. If SofiaStream is configured:
 	if d.sofiaStream != nil {
 		d.sofiaStream.SetStreamType(sofiaStreamType)
+		if d.client != nil {
+			if fps := d.client.GetVideoFPS(sofiaStreamType); fps > 0 {
+				d.sofiaStream.SetFPS(fps)
+			}
+		}
 	}
 
 	// 2. Forced RTSP Ingest mode

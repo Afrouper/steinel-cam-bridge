@@ -291,10 +291,8 @@ func (s *SofiaStream) Start(ctx context.Context) error {
 
 	s.mediaConn = conn
 	s.stopChan = make(chan struct{})
-	if s.streamStartTime.IsZero() {
-		s.streamStartTime = time.Now()
-	}
 	s.tsMu.Lock()
+	s.streamStartTime = time.Now()
 	s.currentTS = 0
 	s.lastFrameTime = time.Time{}
 	s.streamBuf = nil
@@ -612,33 +610,30 @@ func (s *SofiaStream) dispatchAudioLocked(audioData []byte) {
 	}
 }
 
-// generateTimestampLocked generates strictly monotonic 90 kHz RTP timestamps based on camera FPS.
+// generateTimestampLocked generates strictly monotonic 90 kHz RTP timestamps anchored to streamStartTime.
+// This prevents timestamp drift during TCP/Wi-Fi burst packet delivery while ensuring strict monotonicity.
 func (s *SofiaStream) generateTimestampLocked() uint32 {
 	now := time.Now()
-	fps := s.fps
-	if fps <= 0 {
-		fps = 15
+	if s.streamStartTime.IsZero() {
+		s.streamStartTime = now
 	}
-	nominalStep := uint32(90000 / fps)
+
+	wallTicks := uint32(now.Sub(s.streamStartTime).Seconds() * 90000)
 
 	if s.lastFrameTime.IsZero() {
 		s.lastFrameTime = now
-		s.currentTS = 0
+		s.currentTS = wallTicks
 		return s.currentTS
 	}
 
-	elapsed := now.Sub(s.lastFrameTime)
-	ticks := uint32(elapsed.Seconds() * 90000)
-
-	// Ensure strict monotonicity: step at least nominalStep
-	if ticks < nominalStep {
-		ticks = nominalStep
-	} else if ticks > 10*nominalStep {
-		// Cap sudden large pause jumps to 1 second
-		ticks = 90000
+	// RFC 3550 modular comparison: if wallTicks has not advanced beyond currentTS (due to sub-millisecond
+	// TCP bursts or jitter), advance by 1 tick to preserve strict monotonicity without drifting ahead.
+	if int32(wallTicks-s.currentTS) <= 0 {
+		s.currentTS++
+	} else {
+		s.currentTS = wallTicks
 	}
 
-	s.currentTS += ticks
 	s.lastFrameTime = now
 	return s.currentTS
 }
@@ -698,6 +693,7 @@ func (s *SofiaStream) Stop() error {
 	s.currentTS = 0
 	s.lastFrameTime = time.Time{}
 	s.audioTimestamp = 0
+	s.streamStartTime = time.Time{}
 	s.tsMu.Unlock()
 
 	logger.Info("Xiongmai Stream", "⏹️ Sofia native video streaming stopped")

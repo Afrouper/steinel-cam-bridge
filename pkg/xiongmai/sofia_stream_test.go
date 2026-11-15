@@ -700,3 +700,28 @@ func TestSofiaStream_StreamType(t *testing.T) {
 	sDefault.SetStreamType("")
 	assert.Equal(t, "Main", sDefault.StreamType())
 }
+
+func TestSofiaStream_MonotonicTimestamps_NoDrift(t *testing.T) {
+	sofiaStream := NewSofiaStream("127.0.0.1", 34567, nil, nil)
+	sofiaStream.fps = 6
+	start := time.Now()
+	sofiaStream.streamStartTime = start
+
+	// Generate 50 consecutive timestamps simulating bursts at same wall-clock time
+	var timestamps []uint32
+	sofiaStream.tsMu.Lock()
+	for i := 0; i < 50; i++ {
+		ts := sofiaStream.generateTimestampLocked()
+		timestamps = append(timestamps, ts)
+	}
+	sofiaStream.tsMu.Unlock()
+
+	// 1. Strict monotonicity check
+	for i := 1; i < len(timestamps); i++ {
+		assert.Greater(t, timestamps[i], timestamps[i-1], "Each consecutive timestamp must be strictly greater")
+	}
+
+	// 2. Verify no runaway drift: 50 timestamps within <10ms should not race ahead to hundreds of thousands
+	lastTS := timestamps[len(timestamps)-1]
+	assert.Less(t, lastTS, uint32(10000), "Timestamps must not drift ahead into the future during burst delivery")
+}
