@@ -211,7 +211,7 @@ Hex:  [5A] [0F] [0F] [HW] [SW] [MD] [ LUX ] [PIR][TX] [PS] [CT] [HL] [ HLT ] [LL
 | **3** | `6..7` | `HVersion` | Hex | Hardware-Revision des MCU-Boards |
 | **4** | `8..9` | `SVersion` | Hex | Software-/Firmware-Version der MCU |
 | **5** | `10..11` | `Mode` | uint8 | Betriebsmodus: `0` = Aus, `1` = Dauerlicht AN, `2` = Sensor Auto |
-| **6–7** | `12..15` | `Lux` | uint16 | Dämmerungsschwellen-Rohwert im 10er-Raster ($\text{Rohwert} = 250 - 10 \times \text{Index}$, wobei Index $0 = 2\text{ lx}$, Index $25 = 2000\text{ lx} / \text{Tagbetrieb}$) |
+| **6–7** | `12..15` | `Lux` | uint16 | Dämmerungsschwellen-Rohwert im 10er-Raster ($\text{Rohwert} = 250 - 10 \times \text{Stufe}$, wobei Stufe $0 = 2\text{ lx}$, Stufe $25 = 2000\text{ lx} / \text{Tagbetrieb}$; zentral verwaltet via `pkg/mcu/lux.go`) |
 | **8** | `16..17` | `PIRActive` | bool | PIR-Sensor aktiv (`0` = inaktiv, `1` = aktiv) |
 | **9** | `18..19` | `tuxingVal` | Bitmaske | Bewegungserkennung: Bit 0 = PIR-Sensor, Bit 1 = Kamera-Bilderkennung |
 | **10** | `20..21` | `PIRSensitivity` | uint8 | PIR-Erfassungsbereich / Empfindlichkeit ($0\ \%$ bis $100\ \%$) |
@@ -281,6 +281,16 @@ Die Kamera antwortet asynchron mit der Liste der Aufnahme-Einträge (`time_tag`,
 Die embedded CPU der Leuchte stürzt ab, wenn parallele Leseanfragen an die SD-Karte gestellt werden.
 - Sowohl `GetEventList` als auch `StreamVideo` sind durch strikte **Single-Flight Mutexes** (`eventListQueryMu` und `transferMu.TryLock()`) geschützt.
 - Parallele Anfragen erhalten sofort `ErrSDCardBusy` (`HTTP 429 / 503`), wodurch die Kamera-Hardware zuverlässig geschützt wird.
+
+### 5. Deterministische chronologische Sortierung
+Die von der Kamera via `get_event_list` zurückgegebenen Aufnahme-Einträge werden in `CachedRecordingProvider` modellübergreifend deterministisch absteigend nach `StartTime` (neueste zuerst) sortiert. Dadurch erhalten REST-Clients, Home Assistant und ONVIF Profile G NVRs stets die aktuellsten Clips an erster Position.
+
+### 6. Modellunabhängiger Bewegungs-Trigger bei neuen Aufnahmen
+Der Hintergrund-Syncer (`RecordingSyncer`) erkennt neue SD-Karten-Aufnahmen zur Laufzeit (`!isInitial`) und feuert unmittelbar einen Bewegungsalarm an den lokalen Event-Bus (`camBus.SetMotion(true)` mit 10-Sekunden Auto-Reset Timer). Dies garantiert, dass auch Leuchten ohne separaten PIR-Live-Push zuverlässig Bewegung in Home Assistant und ONVIF Profile T PullPoint signalisieren.
+
+### 7. Livestream-Schutz & Fast-Fail
+- Bei aktivem RTSP-Livestream (`isStreamActive() == true`) werden ressourcenintensive MP4-Video-Downloads aufgeschoben und auf schonende Metadaten-Abfragen beschränkt, um WLAN-Bandbreite und CPU der Kamera für den Live-Videofluss freizuhalten.
+- Bei Verbindungsfehlern oder Timeouts bricht die Download-Schleife sofort ab (`fast-fail`), um ein unnötiges Blockieren des DataChannels zu verhindern.
 
 ---
 
