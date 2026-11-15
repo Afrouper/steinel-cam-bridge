@@ -55,6 +55,7 @@ type SofiaStream struct {
 	audioCodec      string
 	audioSeq        uint16
 	audioSSRC       uint32
+	audioTimestamp  uint32
 }
 
 // NewSofiaStream creates a new Sofia native video streamer for Steinel L 620 / Xiongmai cameras.
@@ -299,6 +300,7 @@ func (s *SofiaStream) Start(ctx context.Context) error {
 	s.streamBuf = nil
 	s.audioSSRC = uint32(time.Now().UnixNano())
 	s.audioSeq = 0
+	s.audioTimestamp = 0
 	s.tsMu.Unlock()
 	s.running.Store(true)
 
@@ -457,7 +459,7 @@ func (s *SofiaStream) processStreamBufferLocked() {
 			}
 
 		case 0xFA, 0xF9:
-			// Audio frame (G.711)
+			// Audio frame (0xFA) or metadata frame (0xF9)
 			headerLen = 8
 			if len(s.streamBuf) < headerLen {
 				return
@@ -497,9 +499,12 @@ func (s *SofiaStream) processStreamBufferLocked() {
 		case 0xFC, 0xFE, 0xFD:
 			h264Data := record[headerLen:]
 			s.dispatchFrameLocked(h264Data)
-		case 0xFA, 0xF9:
+		case 0xFA:
 			audioData := record[headerLen:]
 			s.dispatchAudioLocked(audioData)
+		case 0xF9:
+			// 0xF9 is stream/encoder metadata or sync marker in Xiongmai DVRIP protocol, NOT audio samples.
+			// Silently advance buffer without forwarding to audio pipeline to eliminate clicking noise (Issue #74).
 		}
 	}
 
@@ -574,7 +579,7 @@ func (s *SofiaStream) dispatchFrameLocked(data []byte) {
 
 // dispatchAudioLocked processes camera microphone audio (8 kHz G.711 A-law) and forwards it to the RTSP server.
 func (s *SofiaStream) dispatchAudioLocked(audioData []byte) {
-	if len(audioData) == 0 || s.rtspServer == nil {
+	if len(audioData) == 0 || len(audioData) > 4096 || s.rtspServer == nil {
 		return
 	}
 	if s.audioTranscoder != nil {
@@ -585,18 +590,24 @@ func (s *SofiaStream) dispatchAudioLocked(audioData []byte) {
 	}); ok {
 		pcmuPayload := audio.TranscodePCMAToPCMU(audioData)
 		now := time.Now()
-		ts := uint32(now.Sub(s.streamStartTime).Seconds() * 8000)
+		if s.audioTimestamp == 0 {
+			if s.streamStartTime.IsZero() {
+				s.streamStartTime = now
+			}
+			s.audioTimestamp = uint32(now.Sub(s.streamStartTime).Seconds() * 8000)
+		}
 		pkt := &rtp.Packet{
 			Header: rtp.Header{
 				Version:        2,
 				PayloadType:    0,
 				SequenceNumber: s.audioSeq,
-				Timestamp:      ts,
+				Timestamp:      s.audioTimestamp,
 				SSRC:           s.audioSSRC,
 			},
 			Payload: pcmuPayload,
 		}
 		s.audioSeq++
+		s.audioTimestamp += uint32(len(pcmuPayload))
 		audioWriter.WriteAudioPacket(pkt)
 	}
 }
@@ -686,6 +697,7 @@ func (s *SofiaStream) Stop() error {
 	s.streamBuf = nil
 	s.currentTS = 0
 	s.lastFrameTime = time.Time{}
+	s.audioTimestamp = 0
 	s.tsMu.Unlock()
 
 	logger.Info("Xiongmai Stream", "⏹️ Sofia native video streaming stopped")

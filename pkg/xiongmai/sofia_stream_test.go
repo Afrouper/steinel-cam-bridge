@@ -23,10 +23,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// mockMediaStream tracks packets received via VideoWriter.WriteVideoPacket.
+// mockMediaStream tracks packets received via VideoWriter.WriteVideoPacket and WriteAudioPacket.
 type mockMediaStream struct {
 	mu           sync.Mutex
 	videoPackets []*rtp.Packet
+	audioPackets []*rtp.Packet
 	sps          []byte
 	pps          []byte
 }
@@ -35,6 +36,16 @@ func (m *mockMediaStream) WriteVideoPacket(pkt *rtp.Packet) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.videoPackets = append(m.videoPackets, pkt)
+}
+
+func (m *mockMediaStream) WriteAudioPacket(pkt *rtp.Packet) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.audioPackets = append(m.audioPackets, pkt)
+}
+
+func (m *mockMediaStream) GetAudioCodec() string {
+	return "pcmu"
 }
 
 func (m *mockMediaStream) SetH264Parameters(sps, pps []byte) {
@@ -49,6 +60,14 @@ func (m *mockMediaStream) getPackets() []*rtp.Packet {
 	defer m.mu.Unlock()
 	res := make([]*rtp.Packet, len(m.videoPackets))
 	copy(res, m.videoPackets)
+	return res
+}
+
+func (m *mockMediaStream) getAudioPackets() []*rtp.Packet {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	res := make([]*rtp.Packet, len(m.audioPackets))
+	copy(res, m.audioPackets)
 	return res
 }
 
@@ -344,7 +363,7 @@ func TestSofiaStreamMediaMarkersDemuxing(t *testing.T) {
 	assert.NotEmpty(t, mockStream.pps, "PPS should be injected into RTSP stream")
 	iFrameTS := packets[0].Timestamp
 
-	// 3. Feed Audio chunk: should be safely consumed without corrupting video
+	// 3. Feed Audio chunk: should be dispatched to audioWriter
 	var audioChunk []byte
 	audioChunk = append(audioChunk, MarkerAudio...)
 	audioChunk = append(audioChunk, make([]byte, 4)...)
@@ -353,7 +372,27 @@ func TestSofiaStreamMediaMarkersDemuxing(t *testing.T) {
 	audioChunk = append(audioChunk, audioData...)
 	sofiaStream.handleMediaPayload(audioChunk)
 
-	// 4. Feed P-Frame record: 8 bytes header + P-frame NALU
+	audioPkts1 := mockStream.getAudioPackets()
+	require.Len(t, audioPkts1, 1, "audio chunk should be dispatched to audioWriter")
+
+	// 4. Feed Metadata chunk (MarkerMeta 00 00 01 F9): must be safely consumed without being dispatched to audio (Issue #74)
+	var metaChunk []byte
+	metaChunk = append(metaChunk, MarkerMeta...)
+	metaChunk = append(metaChunk, make([]byte, 4)...)
+	metaData := []byte{0xAA, 0xBB, 0xCC, 0xDD}
+	binary.LittleEndian.PutUint16(metaChunk[6:8], uint16(len(metaData)))
+	metaChunk = append(metaChunk, metaData...)
+	sofiaStream.handleMediaPayload(metaChunk)
+
+	assert.Len(t, mockStream.getAudioPackets(), 1, "0xF9 metadata packet must be ignored and not dispatched as audio to prevent clicking noise")
+
+	// 5. Feed second Audio chunk: verify monotonic timestamp increment by payload length
+	sofiaStream.handleMediaPayload(audioChunk)
+	audioPkts2 := mockStream.getAudioPackets()
+	require.Len(t, audioPkts2, 2, "second audio chunk should be dispatched")
+	assert.Equal(t, audioPkts1[0].Timestamp+uint32(len(audioData)), audioPkts2[1].Timestamp, "audio RTP timestamps must increment monotonically by sample count")
+
+	// 6. Feed P-Frame record: 8 bytes header + P-frame NALU
 	pNalu := []byte{0x00, 0x00, 0x00, 0x01, 0x41, 0x9a, 0x01, 0x02, 0x03}
 	var pFrameChunk []byte
 	pFrameChunk = append(pFrameChunk, MarkerPFrame...)

@@ -320,8 +320,8 @@ func (d *SofiaDownloader) demuxAndWriteH264(payload []byte, dest io.Writer) int 
 			return 0
 		}
 
-		if bytes.Equal(marker, MarkerAudio) {
-			// Audio frame: skip to prevent H.264 elementary stream corruption
+		if bytes.Equal(marker, MarkerAudio) || bytes.Equal(marker, MarkerMeta) {
+			// Audio frame or metadata/sync frame: skip to prevent H.264 elementary stream corruption
 			return 0
 		}
 	}

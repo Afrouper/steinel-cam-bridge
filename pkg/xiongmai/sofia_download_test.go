@@ -117,6 +117,15 @@ func TestSofiaDownloader_DownloadSuccess(t *testing.T) {
 		}
 		_, _ = conn.Write(append(dataHdrB.Encode(), pFramePayload...))
 
+		// Packet B2: Metadata marker + 8 bytes header (should be skipped)
+		metaPayload := append(MarkerMeta, bytes.Repeat([]byte{0x00}, 8)...)
+		dataHdrMeta := Header{
+			Magic:      HeaderMagic,
+			MsgID:      MsgPlayData,
+			DataLength: uint32(len(metaPayload)),
+		}
+		_, _ = conn.Write(append(dataHdrMeta.Encode(), metaPayload...))
+
 		// Packet C: EOF packet (MsgID 1423 MsgPlayEOF)
 		eofHdr := Header{
 			Magic:      HeaderMagic,

@@ -227,7 +227,7 @@ func (st *Stream) WriteAACFrame(au []byte, pts time.Duration) {
 		return
 	}
 
-	ts := uint32(pts.Seconds() * 16000)
+	ts := uint32((pts * 16) / time.Millisecond)
 	for _, pkt := range pkts {
 		pkt.Timestamp = ts
 		_ = sStream.WritePacketRTP(st.audioMedia, pkt)
