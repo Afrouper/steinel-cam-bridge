@@ -53,6 +53,8 @@ type Stream struct {
 	backchannelMu           sync.Mutex
 	activeTalkSession       *gortsplib.ServerSession
 	lastTalkTime            time.Time
+	video                   *videoPipe
+	holdStop                chan struct{}
 	mu                      sync.RWMutex
 }
 
@@ -141,7 +143,81 @@ func NewStream(pathName string, audioCodec string) (*Stream, error) {
 		videoMedia:        vMedia,
 		audioMedia:        aMedia,
 		backchannelMedia:  bcMedia,
+		video:             newVideoPipe(),
 	}, nil
+}
+
+// SetVideoOptions configures instant start for late joiners and how long the
+// last keyframe is repeated while the camera is away (0 disables holding).
+func (st *Stream) SetVideoOptions(instantStart bool, holdLastFrame time.Duration) {
+	st.video.mu.Lock()
+	defer st.video.mu.Unlock()
+	st.video.instantStart = instantStart
+	st.video.holdMax = holdLastFrame
+}
+
+// VideoSize returns the picture size found in the camera's H.264 stream and
+// the time it was first seen (zero values while unknown).
+func (st *Stream) VideoSize() (width int, height int, since time.Time) {
+	st.video.mu.Lock()
+	defer st.video.mu.Unlock()
+	return st.video.width, st.video.height, st.video.sizeSince
+}
+
+// VideoStats describes the state of the video pipeline for diagnostics.
+type VideoStats struct {
+	Width       int    `json:"width"`
+	Height      int    `json:"height"`
+	Live        bool   `json:"live"`
+	Holding     bool   `json:"holding_last_frame"`
+	HoldFrames  uint64 `json:"hold_frames"`
+	JoinBursts  uint64 `json:"instant_starts"`
+	Restarts    uint64 `json:"source_restarts"`
+	CachedPkts  int    `json:"cached_packets"`
+	CachedBytes int    `json:"cached_bytes"`
+}
+
+// VideoStats returns a snapshot of the video pipeline counters.
+func (st *Stream) VideoStats() VideoStats {
+	st.video.mu.Lock()
+	defer st.video.mu.Unlock()
+	v := st.video
+	return VideoStats{
+		Width:       v.width,
+		Height:      v.height,
+		Live:        !v.lastLiveAt.IsZero() && time.Since(v.lastLiveAt) < liveWindow,
+		Holding:     v.holdActive,
+		HoldFrames:  v.holdFrames,
+		JoinBursts:  v.joinBursts,
+		Restarts:    v.restarts,
+		CachedPkts:  len(v.gop),
+		CachedBytes: v.gopBytes,
+	}
+}
+
+// runHoldLoop repeats the last keyframe while the camera delivers nothing, so
+// that connected clients keep their session and resume without reconnecting.
+func (st *Stream) runHoldLoop(stop <-chan struct{}) {
+	ticker := time.NewTicker(holdTickInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case now := <-ticker.C:
+			st.mu.RLock()
+			sStream := st.serverStream
+			st.mu.RUnlock()
+			if sStream == nil {
+				continue
+			}
+			st.video.mu.Lock()
+			for _, pkt := range st.video.holdFrame(now) {
+				_ = sStream.WritePacketRTP(st.videoMedia, pkt)
+			}
+			st.video.mu.Unlock()
+		}
+	}
 }
 
 // initServerStream binds the stream to a running gortsplib.Server.
@@ -150,6 +226,17 @@ func (st *Stream) initServerStream(srv *gortsplib.Server) {
 	defer st.mu.Unlock()
 	if st.serverStream == nil && srv != nil {
 		st.serverStream = gortsplib.NewServerStream(srv, st.session)
+		st.video.mu.Lock()
+		st.video.onHoldChange = func(active bool) {
+			if active {
+				logger.Warn("RTSP", "🧊 No video from camera on '%s': holding last picture for connected clients", st.pathName)
+			} else {
+				logger.Info("RTSP", "▶️ Live video resumed on '%s'", st.pathName)
+			}
+		}
+		st.video.mu.Unlock()
+		st.holdStop = make(chan struct{})
+		go st.runHoldLoop(st.holdStop)
 	}
 }
 
@@ -158,6 +245,10 @@ func (st *Stream) Close() {
 	st.mu.Lock()
 	stream := st.serverStream
 	st.serverStream = nil
+	if st.holdStop != nil {
+		close(st.holdStop)
+		st.holdStop = nil
+	}
 	st.mu.Unlock()
 
 	if stream != nil {
@@ -207,8 +298,56 @@ func (st *Stream) WriteVideoPacket(pkt *rtp.Packet) {
 	if sStream == nil {
 		return
 	}
-	pkt.PayloadType = 96
-	_ = sStream.WritePacketRTP(st.videoMedia, pkt)
+
+	st.video.mu.Lock()
+	defer st.video.mu.Unlock()
+	out := st.video.ingest(pkt, time.Now())
+	if out == nil {
+		return
+	}
+	if sps, pps, ok := st.video.takeParams(); ok {
+		// Advertise the parameter sets in the SDP so clients can set up their
+		// decoder before the first keyframe arrives.
+		st.videoFormat.SafeSetParams(sps, pps)
+	}
+	_ = sStream.WritePacketRTP(st.videoMedia, out)
+}
+
+// sendJoinBurst queues the current group of pictures for a session that is
+// about to start playing, so it can show a picture without waiting for the
+// camera's next keyframe. It must be called from within the OnPlay callback:
+// gortsplib queues the packets and flushes them right after the PLAY response.
+func (st *Stream) sendJoinBurst(sess *gortsplib.ServerSession) {
+	if tr := sess.SetuppedTransport(); tr == nil || *tr == gortsplib.TransportUDPMulticast {
+		return
+	}
+	hasVideo := false
+	for _, m := range sess.SetuppedMedias() {
+		if m == st.videoMedia {
+			hasVideo = true
+			break
+		}
+	}
+	if !hasVideo {
+		return
+	}
+
+	st.video.mu.Lock()
+	burst := st.video.joinBurst(time.Now())
+	if len(burst) == 0 {
+		st.video.mu.Unlock()
+		return
+	}
+	for _, pkt := range burst {
+		_ = sess.WritePacketRTP(st.videoMedia, pkt)
+	}
+	logger.Debug("RTSP", "⚡ Instant start: sent %d cached packets to new client on '%s'", len(burst), st.pathName)
+	// The session only receives live packets once OnPlay has returned. Keep the
+	// video path blocked for that moment so no packet falls into the gap.
+	go func() {
+		time.Sleep(joinBurstSettleWindow)
+		st.video.mu.Unlock()
+	}()
 }
 
 // WriteAACFrame encodes and writes an AAC frame to all clients connected to this stream.
@@ -264,6 +403,7 @@ func (st *Stream) handlePlay(path string, sess *gortsplib.ServerSession) {
 			if count == 1 {
 				logger.Info("RTSP", "▶️ Stream active (client connected: %s)", path)
 			}
+			st.sendJoinBurst(sess)
 		}
 	}
 

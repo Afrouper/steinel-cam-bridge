@@ -72,6 +72,12 @@ type Config struct {
 	CacheDir                     string
 	IsBeta                       bool
 	AppVersion                   string
+	// InstantStart serves new RTSP viewers the current group of pictures so
+	// they show a picture without waiting for the next keyframe.
+	InstantStart bool
+	// HoldLastFrameSeconds repeats the last keyframe for this many seconds
+	// while the camera is away (0 = off), so clients keep their session.
+	HoldLastFrameSeconds int
 }
 
 // NewDefaultConfig returns a Config initialized with Layer 1 (code) defaults.
@@ -110,6 +116,8 @@ func NewDefaultConfig() *Config {
 		CacheDir:                     cacheDir,
 		IsBeta:                       false,
 		AppVersion:                   "dev",
+		InstantStart:                 true,
+		HoldLastFrameSeconds:         300,
 	}
 }
 
@@ -210,6 +218,8 @@ func LoadHomeAssistantOptionsFromPath(path string, cfg *Config) {
 		BridgePassword               string         `json:"bridge_password"`
 		CacheRecordings              *int           `json:"cache_recordings"`
 		CacheDir                     string         `json:"cache_dir"`
+		InstantStart                 *bool          `json:"instant_start"`
+		HoldLastFrameSeconds         *int           `json:"hold_last_frame_seconds"`
 	}
 
 	if err := json.Unmarshal(data, &opts); err != nil {
@@ -309,6 +319,12 @@ func LoadHomeAssistantOptionsFromPath(path string, cfg *Config) {
 	}
 	if opts.CacheDir != "" {
 		cfg.CacheDir = opts.CacheDir
+	}
+	if opts.InstantStart != nil {
+		cfg.InstantStart = *opts.InstantStart
+	}
+	if opts.HoldLastFrameSeconds != nil && *opts.HoldLastFrameSeconds >= 0 {
+		cfg.HoldLastFrameSeconds = *opts.HoldLastFrameSeconds
 	}
 
 	for _, raw := range opts.Cameras {
@@ -524,6 +540,14 @@ func Resolve(optionsPath string, fs *flag.FlagSet) *Config {
 	}
 	if cd := os.Getenv("CACHE_DIR"); cd != "" {
 		cfg.CacheDir = cd
+	}
+	if v := strings.ToLower(os.Getenv("INSTANT_START")); v != "" {
+		cfg.InstantStart = v == "true" || v == "1"
+	}
+	if v := os.Getenv("HOLD_LAST_FRAME_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			cfg.HoldLastFrameSeconds = n
+		}
 	}
 
 	// 4. Layer 4: Explicit CLI Flags (POSIX)
