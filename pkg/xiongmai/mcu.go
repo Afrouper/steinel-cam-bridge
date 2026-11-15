@@ -3,6 +3,8 @@ package xiongmai
 import (
 	"fmt"
 	"strings"
+
+	"github.com/Afrouper/steinel-cam-bridge/pkg/mcu"
 )
 
 // MCUConfig represents the parsed MCU settings from the Steinel L 620 CAM.
@@ -44,22 +46,13 @@ func CharConversion(val int) byte {
 	return byte(val + 'a')
 }
 
-// LuxTable defines the 26-level twilight threshold lookup table used by the Steinel CAM app (DetectSettingActivity.java).
-var LuxTable = [26]int{
-	2, 3, 5, 7, 10, 18, 30, 38, 50, 58, 70, 85, 100,
-	125, 150, 175, 200, 250, 300, 400, 500, 750, 1000, 1300, 1600, 2000,
-}
+// LuxTable references the centralized 26-level twilight threshold lookup table from pkg/mcu.
+var LuxTable = mcu.LuxTable
 
 // Helper to map 0-25 character conversion value to realistic Lux values according to the app lookup table.
 // In the MCU, the index is inverted: progress = 25 - conv (e.g. 'n'=13 -> 25-13=12 -> 100 Lux; 'k'=10 -> 25-10=15 -> 175 Lux).
 func mapLuxValue(conv int) int {
-	progress := 25 - conv
-	if progress < 0 {
-		progress = 0
-	} else if progress >= len(LuxTable) {
-		progress = len(LuxTable) - 1
-	}
-	return LuxTable[progress]
+	return mcu.StepToLux(25 - conv)
 }
 
 // ParseMCUString parses a 12-character MCU response string into an MCUConfig struct.
@@ -148,18 +141,7 @@ func BuildQueryMCUCommand() string {
 
 // BuildSetLuxCommand builds the MCU command to set the twilight threshold: "BX<char>U"
 func BuildSetLuxCommand(lux int) string {
-	bestIdx := 0
-	minDiff := 999999
-	for i, val := range LuxTable {
-		diff := val - lux
-		if diff < 0 {
-			diff = -diff
-		}
-		if diff < minDiff {
-			minDiff = diff
-			bestIdx = i
-		}
-	}
+	bestIdx := mcu.LuxToStep(lux)
 	conv := 25 - bestIdx
 	return fmt.Sprintf("BX%cU", CharConversion(conv))
 }

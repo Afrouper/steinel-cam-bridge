@@ -166,7 +166,7 @@ func (c *Client) publishDeviceStatus(dev *CameraDevice, st events.DeviceStatus) 
 	pub("lowlight/state", strconv.Itoa(st.Lowlight))
 
 	// 3. Sensor values & thresholds
-	if st.Lux >= 2 {
+	if st.Lux > 0 {
 		pub("lux_threshold/state", strconv.Itoa(st.Lux))
 		pub("lux/state", strconv.Itoa(st.Lux))
 	}

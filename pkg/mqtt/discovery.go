@@ -107,15 +107,8 @@ func (c *Client) publishDeviceDiscovery(client paho.Client, dev *CameraDevice) {
 		"icon":                     "mdi:flood-light",
 	})
 
-	// 6. Sensor (Umgebungshelligkeit in Lux)
-	publishEntity("sensor", "lux", map[string]interface{}{
-		"name":                "Umgebungshelligkeit",
-		"device_class":        "illuminance",
-		"state_class":         "measurement",
-		"unit_of_measurement": "lx",
-		"state_topic":         fmt.Sprintf("%s/lux/state", dev.baseTopic),
-		"icon":                "mdi:weather-sunny",
-	})
+	// 6. Purge legacy sensor.lux (Steinels have no continuous luxmeter, threshold is mapped to number.lux_threshold)
+	client.Publish(fmt.Sprintf("%s/sensor/%s/lux/config", c.cfg.DiscoveryPrefix, dev.nodeID), 1, true, []byte(""))
 
 	// 7. Binary Sensor (Bewegungserkennung)
 	publishEntity("binary_sensor", "motion", map[string]interface{}{
@@ -127,11 +120,11 @@ func (c *Client) publishDeviceDiscovery(client paho.Client, dev *CameraDevice) {
 		"icon":         "mdi:motion-sensor",
 	})
 
-	// 8. Number (Dämmerungsschwelle in Lux: 2 - 1000)
+	// 8. Number (Dämmerungsschwelle in Lux: 2 - 2000)
 	publishEntity("number", "lux_threshold", map[string]interface{}{
 		"name":                "Dämmerungsschwelle",
 		"min":                 2,
-		"max":                 1000,
+		"max":                 2000,
 		"step":                10,
 		"unit_of_measurement": "lx",
 		"icon":                "mdi:weather-night",

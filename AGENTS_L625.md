@@ -211,7 +211,7 @@ Hex:  [5A] [0F] [0F] [HW] [SW] [MD] [ LUX ] [PIR][TX] [PS] [CT] [HL] [ HLT ] [LL
 | **3** | `6..7` | `HVersion` | Hex | Hardware-Revision des MCU-Boards |
 | **4** | `8..9` | `SVersion` | Hex | Software-/Firmware-Version der MCU |
 | **5** | `10..11` | `Mode` | uint8 | Betriebsmodus: `0` = Aus, `1` = Dauerlicht AN, `2` = Sensor Auto |
-| **6–7** | `12..15` | `Lux` | uint16 | Gemessene Umgebungshelligkeit in Lux ($2$ bis $1000\text{ lx}$, $10000 = \text{Tag}$) |
+| **6–7** | `12..15` | `Lux` | uint16 | Dämmerungsschwellen-Rohwert im 10er-Raster ($\text{Rohwert} = 250 - 10 \times \text{Index}$, wobei Index $0 = 2\text{ lx}$, Index $25 = 2000\text{ lx} / \text{Tagbetrieb}$) |
 | **8** | `16..17` | `PIRActive` | bool | PIR-Sensor aktiv (`0` = inaktiv, `1` = aktiv) |
 | **9** | `18..19` | `tuxingVal` | Bitmaske | Bewegungserkennung: Bit 0 = PIR-Sensor, Bit 1 = Kamera-Bilderkennung |
 | **10** | `20..21` | `PIRSensitivity` | uint8 | PIR-Erfassungsbereich / Empfindlichkeit ($0\ \%$ bis $100\ \%$) |
@@ -239,7 +239,7 @@ Alle Steuerbefehle beginnen mit Header `0x5A`, gefolgt von der Befehlslänge, de
 | **Grundlicht dimmen** | `5A 02 0A <PCT>` | `5A020A147A` | Setzt Grundlicht auf z. B. 20 % (`0x14`) |
 | **Grundlicht-Dauer** | `5A 03 0B <VAL16>` | `5A030B...` | Setzt Einschaltdauer des Grundlichts |
 | **PIR-Sensitivität** | `5A 02 06 <PCT>` | `5A020650B2` | Setzt PIR-Empfindlichkeit auf z. B. 80 % (`0x50`) |
-| **Dämmerungsschwelle** | `5A 03 04 <LUX16>` | `5A0304000A6B` | Setzt Dämmerungsschwelle auf z. B. 10 Lux (`0x000A`) |
+| **Dämmerungsschwelle** | `5A 03 04 <RAW16>` | `5A030400DC33` | Setzt Dämmerungsschwelle auf z. B. 7 Lux (Rohwert 220 = `0x00DC`) |
 
 ---
 
