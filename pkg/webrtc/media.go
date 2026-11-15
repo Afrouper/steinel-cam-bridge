@@ -7,6 +7,7 @@ import (
 
 	"github.com/Afrouper/steinel-cam-bridge/pkg/audio"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/logger"
+	"github.com/Afrouper/steinel-cam-bridge/pkg/rtsp"
 
 	"github.com/pion/rtcp"
 	pion "github.com/pion/webrtc/v4"
@@ -43,6 +44,14 @@ func (b *Bridge) readAudioLoop(ctx context.Context, track *pion.TrackRemote) {
 	var codec string
 	if b.rtspServer != nil {
 		codec = b.rtspServer.GetAudioCodec()
+	}
+	if rtsp.IsAudioDisabled(codec) {
+		logger.Info("Audio", "🔇 Audio is disabled (audio_codec: none): microphone packets are discarded")
+		for {
+			if _, _, err := track.ReadRTP(); err != nil || ctx.Err() != nil {
+				return
+			}
+		}
 	}
 	if codec == "aac" {
 		logger.Info("Audio", "🔊 Transcoding audio: G.711u (8kHz) -> AAC-LC (16kHz) (Microphone -> Clients)")

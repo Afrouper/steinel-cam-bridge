@@ -239,7 +239,7 @@ func (h *MediaHandler) formatProfileXML(token, name string, ch *CameraChannel, i
 		encToken = fmt.Sprintf("VideoEncoderConfig_%s_%s", path, encSuffix)
 	}
 
-	return fmt.Sprintf(`  <trt:Profiles token="%s" fixed="true">
+	profile := fmt.Sprintf(`  <trt:Profiles token="%s" fixed="true">
     <tt:Name>%s</tt:Name>
     <tt:VideoSourceConfiguration token="VideoSourceConfig_%d">
       <tt:Name>VideoSourceConfig_%d</tt:Name>
@@ -302,6 +302,23 @@ func (h *MediaHandler) formatProfileXML(token, name string, ch *CameraChannel, i
 		fps*3, h264Profile,
 		chIndex, chIndex, audioEncoding, sampleRate,
 		chIndex, chIndex, chIndex)
+
+	if isAudioDisabled(audioCodec) {
+		profile = audioConfigBlocks.ReplaceAllString(profile, "")
+	}
+	return profile
+}
+
+// audioConfigBlocks matches the audio source / encoder / output sections of a media profile.
+var audioConfigBlocks = regexp.MustCompile(`(?s)\s*<tt:Audio(Source|Encoder|Output)Configuration .*?</tt:Audio(Source|Encoder|Output)Configuration>`)
+
+// isAudioDisabled reports whether the camera's stream is published without audio.
+func isAudioDisabled(audioCodec string) bool {
+	switch strings.ToLower(strings.TrimSpace(audioCodec)) {
+	case "none", "off", "aus", "disabled":
+		return true
+	}
+	return false
 }
 
 func (h *MediaHandler) getProfiles() string {

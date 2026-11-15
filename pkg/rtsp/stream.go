@@ -79,9 +79,21 @@ func NewStream(pathName string, audioCodec string) (*Stream, error) {
 		Formats: []format.Format{vFormat},
 	}
 
-	// 2. Setup Audio format (AAC or PCMU)
+	// 2. Setup Audio format (AAC, PCMU or none)
 	var aFormat format.Format
 	var aacEncoder *rtpmpeg4audio.Encoder
+
+	if IsAudioDisabled(audioCodec) {
+		// Video-only stream: no microphone track and no talk-back channel.
+		return &Stream{
+			pathName:    pathName,
+			session:     &description.Session{Medias: []*description.Media{vMedia}},
+			videoFormat: vFormat,
+			audioCodec:  AudioCodecNone,
+			videoMedia:  vMedia,
+			video:       newVideoPipe(),
+		}, nil
+	}
 
 	if audioCodec == "pcmu" {
 		aFormat = &format.G711{
@@ -145,6 +157,18 @@ func NewStream(pathName string, audioCodec string) (*Stream, error) {
 		backchannelMedia:  bcMedia,
 		video:             newVideoPipe(),
 	}, nil
+}
+
+// AudioCodecNone is the audio codec value of a video-only stream.
+const AudioCodecNone = "none"
+
+// IsAudioDisabled reports whether the configured audio codec switches audio off.
+func IsAudioDisabled(audioCodec string) bool {
+	switch strings.ToLower(strings.TrimSpace(audioCodec)) {
+	case "none", "off", "aus", "disabled":
+		return true
+	}
+	return false
 }
 
 // SetVideoOptions configures instant start for late joiners and how long the
@@ -261,7 +285,7 @@ func (st *Stream) PathName() string {
 	return st.pathName
 }
 
-// GetAudioCodec returns the configured audio codec ("aac" or "pcmu").
+// GetAudioCodec returns the configured audio codec ("aac", "pcmu" or "none").
 func (st *Stream) GetAudioCodec() string {
 	return st.audioCodec
 }
@@ -357,7 +381,7 @@ func (st *Stream) WriteAACFrame(au []byte, pts time.Duration) {
 	enc := st.aacRTPEncoder
 	st.mu.Unlock()
 
-	if sStream == nil || enc == nil || len(au) == 0 {
+	if sStream == nil || enc == nil || len(au) == 0 || st.audioMedia == nil {
 		return
 	}
 
@@ -379,7 +403,7 @@ func (st *Stream) WriteAudioPacket(pkt *rtp.Packet) {
 	sStream := st.serverStream
 	st.mu.RUnlock()
 
-	if sStream == nil {
+	if sStream == nil || st.audioMedia == nil {
 		return
 	}
 	pkt.PayloadType = 0
@@ -417,6 +441,9 @@ func (st *Stream) handlePlay(path string, sess *gortsplib.ServerSession) {
 
 // handleBackchannelPacket handles an incoming backchannel RTP packet.
 func (st *Stream) handleBackchannelPacket(medi *description.Media, pkt *rtp.Packet, source string, sess *gortsplib.ServerSession) {
+	if st.backchannelMedia == nil {
+		return // video-only stream: no talk-back
+	}
 	if medi == nil || medi == st.backchannelMedia || medi.IsBackChannel {
 		// Single-talker exclusivity per stream
 		now := time.Now()

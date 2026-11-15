@@ -60,6 +60,9 @@ func NewServer(port int, pathName string, audioCodec string, authUser string, au
 	if audioCodec == "" {
 		audioCodec = "aac"
 	}
+	if IsAudioDisabled(audioCodec) {
+		audioCodec = AudioCodecNone
+	}
 
 	var nonce string
 	if authUser != "" {

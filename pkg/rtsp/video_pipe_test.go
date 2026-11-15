@@ -292,7 +292,7 @@ func startTestClient(t *testing.T, url string) (*gortsplib.Client, *testReader, 
 }
 
 func TestInstantStartEndToEnd(t *testing.T) {
-	srv, err := NewServer(8571, "cam", "pcmu", "", "")
+	srv, err := NewServer(8571, "cam", "none", "", "")
 	require.NoError(t, err)
 	require.NoError(t, srv.Start())
 	defer srv.Close()
@@ -313,6 +313,7 @@ func TestInstantStartEndToEnd(t *testing.T) {
 	c, r, desc := startTestClient(t, "rtsp://127.0.0.1:8571/cam")
 	defer c.Close()
 
+	assert.Len(t, desc.Medias, 1, "audio 'none' publishes a video-only stream")
 	var h264 *format.H264
 	desc.FindFormat(&h264)
 	sps, pps := h264.SafeParams()
@@ -340,7 +341,7 @@ func TestInstantStartEndToEnd(t *testing.T) {
 }
 
 func TestHoldLastFrameEndToEnd(t *testing.T) {
-	srv, err := NewServer(8572, "cam", "pcmu", "", "")
+	srv, err := NewServer(8572, "cam", "none", "", "")
 	require.NoError(t, err)
 	require.NoError(t, srv.Start())
 	defer srv.Close()
