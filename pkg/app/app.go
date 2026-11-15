@@ -184,16 +184,16 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 			// Model-agnostic motion trigger: A newly recorded clip on the SD card (non-initial)
 			// reliably indicates motion detection across all camera models (L 620, L 625, XLED).
 			if !isInitial {
-				logger.Info("Recording Sync", "🚨 Motion event triggered by new SD card recording: %s (%s)", item.ID, item.FileName)
-				camBus.SetMotion(true)
+				logger.Debug("Recording Sync", "🚨 Motion event triggered by new SD card recording: %s (%s)", item.ID, item.FileName)
+				camBus.SetMotionWithSource(true, "recording")
 
 				motionTimerMu.Lock()
 				if motionResetTimer != nil {
 					motionResetTimer.Stop()
 				}
 				motionResetTimer = time.AfterFunc(10*time.Second, func() {
-					logger.Info("Recording Sync", "⚪ Motion cleared (10s timeout after recording)")
-					camBus.SetMotion(false)
+					logger.Debug("Recording Sync", "⚪ Motion cleared (10s timeout after recording)")
+					camBus.SetMotionWithSource(false, "recording")
 				})
 				motionTimerMu.Unlock()
 			}
@@ -207,9 +207,11 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 		syncer.SetStreamActiveFunc(func() bool {
 			return camStream.ActiveClients() > 0
 		})
-		camBus.SubscribeMotion(func(isMotion bool) {
-			if isMotion {
-				syncer.TriggerSync()
+		camBus.Subscribe(func(evt events.EventType, data interface{}) {
+			if evt == events.EventMotion {
+				if m, ok := data.(events.MotionEvent); ok && m.IsMotion && m.Source != "recording" {
+					syncer.TriggerSync()
+				}
 			}
 		})
 

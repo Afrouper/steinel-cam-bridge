@@ -360,7 +360,11 @@ func (m *SDCardManager) streamFile(ctx context.Context, cmd string, timestamp in
 	for {
 		select {
 		case <-ctx.Done():
-			// Client cancelled download (e.g. browser tab closed)
+			// Client cancelled download (e.g. shutdown or client abort)
+			_ = m.sendJSONCmd("get_event_video", map[string]interface{}{
+				"timestamp": timestamp,
+				"action":    "stop",
+			})
 			return ErrTransferAborted
 
 		case err := <-transfer.errChan:

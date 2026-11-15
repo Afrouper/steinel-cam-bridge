@@ -316,11 +316,13 @@ connectionLoop:
 			continue
 		}
 		logger.Info("Supervisor", "✅ Nabto signaling stream connected on port %d", port)
-
-		logger.Info("Bridge", "🚀 [ONLINE] Stream ready at rtsp://0.0.0.0:%d/%s", d.cfg.RTSPPort, d.cfg.RTSPPath)
-		logger.Info("Bridge", "🛰️ [ONVIF] Endpoints active at http://0.0.0.0:%d/onvif/device_service", d.cfg.ONVIFPort)
+		logger.Info("Supervisor", "🚀 Establishing WebRTC bridge session for /%s...", d.cfg.RTSPPath)
 
 		bridge := webrtc.NewBridge(client, stream, d.rtspServer, d.eventBus, d.cfg.Resolution, 1*time.Second)
+		bridge.SetOnConnected(func() {
+			logger.Info("Bridge", "🚀 [ONLINE] Stream ready at rtsp://0.0.0.0:%d/%s", d.cfg.RTSPPort, d.cfg.RTSPPath)
+			logger.Info("Bridge", "🛰️ [ONVIF] Endpoints active at http://0.0.0.0:%d/onvif/device_service", d.cfg.ONVIFPort)
+		})
 		if d.cfg != nil {
 			if d.cfg.SDCardRecoveryTimeoutMinutes > 0 {
 				bridge.SetRecoveryTimeout(time.Duration(d.cfg.SDCardRecoveryTimeoutMinutes) * time.Minute)
@@ -331,7 +333,10 @@ connectionLoop:
 		d.setBridge(bridge)
 
 		sessionStart := time.Now()
-		_ = bridge.Run(ctx)
+		runErr := bridge.Run(ctx)
+		if runErr != nil && ctx.Err() == nil {
+			logger.Warn("Bridge", "⚠️ WebRTC bridge session ended with error: %v", runErr)
+		}
 
 		reason := bridge.ResetReason()
 		d.setBridge(nil)
@@ -351,7 +356,13 @@ connectionLoop:
 				cooldown = softRecoveryCooldown
 				logger.Info("Supervisor", "🔄 Soft-recovery session reset complete (%s). Reconnecting in %v (skipping full hardware reboot cooldown)...", reason, cooldown)
 			} else {
-				logger.Info("Supervisor", "⏳ Stream session disconnected / Watchdog reset. Waiting %v cooldown before reconnecting to allow camera reboot...", cooldown)
+				if consecutiveFailures > 1 {
+					backoff := CalculateBackoff(consecutiveFailures)
+					if backoff > cooldown {
+						cooldown = backoff
+					}
+				}
+				logger.Info("Supervisor", "⏳ Stream session disconnected / Watchdog reset. Waiting %v cooldown before reconnecting to allow camera reboot (failure #%d)...", cooldown, consecutiveFailures)
 			}
 
 			select {

@@ -38,6 +38,32 @@ func TestEventBus(t *testing.T) {
 	}
 }
 
+func TestEventBus_MotionSource(t *testing.T) {
+	bus := NewBus()
+
+	var eventsReceived []MotionEvent
+	bus.Subscribe(func(evt EventType, data interface{}) {
+		if evt == EventMotion {
+			if m, ok := data.(MotionEvent); ok {
+				eventsReceived = append(eventsReceived, m)
+			}
+		}
+	})
+
+	bus.SetMotion(true)
+	bus.SetMotionWithSource(true, "recording")
+
+	if len(eventsReceived) != 2 {
+		t.Fatalf("Expected 2 events, got %d", len(eventsReceived))
+	}
+	if eventsReceived[0].Source != "hardware" {
+		t.Errorf("Expected first event source 'hardware', got '%s'", eventsReceived[0].Source)
+	}
+	if eventsReceived[1].Source != "recording" {
+		t.Errorf("Expected second event source 'recording', got '%s'", eventsReceived[1].Source)
+	}
+}
+
 func waitTimeout(wg *sync.WaitGroup, timeout time.Duration) bool {
 	c := make(chan struct{})
 	go func() {

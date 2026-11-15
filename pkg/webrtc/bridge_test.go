@@ -229,3 +229,23 @@ func TestBridgeControlPlaneEscalationHandler(t *testing.T) {
 		t.Fatalf("expected control plane recovery reset, got res=%v, cancelled=%v, reason=%v", res, cancelled, b.ResetReason())
 	}
 }
+
+func TestBridge_SetOnConnected(t *testing.T) {
+	b := &Bridge{}
+	var called bool
+	b.SetOnConnected(func() {
+		called = true
+	})
+
+	b.mu.Lock()
+	fn := b.onConnected
+	b.mu.Unlock()
+
+	if fn == nil {
+		t.Fatal("expected onConnected to be set")
+	}
+	fn()
+	if !called {
+		t.Fatal("expected onConnected callback to be executed")
+	}
+}

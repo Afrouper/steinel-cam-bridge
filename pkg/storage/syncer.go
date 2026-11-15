@@ -128,7 +128,7 @@ initialLoop:
 			s.syncOnce(ctx, false)
 
 		case <-s.triggerChan:
-			logger.Info("Recording Sync", "⏳ Motion detected: waiting 35s to allow camera to finish writing MP4 clip before syncing...")
+			logger.Debug("Recording Sync", "⏳ Motion detected: waiting 35s to allow camera to finish writing MP4 clip before syncing...")
 			// Wait 35 seconds so camera can finalize writing the MP4 file to SD card without concurrent I/O stress
 			select {
 			case <-ctx.Done():
