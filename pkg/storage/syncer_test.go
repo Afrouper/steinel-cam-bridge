@@ -280,3 +280,71 @@ func TestSyncer_FallsThroughOnFeatureDisabled(t *testing.T) {
 	require.Len(t, published, 2, "New recording must be published when detected")
 	assert.Equal(t, "1794212320", published[1].ID)
 }
+
+type mockCacheSyncerProvider struct {
+	mockProvider
+	syncLatestCalls int
+	listCalls       int
+}
+
+func (m *mockCacheSyncerProvider) SyncLatest(ctx context.Context) ([]RecordingItem, error) {
+	m.syncLatestCalls++
+	return m.items, nil
+}
+
+func (m *mockCacheSyncerProvider) ListRecordings(ctx context.Context, start, end time.Time, page, limit int, eventType string) (*RecordingListResponse, error) {
+	m.listCalls++
+	return m.mockProvider.ListRecordings(ctx, start, end, page, limit, eventType)
+}
+
+func TestRecordingSyncer_StreamActiveDefersSyncLatest(t *testing.T) {
+	now := time.Now().UTC()
+	prov := &mockCacheSyncerProvider{
+		mockProvider: mockProvider{
+			items: []RecordingItem{
+				{
+					ID:              "rec_live_1",
+					FileName:        "rec_live_1.mp4",
+					StartTime:       now.Add(-1 * time.Minute),
+					EndTime:         now,
+					DurationSeconds: 60,
+					EventType:       "motion",
+				},
+			},
+		},
+	}
+
+	var published []RecordingItem
+	syncer := NewRecordingSyncer(
+		func() RecordingProvider { return prov },
+		func(item RecordingItem, _ bool) { published = append(published, item) },
+		100*time.Millisecond,
+	)
+
+	// Stream is active (e.g. RTSP client connected)
+	syncer.SetStreamActiveFunc(func() bool { return true })
+
+	ctx := context.Background()
+
+	// Initial sync runs once at startup
+	syncer.syncOnce(ctx, true)
+	assert.Equal(t, 1, prov.syncLatestCalls)
+
+	// Runtime sync when stream is active: SyncLatest MUST NOT be called!
+	prov.items = append([]RecordingItem{
+		{
+			ID:              "rec_live_2",
+			FileName:        "rec_live_2.mp4",
+			StartTime:       now,
+			EndTime:         now.Add(30 * time.Second),
+			DurationSeconds: 30,
+			EventType:       "motion",
+		},
+	}, prov.items...)
+
+	syncer.syncOnce(ctx, false)
+	assert.Equal(t, 1, prov.syncLatestCalls, "SyncLatest must not be called when RTSP stream is active")
+	assert.Equal(t, 1, prov.listCalls, "ListRecordings should be called as fallback to detect motion")
+	require.Len(t, published, 2, "Motion detection event must still be published")
+	assert.Equal(t, "rec_live_2", published[1].ID)
+}

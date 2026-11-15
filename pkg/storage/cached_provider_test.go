@@ -199,3 +199,28 @@ func TestCachedRecordingProviderSyncLatest(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, newlyCached2)
 }
+
+func TestCachedRecordingProviderSyncLatest_FastFailOnError(t *testing.T) {
+	tempDir := t.TempDir()
+	mockExt := NewMockExtractor()
+	cache := NewRecordingCache(tempDir, 5, mockExt)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	upstream := &mockUpstreamProvider{
+		recordings: []RecordingItem{
+			{ID: "401", StartTime: now, FileName: "event_401.mp4", DurationSeconds: 30},
+			{ID: "402", StartTime: now.Add(-time.Minute), FileName: "event_402.mp4", DurationSeconds: 30},
+			{ID: "403", StartTime: now.Add(-2 * time.Minute), FileName: "event_403.mp4", DurationSeconds: 30},
+		},
+		streamErr: fmt.Errorf("received 0 bytes of video data from camera"),
+	}
+
+	provider := NewCachedRecordingProvider(cache, func() RecordingProvider { return upstream })
+
+	newlyCached, err := provider.SyncLatest(context.Background())
+	require.NoError(t, err)
+	assert.Empty(t, newlyCached)
+
+	// Verify fast-fail: only 1 attempt made, did not hammer the camera with remaining recordings 402 and 403!
+	assert.Equal(t, int32(1), atomic.LoadInt32(&upstream.videoCalls), "Must fast-fail immediately on stream error without trying subsequent recordings")
+}

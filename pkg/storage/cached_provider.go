@@ -289,7 +289,7 @@ func (p *CachedRecordingProvider) SyncLatest(ctx context.Context) ([]RecordingIt
 			if permanentlyFailed := p.cache.RecordFailure(item.ID, addErr); permanentlyFailed {
 				logger.Warn("CacheProvider", "🛑 Marking recording %s as permanently failed (.failed marker written to disk). Will not retry.", item.ID)
 			}
-			continue
+			break
 		}
 
 		newlyCached = append(newlyCached, *savedItem)

@@ -91,6 +91,10 @@ initialLoop:
 		}
 	}
 
+	s.mu.Lock()
+	s.lastPeriodicPoll = time.Now()
+	s.mu.Unlock()
+
 	var tickerChan <-chan time.Time
 	if s.pollInterval > 0 {
 		ticker := time.NewTicker(s.pollInterval)
@@ -149,6 +153,15 @@ func (s *RecordingSyncer) syncOnce(ctx context.Context, isInitial bool) {
 	if cacheSyncer, ok := provider.(interface {
 		SyncLatest(ctx context.Context) ([]RecordingItem, error)
 	}); ok {
+		s.mu.Lock()
+		activeFn := s.isStreamActive
+		s.mu.Unlock()
+
+		if !isInitial && activeFn != nil && activeFn() {
+			logger.Debug("Recording Sync", "RTSP stream is actively playing; deferring background video download to protect live playback")
+			goto queryFallback
+		}
+
 		newlyCached, err := cacheSyncer.SyncLatest(ctx)
 		if err != nil {
 			if errors.Is(err, ErrFeatureDisabled) {
