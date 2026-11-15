@@ -2,6 +2,18 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.5.2-beta.10
+
+### 🛠️ Verbesserungen & Bugfixes
+
+- **Bereinigung der Event-Logs & Entkopplung**:
+  - Beseitigt die Logflut und wiederholte 35-Sekunden-Wartezyklen nach neuen Videoaufnahmen.
+  - Reduziert interne Statusmeldungen bei Bewegung auf die Debug-Ebene für eine saubere Logausgabe.
+- **Stabilität & Reconnect bei der L 625 CAM SC**:
+  - Laufende SD-Karten-Übertragungen werden beim Beenden der Bridge sauber gestoppt, um ein Blockieren der Kamera-Firmware zu verhindern.
+  - Der Stream-Status wird erst nach erfolgreichem WebRTC-Verbindungsaufbau als bereit gemeldet.
+  - Adaptiver Reconnect-Backoff schützt die Leuchte vor wiederholten Verbindungsversuchen bei Firmware-Hängern.
+
 ## 1.5.2-beta.9
 
 ### 🛠️ Verbesserungen & Bugfixes
