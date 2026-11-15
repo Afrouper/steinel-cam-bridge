@@ -2,6 +2,17 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.5.2-beta.9
+
+### 🛠️ Verbesserungen & Bugfixes
+
+- **Audio-Störgeräusche behoben (Fixes #74)**:
+  - Beseitigt das permanente, rhythmische Klopf- und Knackgeräusch im Live-Audiostream der L 620 CAM für eine saubere Tonübertragung in Home Assistant, Scrypted und Apple HomeKit.
+- **Dämmerungsschwelle & Tagbetrieb (Fixes #75)**:
+  - Vereinheitlicht die Dämmerungswerte (2 bis 2000 Lux) und korrigiert die Schwellwerteinstellung bei der L 625 CAM SC.
+- **Stabilität bei SD-Karten-Aufnahmen**:
+  - Schützt aktive Live-Streams vor Rucklern, wenn im Hintergrund Videoaufnahmen von der SD-Karte synchronisiert werden.
+
 ## 1.5.2-beta.8
 
 ### 🛠️ Verbesserungen & Bugfixes
