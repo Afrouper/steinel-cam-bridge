@@ -15,7 +15,10 @@ import (
 
 // readVideoLoop reads H.264 video RTP packets from Pion and forwards them to the RTSP server.
 func (b *Bridge) readVideoLoop(ctx context.Context, track *pion.TrackRemote, cancel context.CancelFunc) {
-	logger.Info("Video", "🎬 1080p H.264 video stream active")
+	b.mu.Lock()
+	requested := b.resolution
+	b.mu.Unlock()
+	logger.Info("Video", "🎬 H.264 video stream active (requested resolution: %s)", requested)
 	for {
 		select {
 		case <-ctx.Done():

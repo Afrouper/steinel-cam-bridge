@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Afrouper/steinel-cam-bridge/pkg/events"
+	"github.com/Afrouper/steinel-cam-bridge/pkg/h264x"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/logger"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/nabto"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/rtsp"
@@ -23,6 +24,7 @@ type Bridge struct {
 	rtspServer       rtsp.MediaStream
 	eventBus         *events.Bus
 	resolution       string
+	resGuard         h264x.ResolutionGuard
 	pliInterval      time.Duration
 	pc               *pion.PeerConnection
 	dc               *pion.DataChannel
@@ -325,6 +327,9 @@ func (b *Bridge) Run(ctx context.Context) error {
 
 		// Read Wi-Fi signal, SD card usage and camera-side settings
 		go b.runCameraInfoLoop(sessCtx)
+
+		// Verify that the camera really delivers the requested resolution
+		go b.runResolutionGuard(sessCtx)
 	})
 
 	// 4. Send initial OFFER
