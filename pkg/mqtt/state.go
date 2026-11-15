@@ -188,6 +188,8 @@ func (c *Client) publishDeviceStatus(dev *CameraDevice, st events.DeviceStatus) 
 	}
 	pub("duration/state", strconv.Itoa(st.HighlightTime))
 	pub("lowlight/state", strconv.Itoa(st.Lowlight))
+	pub("lowlight_switch/state", lowlightSwitchState(st.Lowlight))
+	c.rememberLowlight(dev.baseTopic, st.Lowlight)
 
 	lowlightHours := LowlightTimeToHours(st.LowlightTime)
 	pub("lowlight_duration/state", strconv.Itoa(lowlightHours))

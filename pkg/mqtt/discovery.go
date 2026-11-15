@@ -165,6 +165,17 @@ func (c *Client) publishDeviceDiscovery(client paho.Client, dev *CameraDevice) {
 		"command_topic":       fmt.Sprintf("%s/lowlight/set", dev.baseTopic),
 	})
 
+	// 10b. Switch (Grundlicht ein/aus, wie der Schalter in der STEINEL CAM App)
+	publishEntity("switch", "lowlight_switch", map[string]interface{}{
+		"name":            "Grundlicht",
+		"icon":            "mdi:lightbulb-night-outline",
+		"entity_category": "config",
+		"payload_on":      "ON",
+		"payload_off":     "OFF",
+		"state_topic":     fmt.Sprintf("%s/lowlight_switch/state", dev.baseTopic),
+		"command_topic":   fmt.Sprintf("%s/lowlight_switch/set", dev.baseTopic),
+	})
+
 	// 11. Number (Grundlicht Dauer: 0 - 12h)
 	publishEntity("number", "lowlight_duration", map[string]interface{}{
 		"name":                "Grundlicht Dauer",
