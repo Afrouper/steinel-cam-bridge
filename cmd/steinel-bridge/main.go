@@ -40,6 +40,8 @@ func registerFlags(fs *flag.FlagSet) {
 	fs.String("audio-codec", "", "Audio codec for RTSP/ONVIF stream: 'aac' (transcoded, default) or 'pcmu' (raw passthrough)")
 	fs.Int("sync-interval", 120, "Interval in seconds to poll SD card for new recordings (default: 120s)")
 	fs.Int("sdcard-sync-interval", 120, "Interval in seconds to poll SD card for new recordings (alias)")
+	fs.Int("sdcard-rate-limit", 400, "SD-card background recording download rate limit in KB/s (default: 400, 0=unlimited)")
+	fs.Int("sdcard-download-rate-limit-kbps", 400, "SD-card background recording download rate limit in KB/s (alias)")
 	fs.Int("cache-recordings", 10, "Maximum number of recent SD-card recordings to keep in local bridge cache (default: 10, 0=disabled)")
 	fs.String("cache-dir", "", "Directory for storing cached recordings and thumbnails (default: /data/recordings or data/recordings)")
 	fs.String("nabto-driver", "cgo", "Nabto Edge driver engine ('cgo' for C-SDK, default; 'pure' for native Go)")

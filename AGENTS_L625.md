@@ -288,9 +288,10 @@ Die von der Kamera via `get_event_list` zurückgegebenen Aufnahme-Einträge werd
 ### 6. Modellunabhängiger Bewegungs-Trigger bei neuen Aufnahmen
 Der Hintergrund-Syncer (`RecordingSyncer`) erkennt neue SD-Karten-Aufnahmen zur Laufzeit (`!isInitial`) und feuert unmittelbar einen Bewegungsalarm an den lokalen Event-Bus (`camBus.SetMotion(true)` mit 10-Sekunden Auto-Reset Timer). Dies garantiert, dass auch Leuchten ohne separaten PIR-Live-Push zuverlässig Bewegung in Home Assistant und ONVIF Profile T PullPoint signalisieren.
 
-### 7. Livestream-Schutz & Fast-Fail
-- Bei aktivem RTSP-Livestream (`isStreamActive() == true`) werden ressourcenintensive MP4-Video-Downloads aufgeschoben und auf schonende Metadaten-Abfragen beschränkt, um WLAN-Bandbreite und CPU der Kamera für den Live-Videofluss freizuhalten.
-- Bei Verbindungsfehlern oder Timeouts bricht die Download-Schleife sofort ab (`fast-fail`), um ein unnötiges Blockieren des DataChannels zu verhindern.
+### 7. Livestream-Schutz, Schreibpause & Ungedrosselter DataChannel
+- **35s Schreibpause**: Bei Bewegungserkennung wartet der Syncer vor dem SD-Karten-Abruf 35 Sekunden, damit die Kamera das MP4-Video vollständig auf die SD-Karte schreiben kann, ohne dass I/O-Kollisionen den internen Storage-Dienst der Leuchte abstürzen lassen.
+- **Ungedrosselter DataChannel-Transfer**: Der WebRTC DataChannel (SCTP über DTLS/UDP) arbeitet nach dem Push-Prinzip. Eine künstliche Drosselung der Datenrate würde den internen Puffer (`chunkChan`) der Bridge innerhalb von 5 Sekunden zum Überlaufen bringen (`Chunk buffer full for >5s`). Da die L 625 über eine leistungsfähigere SoC-Architektur mit separaten Pipelines für WebRTC-Streaming und DataChannels verfügt, erfolgt der Download nach der 35s-Schreibpause ungedrosselt mit voller Geschwindigkeit auch bei aktivem Livestream.
+- **Fast-Fail**: Bei Verbindungsfehlern oder Timeouts bricht die Download-Schleife sofort ab (`fast-fail`), um ein unnötiges Blockieren des DataChannels zu verhindern.
 
 ---
 

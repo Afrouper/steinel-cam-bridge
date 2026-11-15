@@ -1,6 +1,6 @@
 name: "Steinel CAM Bridge Beta"
 description: "Standalone ONVIF, 2-Way Audio & MQTT Bridge für Steinel CAM Leuchten (L 625 CAM SC / L 620 CAM)"
-version: "1.5.2-beta.8"
+version: "1.5.2-beta.11"
 slug: "steinel_cam_bridge_beta"
 url: "https://github.com/Afrouper/steinel-cam-bridge"
 panel_icon: "mdi:cctv"
@@ -31,6 +31,7 @@ options:
   onvif_port: 8000
   sdcard_sync_interval: 120
   sdcard_recovery_timeout_minutes: 45
+  sdcard_download_rate_limit_kbps: 400
   cache_recordings: 5
   nabto_driver: "cgo"
   log_level: "info"
@@ -48,6 +49,7 @@ schema:
       audio_codec: "list(aac|pcmu)?"
       reset_pairing: "bool?"
       nabto_driver: "list(cgo|pure)?"
+      sdcard_download_rate_limit_kbps: "int(0,5000)?"
   camera_name: "str?"
   camera_ip: "str?"
   camera_mac: "str?"
@@ -64,6 +66,7 @@ schema:
   onvif_port: "port"
   sdcard_sync_interval: "int(0,300)?"
   sdcard_recovery_timeout_minutes: "int(0,1440)?"
+  sdcard_download_rate_limit_kbps: "int(0,5000)?"
   cache_recordings: "int(0,100)?"
   nabto_driver: "list(cgo|pure)?"
   log_level: "list(trace|debug|info|warning|error)?"

@@ -103,6 +103,15 @@ func (d *Driver) GetSDCardManager() *SDCardManager {
 	return d.sdcard
 }
 
+// SetSDCardRateLimit configures the download rate limit on the SDCardManager in KB/s.
+func (d *Driver) SetSDCardRateLimit(kbps int) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.sdcard != nil {
+		d.sdcard.SetRateLimit(kbps)
+	}
+}
+
 // Start connects to the camera, activates RTSP, queries state, and starts streaming and keepalive loops.
 func (d *Driver) Start(ctx context.Context) error {
 	d.mu.Lock()

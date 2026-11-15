@@ -225,7 +225,7 @@ func TestCachedRecordingProviderSyncLatest_FastFailOnError(t *testing.T) {
 	assert.Equal(t, int32(1), atomic.LoadInt32(&upstream.videoCalls), "Must fast-fail immediately on stream error without trying subsequent recordings")
 }
 
-func TestCachedRecordingProviderSyncLatest_BreaksOnStreamActive(t *testing.T) {
+func TestCachedRecordingProviderSyncLatest_StreamActiveRateLimited(t *testing.T) {
 	tempDir := t.TempDir()
 	mockExt := NewMockExtractor()
 	cache := NewRecordingCache(tempDir, 5, mockExt)
@@ -237,14 +237,19 @@ func TestCachedRecordingProviderSyncLatest_BreaksOnStreamActive(t *testing.T) {
 			{ID: "502", StartTime: now.Add(-time.Minute), FileName: "event_502.mp4", DurationSeconds: 30},
 			{ID: "503", StartTime: now.Add(-2 * time.Minute), FileName: "event_503.mp4", DurationSeconds: 30},
 		},
+		videoData: map[string][]byte{
+			"501": []byte("mock video stream 501"),
+			"502": []byte("mock video stream 502"),
+		},
 	}
 
 	provider := NewCachedRecordingProvider(cache, func() RecordingProvider { return upstream })
+	provider.SetRateLimitKBps(400)
 	// Stream is active
 	provider.SetStreamActiveFunc(func() bool { return true })
 
 	newlyCached, err := provider.SyncLatest(context.Background())
 	require.NoError(t, err)
-	assert.Empty(t, newlyCached)
-	assert.Equal(t, int32(0), atomic.LoadInt32(&upstream.videoCalls), "Must not download any recordings when stream is active")
+	assert.NotEmpty(t, newlyCached)
+	assert.Greater(t, atomic.LoadInt32(&upstream.videoCalls), int32(0), "Downloads proceed under rate-limiting even when stream is active")
 }

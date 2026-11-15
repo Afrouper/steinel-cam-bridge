@@ -22,12 +22,13 @@ import (
 // socket communication and Xiongmai media demuxing, while delegating container
 // muxing to storage.VideoMuxer.
 type SofiaDownloader struct {
-	cameraIP string
-	port     int
-	client   *Client
-	user     string
-	password string
-	muxer    storage.VideoMuxer
+	cameraIP      string
+	port          int
+	client        *Client
+	user          string
+	password      string
+	muxer         storage.VideoMuxer
+	rateLimitKBps int
 }
 
 // NewSofiaDownloader creates a new Sofia video recording downloader.
@@ -46,6 +47,16 @@ func NewSofiaDownloader(cameraIP string, port int, client *Client, user, passwor
 		password: password,
 		muxer:    storage.NewFFmpegExtractor(""),
 	}
+}
+
+// SetRateLimit configures the download rate limit in KB/s. 0 disables rate limiting (unlimited).
+func (d *SofiaDownloader) SetRateLimit(kbps int) {
+	d.rateLimitKBps = kbps
+}
+
+// RateLimit returns the configured download rate limit in KB/s.
+func (d *SofiaDownloader) RateLimit() int {
+	return d.rateLimitKBps
 }
 
 // SetMuxer allows injecting a custom or mock VideoMuxer (e.g. for unit testing).
@@ -228,7 +239,29 @@ func (d *SofiaDownloader) Download(ctx context.Context, rec *storage.RecordingIt
 	hdrBuf := make([]byte, HeaderLength)
 
 	downloadTimeout := 45 * time.Second
+	if d.rateLimitKBps > 0 {
+		expectedBytes := rec.FileSizeBytes
+		if expectedBytes <= 0 {
+			if rec.DurationSeconds > 0 {
+				expectedBytes = int64(rec.DurationSeconds) * 400 * 1024
+			} else {
+				expectedBytes = 15 * 1024 * 1024
+			}
+		}
+		transferSec := float64(expectedBytes) / float64(d.rateLimitKBps*1024)
+		calcTimeout := time.Duration(transferSec*1.5)*time.Second + 30*time.Second
+		if calcTimeout > downloadTimeout {
+			downloadTimeout = calcTimeout
+		}
+	}
 	deadline := time.Now().Add(downloadTimeout)
+
+	var mediaReader io.Reader = conn
+	if d.rateLimitKBps > 0 {
+		mediaReader = storage.NewThrottledReader(ctx, conn, d.rateLimitKBps*1024)
+		logger.Debug("Xiongmai Download", "⚡ Rate limiting active: %d KB/s for Sofia download of %s (Timeout: %v)",
+			d.rateLimitKBps, rec.ID, downloadTimeout)
+	}
 
 	for {
 		select {
@@ -243,8 +276,8 @@ func (d *SofiaDownloader) Download(ctx context.Context, rec *storage.RecordingIt
 			break
 		}
 
-		_ = conn.SetReadDeadline(time.Now().Add(8 * time.Second))
-		if _, err := io.ReadFull(conn, hdrBuf); err != nil {
+		_ = conn.SetReadDeadline(time.Now().Add(20 * time.Second))
+		if _, err := io.ReadFull(mediaReader, hdrBuf); err != nil {
 			if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
 				break
 			}
@@ -269,8 +302,8 @@ func (d *SofiaDownloader) Download(ctx context.Context, rec *storage.RecordingIt
 		}
 
 		payload := make([]byte, hdr.DataLength)
-		_ = conn.SetReadDeadline(time.Now().Add(8 * time.Second))
-		if _, err := io.ReadFull(conn, payload); err != nil {
+		_ = conn.SetReadDeadline(time.Now().Add(20 * time.Second))
+		if _, err := io.ReadFull(mediaReader, payload); err != nil {
 			logger.Warn("Xiongmai Download", "⚠️ Incomplete payload read: %v", err)
 			break
 		}

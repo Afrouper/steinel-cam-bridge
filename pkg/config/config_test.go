@@ -32,6 +32,7 @@ func TestLayer1_CodeDefaults(t *testing.T) {
 	assert.Equal(t, "homeassistant", cfg.MQTTDiscovery)
 	assert.Equal(t, "cgo", cfg.NabtoDriver)
 	assert.Equal(t, 120, cfg.SDCardSyncInterval)
+	assert.Equal(t, 400, cfg.SDCardDownloadRateLimitKBps)
 	assert.Equal(t, "", cfg.BridgeUser)
 	assert.Equal(t, "", cfg.BridgePass)
 	assert.Equal(t, 5, cfg.CacheRecordings)
@@ -60,6 +61,7 @@ func TestLayer2_ConfigFileOverridesDefaults(t *testing.T) {
 		"nabto_driver": "cgo",
 		"bridge_user": "buser_test",
 		"bridge_pass": "bpass_test",
+		"sdcard_download_rate_limit_kbps": 250,
 		"cache_recordings": 25,
 		"cache_dir": "/custom/cache"
 	}`
@@ -87,6 +89,7 @@ func TestLayer2_ConfigFileOverridesDefaults(t *testing.T) {
 	assert.Equal(t, "cgo", cfg.NabtoDriver)
 	assert.Equal(t, "buser_test", cfg.BridgeUser)
 	assert.Equal(t, "bpass_test", cfg.BridgePass)
+	assert.Equal(t, 250, cfg.SDCardDownloadRateLimitKBps)
 	assert.Equal(t, 25, cfg.CacheRecordings)
 	assert.Equal(t, "/custom/cache", cfg.CacheDir)
 }

@@ -159,6 +159,11 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 		camCacheDir := filepath.Join(cfg.CacheDir, cam.Path)
 		recordingCache := storage.NewRecordingCache(camCacheDir, cfg.CacheRecordings, extractor)
 		cachedProvider := storage.NewCachedRecordingProvider(recordingCache, camBridgeMgr.GetRecordingProvider)
+		rateLimit := cfg.SDCardDownloadRateLimitKBps
+		if cam.SDCardDownloadRateLimitKBps != nil && *cam.SDCardDownloadRateLimitKBps >= 0 {
+			rateLimit = *cam.SDCardDownloadRateLimitKBps
+		}
+		cachedProvider.SetRateLimitKBps(rateLimit)
 		cachedProvider.SetStreamActiveFunc(func() bool {
 			return camStream.ActiveClients() > 0
 		})

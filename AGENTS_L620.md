@@ -281,9 +281,11 @@ Die L 620 CAM speichert Videoaufnahmen als H.264/MP4 Dateien auf der internen Mi
    - Bei `MsgPlayEOF` (1423) oder Verbindungsende wird das Video über `ffmpeg -c:v copy -movflags +faststart` verlustfrei in `/data/recordings/<cam>/<id>.mp4` verpackt.
    - Der integrierte `FFmpegExtractor` extrahiert bei Sekunde 5 ein Standbild (`thumbnail.jpg`) und publiziert das Event samt `thumbnail_url` an MQTT / Home Assistant.
    - Der REST-Endpunkt liefert Videos mit vollständiger HTTP 206 Partial-Content (Range Requests) Unterstützung aus.
-4. **Livestream-Schutz (`isStreamActive`)**:
-   - Da gleichzeitiges 1080p RTSP-Live-Streaming und High-Speed MP4-Download den Xiongmai SoC überlasten (führt zu Rucklern und Frame-Drops im Livestream), prüft der `RecordingSyncer` vor jedem Download `isStreamActive()`.
-   - Bei aktiven Zuschauern wird der schwere Video-Download aufgeschoben und stattdessen nur ein schonender Metadaten-Abgleich (`queryFallback`) ausgeführt.
+4. **Livestream-Schutz & Rate Limiting (`ThrottledReader`)**:
+   - Da gleichzeitiges ungedrosseltes 1080p RTSP-Live-Streaming und High-Speed MP4-Download den Xiongmai SoC überlasten würden (CPU-Sättigung und Flash-I/O-Verzögerungen führen zu Frame-Drops im Livestream), verwendet der `SofiaDownloader` ein konfigurierbares Rate Limiting (`sdcard_download_rate_limit_kbps`, Standard: **400 KB/s**).
+   - **TCP Flow Control**: Der `ThrottledReader` verlangsamt das Lesen vom TCP-Empfangssocket. Dadurch verkleinert sich das TCP Receive Window, und der TCP-Stack der Kamera zwingt den internen `dvr_app`-Prozess in blockierende `send()`-Aufrufe. Die Flash-Leseaktivität auf der SD-Karte sinkt drastisch, sodass der Hardware-H.264-Encoder ausreichend Speicherbandbreite und CPU-Zyklen behält.
+   - **Dynamische Timeouts & Deadlines**: Der `SofiaDownloader` und `CachedRecordingProvider` berechnen Download-Timeouts dynamisch anhand der Dateigröße und Datenrate (`time.Duration(transferSec*1.5) + 30s`), während die Socket-Read-Deadline auf 20s angehoben ist.
+   - Dadurch können SD-Karten-Aufnahmen auch bei 24/7 aktiven RTSP-Streams im Hintergrund synchronisiert werden, ohne den Livestream zu beeinträchtigen.
 5. **Fast-Fail im `CachedRecordingProvider`**:
    - Tritt beim Download ein Netzwerkfehler oder Timeout auf, bricht die Syncer-Schleife sofort ab (`fast-fail`), anstatt wiederholt fehlschlagende Anfragen an die Kamera zu richten.
 6. **Chronologische Sortierung & Modellübergreifender Bewegungs-Trigger**:

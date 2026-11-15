@@ -2,6 +2,39 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.5.2-beta.11
+
+### 🚀 Features & Optimierungen
+
+- **Rate Limiting & Hintergrund-Downloads bei aktivem Livestream (Fixes #74)**:
+  - Ermöglicht den zuverlässigen Download von SD-Karten-Aufnahmen und die Erzeugung von Vorschaubildern (Thumbnails) auch bei 24/7 dauerhaft aktiven RTSP-Livestreams (Scrypted, Home Assistant, Frigate).
+  - Neuer optionaler Konfigurationsparameter `sdcard_download_rate_limit_kbps` (Standard: 400 KB/s) drosselt den Download sanft über TCP-Flow-Control, um den SoC der L 620 CAM und das 2,4 GHz WLAN vor Überlastung und Paketverlusten zu schützen.
+  - Dynamische Anpassung von Download-Timeouts und Socket-Deadlines basierend auf Dateigröße und Datenrate verhindert Timeouts bei gedrosselten Übertragungen.
+  - Auf der L 625 CAM SC läuft der Download über den WebRTC-DataChannel nach der 35s-Schreibpause ungedrosselt durch, um ein Blockieren des internen Chunk-Puffers zu verhindern.
+
+## 1.5.2-beta.10
+
+### 🛠️ Verbesserungen & Bugfixes
+
+- **Bereinigung der Event-Logs & Entkopplung**:
+  - Beseitigt die Logflut und wiederholte 35-Sekunden-Wartezyklen nach neuen Videoaufnahmen.
+  - Reduziert interne Statusmeldungen bei Bewegung auf die Debug-Ebene für eine saubere Logausgabe.
+- **Stabilität & Reconnect bei der L 625 CAM SC**:
+  - Laufende SD-Karten-Übertragungen werden beim Beenden der Bridge sauber gestoppt, um ein Blockieren der Kamera-Firmware zu verhindern.
+  - Der Stream-Status wird erst nach erfolgreichem WebRTC-Verbindungsaufbau als bereit gemeldet.
+  - Adaptiver Reconnect-Backoff schützt die Leuchte vor wiederholten Verbindungsversuchen bei Firmware-Hängern.
+
+## 1.5.2-beta.9
+
+### 🛠️ Verbesserungen & Bugfixes
+
+- **Audio-Störgeräusche behoben (Fixes #74)**:
+  - Beseitigt das permanente, rhythmische Klopf- und Knackgeräusch im Live-Audiostream der L 620 CAM für eine saubere Tonübertragung in Home Assistant, Scrypted und Apple HomeKit.
+- **Dämmerungsschwelle & Tagbetrieb (Fixes #75)**:
+  - Vereinheitlicht die Dämmerungswerte (2 bis 2000 Lux) und korrigiert die Schwellwerteinstellung bei der L 625 CAM SC.
+- **Stabilität bei SD-Karten-Aufnahmen**:
+  - Schützt aktive Live-Streams vor Rucklern, wenn im Hintergrund Videoaufnahmen von der SD-Karte synchronisiert werden.
+
 ## 1.5.2-beta.8
 
 ### 🛠️ Verbesserungen & Bugfixes

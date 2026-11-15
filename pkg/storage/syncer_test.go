@@ -297,7 +297,7 @@ func (m *mockCacheSyncerProvider) ListRecordings(ctx context.Context, start, end
 	return m.mockProvider.ListRecordings(ctx, start, end, page, limit, eventType)
 }
 
-func TestRecordingSyncer_StreamActiveDefersSyncLatest(t *testing.T) {
+func TestRecordingSyncer_StreamActiveAllowsSyncLatest(t *testing.T) {
 	now := time.Now().UTC()
 	prov := &mockCacheSyncerProvider{
 		mockProvider: mockProvider{
@@ -330,7 +330,7 @@ func TestRecordingSyncer_StreamActiveDefersSyncLatest(t *testing.T) {
 	syncer.syncOnce(ctx, true)
 	assert.Equal(t, 1, prov.syncLatestCalls)
 
-	// Runtime sync when stream is active: SyncLatest MUST NOT be called!
+	// Runtime sync when stream is active: SyncLatest proceeds safely under rate limiting!
 	prov.items = append([]RecordingItem{
 		{
 			ID:              "rec_live_2",
@@ -343,8 +343,7 @@ func TestRecordingSyncer_StreamActiveDefersSyncLatest(t *testing.T) {
 	}, prov.items...)
 
 	syncer.syncOnce(ctx, false)
-	assert.Equal(t, 1, prov.syncLatestCalls, "SyncLatest must not be called when RTSP stream is active")
-	assert.Equal(t, 1, prov.listCalls, "ListRecordings should be called as fallback to detect motion")
+	assert.Equal(t, 2, prov.syncLatestCalls, "SyncLatest should be called even when RTSP stream is active")
 	require.Len(t, published, 2, "Motion detection event must still be published")
 	assert.Equal(t, "rec_live_2", published[1].ID)
 }

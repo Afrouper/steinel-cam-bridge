@@ -21,21 +21,22 @@ const DefaultCameraMAC = "00:0C:43:00:01:02"
 
 // CameraConfig defines the configuration for a single Steinel camera in multicam setups.
 type CameraConfig struct {
-	Name            string        `json:"name"`
-	IP              string        `json:"ip"`
-	Type            string        `json:"type"` // "auto", "l625", "l620"
-	User            string        `json:"user"`
-	Password        string        `json:"password"`
-	QRCode          string        `json:"qr_code"`
-	MAC             string        `json:"mac"`
-	Path            string        `json:"path"` // RTSP stream path (e.g. "einfahrt")
-	Resolution      string        `json:"resolution"`
-	AudioCodec      string        `json:"audio_codec"`
-	ResetPair       bool          `json:"reset_pairing"`
-	ForceRTSPIngest bool          `json:"force_rtsp_ingest"`
-	NabtoDriver     string        `json:"nabto_driver"`
-	KeyPath         string        `json:"key_path"`
-	Nabto           *nabto.Config `json:"-"`
+	Name                        string        `json:"name"`
+	IP                          string        `json:"ip"`
+	Type                        string        `json:"type"` // "auto", "l625", "l620"
+	User                        string        `json:"user"`
+	Password                    string        `json:"password"`
+	QRCode                      string        `json:"qr_code"`
+	MAC                         string        `json:"mac"`
+	Path                        string        `json:"path"` // RTSP stream path (e.g. "einfahrt")
+	Resolution                  string        `json:"resolution"`
+	AudioCodec                  string        `json:"audio_codec"`
+	ResetPair                   bool          `json:"reset_pairing"`
+	ForceRTSPIngest             bool          `json:"force_rtsp_ingest"`
+	NabtoDriver                 string        `json:"nabto_driver"`
+	KeyPath                     string        `json:"key_path"`
+	SDCardDownloadRateLimitKBps *int          `json:"sdcard_download_rate_limit_kbps,omitempty"`
+	Nabto                       *nabto.Config `json:"-"`
 }
 
 // Config encapsulates the complete resolved runtime configuration following the 12-Factor App methodology.
@@ -63,6 +64,7 @@ type Config struct {
 	LogFormat                    string
 	SDCardSyncInterval           int
 	SDCardRecoveryTimeoutMinutes int
+	SDCardDownloadRateLimitKBps  int
 	NabtoDriver                  string // "cgo" (default) or "pure"
 	BridgeUser                   string
 	BridgePass                   string
@@ -100,6 +102,7 @@ func NewDefaultConfig() *Config {
 		LogFormat:                    "",
 		SDCardSyncInterval:           120,
 		SDCardRecoveryTimeoutMinutes: 45,
+		SDCardDownloadRateLimitKBps:  400,
 		NabtoDriver:                  "cgo",
 		BridgeUser:                   "",
 		BridgePass:                   "",
@@ -123,6 +126,9 @@ func (c *Config) ForCamera(cam *CameraConfig) *Config {
 	clone.RTSPPath = cam.Path
 	clone.ResetPairing = cam.ResetPair
 	clone.ForceRTSPIngest = cam.ForceRTSPIngest
+	if cam.SDCardDownloadRateLimitKBps != nil && *cam.SDCardDownloadRateLimitKBps >= 0 {
+		clone.SDCardDownloadRateLimitKBps = *cam.SDCardDownloadRateLimitKBps
+	}
 	if cam.NabtoDriver != "" {
 		clone.NabtoDriver = cam.NabtoDriver
 	}
@@ -138,26 +144,27 @@ func (c *Config) ForCamera(cam *CameraConfig) *Config {
 }
 
 type rawCameraOpt struct {
-	Name            string `json:"name"`
-	IP              string `json:"ip"`
-	CameraIP        string `json:"camera_ip"`
-	Type            string `json:"type"`
-	CameraType      string `json:"camera_type"`
-	User            string `json:"user"`
-	CameraUser      string `json:"camera_user"`
-	Password        string `json:"password"`
-	CameraPass      string `json:"camera_password"`
-	QRCode          string `json:"qr_code"`
-	MAC             string `json:"mac"`
-	CameraMAC       string `json:"camera_mac"`
-	Path            string `json:"path"`
-	RTSPPath        string `json:"rtsp_path"`
-	Resolution      string `json:"resolution"`
-	AudioCodec      string `json:"audio_codec"`
-	ResetPair       bool   `json:"reset_pairing"`
-	ForceRTSPIngest bool   `json:"force_rtsp_ingest"`
-	NabtoDriver     string `json:"nabto_driver"`
-	KeyPath         string `json:"key_path"`
+	Name                        string `json:"name"`
+	IP                          string `json:"ip"`
+	CameraIP                    string `json:"camera_ip"`
+	Type                        string `json:"type"`
+	CameraType                  string `json:"camera_type"`
+	User                        string `json:"user"`
+	CameraUser                  string `json:"camera_user"`
+	Password                    string `json:"password"`
+	CameraPass                  string `json:"camera_password"`
+	QRCode                      string `json:"qr_code"`
+	MAC                         string `json:"mac"`
+	CameraMAC                   string `json:"camera_mac"`
+	Path                        string `json:"path"`
+	RTSPPath                    string `json:"rtsp_path"`
+	Resolution                  string `json:"resolution"`
+	AudioCodec                  string `json:"audio_codec"`
+	ResetPair                   bool   `json:"reset_pairing"`
+	ForceRTSPIngest             bool   `json:"force_rtsp_ingest"`
+	NabtoDriver                 string `json:"nabto_driver"`
+	KeyPath                     string `json:"key_path"`
+	SDCardDownloadRateLimitKBps *int   `json:"sdcard_download_rate_limit_kbps"`
 }
 
 // LoadHomeAssistantOptionsFromPath reads and unmarshals options from a JSON file (e.g. /data/options.json).
@@ -195,6 +202,7 @@ func LoadHomeAssistantOptionsFromPath(path string, cfg *Config) {
 		LogLevel                     string         `json:"log_level"`
 		SDCardSyncInterval           *int           `json:"sdcard_sync_interval"`
 		SDCardRecoveryTimeoutMinutes *int           `json:"sdcard_recovery_timeout_minutes"`
+		SDCardDownloadRateLimitKBps  *int           `json:"sdcard_download_rate_limit_kbps"`
 		NabtoDriver                  string         `json:"nabto_driver"`
 		UseCGONabto                  bool           `json:"use_cgo_nabto"`
 		BridgeUser                   string         `json:"bridge_user"`
@@ -280,6 +288,9 @@ func LoadHomeAssistantOptionsFromPath(path string, cfg *Config) {
 	if opts.SDCardRecoveryTimeoutMinutes != nil && *opts.SDCardRecoveryTimeoutMinutes >= 0 {
 		cfg.SDCardRecoveryTimeoutMinutes = *opts.SDCardRecoveryTimeoutMinutes
 	}
+	if opts.SDCardDownloadRateLimitKBps != nil && *opts.SDCardDownloadRateLimitKBps >= 0 {
+		cfg.SDCardDownloadRateLimitKBps = *opts.SDCardDownloadRateLimitKBps
+	}
 	if opts.NabtoDriver != "" {
 		cfg.NabtoDriver = opts.NabtoDriver
 	} else if opts.UseCGONabto {
@@ -326,20 +337,21 @@ func LoadHomeAssistantOptionsFromPath(path string, cfg *Config) {
 			path = raw.RTSPPath
 		}
 		cfg.Cameras = append(cfg.Cameras, CameraConfig{
-			Name:            raw.Name,
-			IP:              ip,
-			Type:            camType,
-			User:            user,
-			Password:        pass,
-			QRCode:          raw.QRCode,
-			MAC:             mac,
-			Path:            path,
-			Resolution:      raw.Resolution,
-			AudioCodec:      raw.AudioCodec,
-			ResetPair:       raw.ResetPair,
-			ForceRTSPIngest: raw.ForceRTSPIngest || cfg.ForceRTSPIngest,
-			NabtoDriver:     raw.NabtoDriver,
-			KeyPath:         raw.KeyPath,
+			Name:                        raw.Name,
+			IP:                          ip,
+			Type:                        camType,
+			User:                        user,
+			Password:                    pass,
+			QRCode:                      raw.QRCode,
+			MAC:                         mac,
+			Path:                        path,
+			Resolution:                  raw.Resolution,
+			AudioCodec:                  raw.AudioCodec,
+			ResetPair:                   raw.ResetPair,
+			ForceRTSPIngest:             raw.ForceRTSPIngest || cfg.ForceRTSPIngest,
+			NabtoDriver:                 raw.NabtoDriver,
+			KeyPath:                     raw.KeyPath,
+			SDCardDownloadRateLimitKBps: raw.SDCardDownloadRateLimitKBps,
 		})
 	}
 }
@@ -465,6 +477,15 @@ func Resolve(optionsPath string, fs *flag.FlagSet) *Config {
 			cfg.SDCardRecoveryTimeoutMinutes = r
 		}
 	}
+	if rateStr := os.Getenv("SDCARD_DOWNLOAD_RATE_LIMIT_KBPS"); rateStr != "" {
+		if r, err := strconv.Atoi(rateStr); err == nil && r >= 0 {
+			cfg.SDCardDownloadRateLimitKBps = r
+		}
+	} else if rateStr := os.Getenv("SDCARD_RATE_LIMIT"); rateStr != "" {
+		if r, err := strconv.Atoi(rateStr); err == nil && r >= 0 {
+			cfg.SDCardDownloadRateLimitKBps = r
+		}
+	}
 	if sct := os.Getenv("SCT"); sct != "" {
 		cfg.NabtoConfig.SCT = sct
 	}
@@ -569,6 +590,10 @@ func Resolve(optionsPath string, fs *flag.FlagSet) *Config {
 			case "sdcard-recovery-timeout-minutes", "recovery-timeout-minutes":
 				if r, err := strconv.Atoi(f.Value.String()); err == nil && r >= 0 {
 					cfg.SDCardRecoveryTimeoutMinutes = r
+				}
+			case "sdcard-rate-limit", "sdcard-download-rate-limit-kbps":
+				if r, err := strconv.Atoi(f.Value.String()); err == nil && r >= 0 {
+					cfg.SDCardDownloadRateLimitKBps = r
 				}
 			case "cache-recordings":
 				if c, err := strconv.Atoi(f.Value.String()); err == nil && c >= 0 {

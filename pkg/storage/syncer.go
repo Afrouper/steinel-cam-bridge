@@ -158,8 +158,7 @@ func (s *RecordingSyncer) syncOnce(ctx context.Context, isInitial bool) {
 		s.mu.Unlock()
 
 		if !isInitial && activeFn != nil && activeFn() {
-			logger.Debug("Recording Sync", "RTSP stream is actively playing; deferring background video download to protect live playback")
-			goto queryFallback
+			logger.Debug("Recording Sync", "RTSP stream is active; performing rate-limited background sync")
 		}
 
 		newlyCached, err := cacheSyncer.SyncLatest(ctx)

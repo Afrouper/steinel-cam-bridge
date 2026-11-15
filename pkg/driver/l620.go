@@ -37,6 +37,9 @@ func NewL620Driver(cfg *config.Config, rtspServer rtsp.MediaStream, eventBus *ev
 	if cfg.ForceRTSPIngest {
 		xm.SetForceRTSPIngest(true)
 	}
+	if cfg.SDCardDownloadRateLimitKBps >= 0 {
+		xm.SetSDCardRateLimit(cfg.SDCardDownloadRateLimitKBps)
+	}
 
 	return &L620Driver{
 		cfg:      cfg,

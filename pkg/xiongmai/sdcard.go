@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/Afrouper/steinel-cam-bridge/pkg/logger"
@@ -22,20 +23,37 @@ type SofiaFileItem struct {
 
 // SDCardManager manages querying and streaming SD card recordings for Xiongmai Sofia cameras
 type SDCardManager struct {
-	client     *Client
-	cameraIP   string
-	cameraUser string
-	cameraPwd  string
+	client        *Client
+	cameraIP      string
+	cameraUser    string
+	cameraPwd     string
+	mu            sync.RWMutex
+	rateLimitKBps int
 }
 
 // NewSDCardManager creates a new Xiongmai SD-Card recording manager
 func NewSDCardManager(client *Client, cameraIP, user, password string) *SDCardManager {
 	return &SDCardManager{
-		client:     client,
-		cameraIP:   cameraIP,
-		cameraUser: user,
-		cameraPwd:  password,
+		client:        client,
+		cameraIP:      cameraIP,
+		cameraUser:    user,
+		cameraPwd:     password,
+		rateLimitKBps: 400, // Default 400 KB/s rate limit for safe background downloads during live streams
 	}
+}
+
+// SetRateLimit sets the download rate limit in KB/s. 0 disables rate limiting.
+func (m *SDCardManager) SetRateLimit(kbps int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.rateLimitKBps = kbps
+}
+
+// RateLimit returns the configured download rate limit in KB/s.
+func (m *SDCardManager) RateLimit() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.rateLimitKBps
 }
 
 func (m *SDCardManager) getPassword() string {
@@ -173,5 +191,6 @@ func (m *SDCardManager) StreamVideo(ctx context.Context, id string, w io.Writer,
 	}
 
 	downloader := NewSofiaDownloader(m.cameraIP, DefaultPort, m.client, m.cameraUser, m.getPassword())
+	downloader.SetRateLimit(m.RateLimit())
 	return downloader.Download(ctx, rec, w, onStart)
 }
