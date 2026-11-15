@@ -107,6 +107,11 @@ func (c *Client) handleCommand(_ paho.Client, msg paho.Message) {
 
 	case strings.HasSuffix(topic, "/duration/set"):
 		if val, err := strconv.Atoi(payload); err == nil {
+			if val < 5 {
+				val = 5
+			} else if val > 900 {
+				val = 900
+			}
 			if cb.SetHighlightTime != nil {
 				_ = cb.SetHighlightTime(val)
 			}
@@ -115,10 +120,29 @@ func (c *Client) handleCommand(_ paho.Client, msg paho.Message) {
 
 	case strings.HasSuffix(topic, "/lowlight/set"):
 		if val, err := strconv.Atoi(payload); err == nil {
+			if val < 0 {
+				val = 0
+			} else if val > 50 {
+				val = 50
+			}
 			if cb.SetLowlight != nil {
 				_ = cb.SetLowlight(val)
 			}
 			c.publishOptimistic(baseTopic, "lowlight/state", strconv.Itoa(val))
+		}
+
+	case strings.HasSuffix(topic, "/lowlight_duration/set"), strings.HasSuffix(topic, "/lowlight_time/set"):
+		if val, err := strconv.Atoi(payload); err == nil {
+			if val < 0 {
+				val = 0
+			} else if val > 12 {
+				val = 12
+			}
+			if cb.SetLowlightTime != nil {
+				_ = cb.SetLowlightTime(val)
+			}
+			c.publishOptimistic(baseTopic, "lowlight_duration/state", strconv.Itoa(val))
+			c.publishOptimistic(baseTopic, "lowlight_time/state", strconv.Itoa(val))
 		}
 
 	case strings.HasSuffix(topic, "/siren/set"):

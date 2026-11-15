@@ -441,7 +441,13 @@ func (d *L625Driver) SetHighlightTime(seconds int) error {
 	if err != nil {
 		return err
 	}
-	return b.SendCommand("tran_ctl", map[string]interface{}{"data": b64})
+	err = b.SendCommand("tran_ctl", map[string]interface{}{"data": b64})
+	if err == nil && d.eventBus != nil {
+		st := d.eventBus.GetStatus()
+		st.HighlightTime = seconds
+		d.eventBus.UpdateStatus(st)
+	}
+	return err
 }
 
 // SetLowlight sets the nightlight brightness percentage.
@@ -454,20 +460,36 @@ func (d *L625Driver) SetLowlight(percent int) error {
 	if err != nil {
 		return err
 	}
-	return b.SendCommand("tran_ctl", map[string]interface{}{"data": b64})
+	err = b.SendCommand("tran_ctl", map[string]interface{}{"data": b64})
+	if err == nil && d.eventBus != nil {
+		st := d.eventBus.GetStatus()
+		st.Lowlight = percent
+		d.eventBus.UpdateStatus(st)
+	}
+	return err
 }
 
-// SetLowlightTime sets the nightlight duration.
+// SetLowlightTime sets the nightlight duration (hours 0-12 or seconds 0-43200).
 func (d *L625Driver) SetLowlightTime(timeVal int) error {
 	b := d.getBridge()
 	if b == nil {
 		return ErrCameraOffline
 	}
-	b64, err := mcu.BuildSetLowlightTime(timeVal)
+	seconds := timeVal
+	if timeVal <= 12 {
+		seconds = timeVal * 3600
+	}
+	b64, err := mcu.BuildSetLowlightTime(seconds)
 	if err != nil {
 		return err
 	}
-	return b.SendCommand("tran_ctl", map[string]interface{}{"data": b64})
+	err = b.SendCommand("tran_ctl", map[string]interface{}{"data": b64})
+	if err == nil && d.eventBus != nil {
+		st := d.eventBus.GetStatus()
+		st.LowlightTime = seconds
+		d.eventBus.UpdateStatus(st)
+	}
+	return err
 }
 
 // SetPIRSensitivity sets the PIR detection sensitivity.

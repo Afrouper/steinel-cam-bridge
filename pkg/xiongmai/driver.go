@@ -509,9 +509,9 @@ func (d *Driver) SetNightlightDuration(val string) error {
 	var durInt int
 	valLower := strings.ToLower(strings.TrimSpace(val))
 	switch {
-	case valLower == "all_night" || valLower == "ganze nacht":
+	case valLower == "all_night" || valLower == "ganze nacht" || valLower == "24h" || valLower == "all" || valLower == "12h":
 		durInt = 20
-	case valLower == "off" || valLower == "aus":
+	case valLower == "off" || valLower == "aus" || valLower == "0" || valLower == "0h":
 		durInt = 0
 	case strings.HasSuffix(valLower, "h"):
 		hStr := strings.TrimSuffix(valLower, "h")
@@ -523,7 +523,11 @@ func (d *Driver) SetNightlightDuration(val string) error {
 	err := d.client.SetLowlightDuration(durInt)
 	if err == nil && d.eventBus != nil {
 		st := d.eventBus.GetStatus()
-		if dur, err := strconv.Atoi(strings.TrimSuffix(valLower, "h")); err == nil {
+		if valLower == "off" || valLower == "aus" || valLower == "0" || valLower == "0h" {
+			st.LowlightTime = 0
+		} else if valLower == "all_night" || valLower == "ganze nacht" || valLower == "24h" || valLower == "all" || valLower == "12h" {
+			st.LowlightTime = 12 * 60
+		} else if dur, err := strconv.Atoi(strings.TrimSuffix(valLower, "h")); err == nil {
 			st.LowlightTime = dur * 60
 		}
 		d.eventBus.UpdateStatus(st)

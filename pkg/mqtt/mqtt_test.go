@@ -329,7 +329,12 @@ func (m *mockPahoClient) Publish(topic string, qos byte, retained bool, payload 
 	if m.retained == nil {
 		m.retained = make(map[string]bool)
 	}
-	m.published[topic] = fmt.Sprint(payload)
+	switch p := payload.(type) {
+	case []byte:
+		m.published[topic] = string(p)
+	default:
+		m.published[topic] = fmt.Sprint(payload)
+	}
 	m.retained[topic] = retained
 	return &mockToken{}
 }
@@ -455,4 +460,210 @@ func TestPublishDeviceMotion_InitialAndRetained(t *testing.T) {
 	})
 	assert.Equal(t, "OFF", mockCl.published["steinel/de-cam2/motion/state"])
 	assert.True(t, mockCl.retained["steinel/de-cam2/motion/state"], "RegisterCamera must publish retained OFF for motion")
+}
+
+func TestDiscovery_Duration_Lowlight_And_Icons(t *testing.T) {
+	mockCl := &mockPahoClient{published: make(map[string]string)}
+	c := NewClient(Config{
+		TopicPrefix: "steinel",
+		DeviceID:    "de-test",
+	}, Callbacks{}, nil)
+	c.client = mockCl
+
+	dev := &CameraDevice{
+		nodeID:    "steinel_de_test",
+		baseTopic: "steinel/de-test",
+		Model:     "L 625 CAM SC",
+		DeviceID:  "de-test",
+	}
+
+	c.publishDeviceDiscovery(mockCl, dev)
+
+	// 1. Nachlaufzeit (duration)
+	durTopic := "homeassistant/number/steinel_de_test/duration/config"
+	assert.Contains(t, mockCl.published, durTopic, "expected discovery for number.duration")
+	assert.Contains(t, mockCl.published[durTopic], `"name":"Nachlaufzeit"`)
+	assert.Contains(t, mockCl.published[durTopic], `"min":5`)
+	assert.Contains(t, mockCl.published[durTopic], `"max":900`)
+	assert.Contains(t, mockCl.published[durTopic], `"step":5`)
+	assert.Contains(t, mockCl.published[durTopic], `"unit_of_measurement":"s"`)
+	assert.Contains(t, mockCl.published[durTopic], `"device_class":"duration"`)
+	assert.Contains(t, mockCl.published[durTopic], `"icon":"mdi:timer-outline"`)
+	assert.Contains(t, mockCl.published[durTopic], `"state_topic":"steinel/de-test/duration/state"`)
+	assert.Contains(t, mockCl.published[durTopic], `"command_topic":"steinel/de-test/duration/set"`)
+
+	// 2. Grundlicht Helligkeit (lowlight)
+	lowTopic := "homeassistant/number/steinel_de_test/lowlight/config"
+	assert.Contains(t, mockCl.published, lowTopic, "expected discovery for number.lowlight")
+	assert.Contains(t, mockCl.published[lowTopic], `"name":"Grundlicht Helligkeit"`)
+	assert.Contains(t, mockCl.published[lowTopic], `"min":0`)
+	assert.Contains(t, mockCl.published[lowTopic], `"max":50`)
+	assert.Contains(t, mockCl.published[lowTopic], `"step":5`)
+	assert.Contains(t, mockCl.published[lowTopic], `"unit_of_measurement":"%"`)
+	assert.Contains(t, mockCl.published[lowTopic], `"icon":"mdi:lightbulb-night"`)
+	assert.Contains(t, mockCl.published[lowTopic], `"state_topic":"steinel/de-test/lowlight/state"`)
+	assert.Contains(t, mockCl.published[lowTopic], `"command_topic":"steinel/de-test/lowlight/set"`)
+
+	// 3. Grundlicht Dauer (lowlight_duration)
+	lowDurTopic := "homeassistant/number/steinel_de_test/lowlight_duration/config"
+	assert.Contains(t, mockCl.published, lowDurTopic, "expected discovery for number.lowlight_duration")
+	assert.Contains(t, mockCl.published[lowDurTopic], `"name":"Grundlicht Dauer"`)
+	assert.Contains(t, mockCl.published[lowDurTopic], `"min":0`)
+	assert.Contains(t, mockCl.published[lowDurTopic], `"max":12`)
+	assert.Contains(t, mockCl.published[lowDurTopic], `"step":1`)
+	assert.Contains(t, mockCl.published[lowDurTopic], `"unit_of_measurement":"h"`)
+	assert.Contains(t, mockCl.published[lowDurTopic], `"device_class":"duration"`)
+	assert.Contains(t, mockCl.published[lowDurTopic], `"icon":"mdi:clock-outline"`)
+	assert.Contains(t, mockCl.published[lowDurTopic], `"state_topic":"steinel/de-test/lowlight_duration/state"`)
+	assert.Contains(t, mockCl.published[lowDurTopic], `"command_topic":"steinel/de-test/lowlight_duration/set"`)
+
+	// 4. MDI Icon Korrekturen
+	lightTopic := "homeassistant/light/steinel_de_test/light/config"
+	assert.Contains(t, mockCl.published, lightTopic)
+	assert.Contains(t, mockCl.published[lightTopic], `"icon":"mdi:light-flood-down"`, "Flutlicht icon must be mdi:light-flood-down")
+	assert.NotContains(t, mockCl.published[lightTopic], "mdi:flood-light")
+
+	reconnectTopic := "homeassistant/button/steinel_de_test/reconnect/config"
+	assert.Contains(t, mockCl.published, reconnectTopic)
+	assert.Contains(t, mockCl.published[reconnectTopic], `"icon":"mdi:camera-retake"`, "Reconnect icon must be mdi:camera-retake")
+	assert.NotContains(t, mockCl.published[reconnectTopic], "mdi:camera-refresh")
+}
+
+func TestHandleCommand_Duration_Lowlight_LowlightDuration(t *testing.T) {
+	mockCl := &mockPahoClient{published: make(map[string]string)}
+	var receivedHighlightTime int
+	var receivedLowlight int
+	var receivedLowlightTime int
+
+	c := NewClient(Config{
+		TopicPrefix: "steinel",
+		DeviceID:    "de-test",
+	}, Callbacks{
+		SetHighlightTime: func(s int) error { receivedHighlightTime = s; return nil },
+		SetLowlight:      func(p int) error { receivedLowlight = p; return nil },
+		SetLowlightTime:  func(h int) error { receivedLowlightTime = h; return nil },
+	}, nil)
+	c.client = mockCl
+
+	// 1. duration/set within range
+	c.handleCommand(nil, &mockMessage{topic: "steinel/de-test/duration/set", payload: []byte("90")})
+	assert.Equal(t, 90, receivedHighlightTime)
+	assert.Equal(t, "90", mockCl.published["steinel/de-test/duration/state"])
+
+	// 2. duration/set below min 5
+	c.handleCommand(nil, &mockMessage{topic: "steinel/de-test/duration/set", payload: []byte("2")})
+	assert.Equal(t, 5, receivedHighlightTime)
+	assert.Equal(t, "5", mockCl.published["steinel/de-test/duration/state"])
+
+	// 3. duration/set above max 900
+	c.handleCommand(nil, &mockMessage{topic: "steinel/de-test/duration/set", payload: []byte("1200")})
+	assert.Equal(t, 900, receivedHighlightTime)
+	assert.Equal(t, "900", mockCl.published["steinel/de-test/duration/state"])
+
+	// 4. lowlight/set within range
+	c.handleCommand(nil, &mockMessage{topic: "steinel/de-test/lowlight/set", payload: []byte("25")})
+	assert.Equal(t, 25, receivedLowlight)
+	assert.Equal(t, "25", mockCl.published["steinel/de-test/lowlight/state"])
+
+	// 5. lowlight/set above max 50
+	c.handleCommand(nil, &mockMessage{topic: "steinel/de-test/lowlight/set", payload: []byte("70")})
+	assert.Equal(t, 50, receivedLowlight)
+	assert.Equal(t, "50", mockCl.published["steinel/de-test/lowlight/state"])
+
+	// 6. lowlight_duration/set in hours (0..12)
+	c.handleCommand(nil, &mockMessage{topic: "steinel/de-test/lowlight_duration/set", payload: []byte("6")})
+	assert.Equal(t, 6, receivedLowlightTime)
+	assert.Equal(t, "6", mockCl.published["steinel/de-test/lowlight_duration/state"])
+	assert.Equal(t, "6", mockCl.published["steinel/de-test/lowlight_time/state"])
+
+	// 7. lowlight_duration/set above 12 hours
+	c.handleCommand(nil, &mockMessage{topic: "steinel/de-test/lowlight_duration/set", payload: []byte("14")})
+	assert.Equal(t, 12, receivedLowlightTime)
+	assert.Equal(t, "12", mockCl.published["steinel/de-test/lowlight_duration/state"])
+
+	// 8. lowlight_time/set alias in hours
+	c.handleCommand(nil, &mockMessage{topic: "steinel/de-test/lowlight_time/set", payload: []byte("4")})
+	assert.Equal(t, 4, receivedLowlightTime)
+	assert.Equal(t, "4", mockCl.published["steinel/de-test/lowlight_duration/state"])
+	assert.Equal(t, "4", mockCl.published["steinel/de-test/lowlight_time/state"])
+}
+
+func TestPublishDeviceStatus_Duration_And_LowlightDuration(t *testing.T) {
+	mockCl := &mockPahoClient{published: make(map[string]string)}
+	c := NewClient(Config{
+		TopicPrefix: "steinel",
+		DeviceID:    "de-test",
+	}, Callbacks{}, nil)
+	c.client = mockCl
+
+	dev := &CameraDevice{baseTopic: "steinel/de-test"}
+
+	// 1. L 625 status with 90s duration, 20% lowlight, and 43200s (12h) lowlight_time
+	c.publishDeviceStatus(dev, events.DeviceStatus{
+		HighlightTime: 90,
+		Lowlight:      20,
+		LowlightTime:  43200,
+	})
+	assert.Equal(t, "90", mockCl.published["steinel/de-test/duration/state"])
+	assert.Equal(t, "20", mockCl.published["steinel/de-test/lowlight/state"])
+	assert.Equal(t, "12", mockCl.published["steinel/de-test/lowlight_duration/state"])
+	assert.Equal(t, "12", mockCl.published["steinel/de-test/lowlight_time/state"])
+
+	// 2. L 625 status with 14400s (4h) lowlight_time
+	c.publishDeviceStatus(dev, events.DeviceStatus{
+		LowlightTime: 14400,
+	})
+	assert.Equal(t, "4", mockCl.published["steinel/de-test/lowlight_duration/state"])
+
+	// 3. L 620 status with 24*60 (1440m = all_night)
+	c.publishDeviceStatus(dev, events.DeviceStatus{
+		LowlightTime: 24 * 60,
+	})
+	assert.Equal(t, "12", mockCl.published["steinel/de-test/lowlight_duration/state"])
+
+	// 4. L 620 status with 4*60 (240m = 4h)
+	c.publishDeviceStatus(dev, events.DeviceStatus{
+		LowlightTime: 4 * 60,
+	})
+	assert.Equal(t, "4", mockCl.published["steinel/de-test/lowlight_duration/state"])
+
+	// 5. Status with 0 (off)
+	c.publishDeviceStatus(dev, events.DeviceStatus{
+		LowlightTime: 0,
+	})
+	assert.Equal(t, "0", mockCl.published["steinel/de-test/lowlight_duration/state"])
+}
+
+func TestLowlightTimeToHours(t *testing.T) {
+	tests := []struct {
+		input    int
+		expected int
+	}{
+		{input: 0, expected: 0},
+		{input: -1, expected: 0},
+		// L 625 seconds (seconds / 3600)
+		{input: 43200, expected: 12},
+		{input: 36000, expected: 10},
+		{input: 21600, expected: 6},
+		{input: 14400, expected: 4},
+		{input: 7200, expected: 2},
+		{input: 3600, expected: 1},
+		// L 620 minutes
+		{input: 1440, expected: 12}, // 24*60 -> capped at 12
+		{input: 720, expected: 12},  // 12*60 -> 12
+		{input: 600, expected: 10},  // 10*60 -> 10
+		{input: 360, expected: 6},   // 6*60 -> 6
+		{input: 240, expected: 4},   // 4*60 -> 4
+		{input: 120, expected: 2},   // 2*60 -> 2
+		{input: 60, expected: 1},    // 1*60 -> 1
+		// Direct hours
+		{input: 12, expected: 12},
+		{input: 8, expected: 8},
+		{input: 1, expected: 1},
+	}
+
+	for _, tt := range tests {
+		actual := LowlightTimeToHours(tt.input)
+		assert.Equal(t, tt.expected, actual, "LowlightTimeToHours(%d)", tt.input)
+	}
 }

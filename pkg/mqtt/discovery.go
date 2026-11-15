@@ -104,7 +104,7 @@ func (c *Client) publishDeviceDiscovery(client paho.Client, dev *CameraDevice) {
 		"brightness_scale":         100,
 		"payload_on":               "ON",
 		"payload_off":              "OFF",
-		"icon":                     "mdi:flood-light",
+		"icon":                     "mdi:light-flood-down",
 	})
 
 	// 6. Purge legacy sensor.lux (Steinels have no continuous luxmeter, threshold is mapped to number.lux_threshold)
@@ -133,7 +133,48 @@ func (c *Client) publishDeviceDiscovery(client paho.Client, dev *CameraDevice) {
 		"command_topic":       fmt.Sprintf("%s/lux_threshold/set", dev.baseTopic),
 	})
 
-	// 9. Siren (Sirene / Alarmfunktion)
+	// 9. Number (Nachlaufzeit: 5 - 900s)
+	publishEntity("number", "duration", map[string]interface{}{
+		"name":                "Nachlaufzeit",
+		"min":                 5,
+		"max":                 900,
+		"step":                5,
+		"unit_of_measurement": "s",
+		"device_class":        "duration",
+		"icon":                "mdi:timer-outline",
+		"entity_category":     "config",
+		"state_topic":         fmt.Sprintf("%s/duration/state", dev.baseTopic),
+		"command_topic":       fmt.Sprintf("%s/duration/set", dev.baseTopic),
+	})
+
+	// 10. Number (Grundlicht Helligkeit: 0 - 50%)
+	publishEntity("number", "lowlight", map[string]interface{}{
+		"name":                "Grundlicht Helligkeit",
+		"min":                 0,
+		"max":                 50,
+		"step":                5,
+		"unit_of_measurement": "%",
+		"icon":                "mdi:lightbulb-night",
+		"entity_category":     "config",
+		"state_topic":         fmt.Sprintf("%s/lowlight/state", dev.baseTopic),
+		"command_topic":       fmt.Sprintf("%s/lowlight/set", dev.baseTopic),
+	})
+
+	// 11. Number (Grundlicht Dauer: 0 - 12h)
+	publishEntity("number", "lowlight_duration", map[string]interface{}{
+		"name":                "Grundlicht Dauer",
+		"min":                 0,
+		"max":                 12,
+		"step":                1,
+		"unit_of_measurement": "h",
+		"device_class":        "duration",
+		"icon":                "mdi:clock-outline",
+		"entity_category":     "config",
+		"state_topic":         fmt.Sprintf("%s/lowlight_duration/state", dev.baseTopic),
+		"command_topic":       fmt.Sprintf("%s/lowlight_duration/set", dev.baseTopic),
+	})
+
+	// 12. Siren (Sirene / Alarmfunktion)
 	publishEntity("siren", "siren", map[string]interface{}{
 		"name":          "Sirene",
 		"state_topic":   fmt.Sprintf("%s/siren/state", dev.baseTopic),
@@ -141,7 +182,7 @@ func (c *Client) publishDeviceDiscovery(client paho.Client, dev *CameraDevice) {
 		"icon":          "mdi:bullhorn",
 	})
 
-	// 10. Select (Video Auflösung)
+	// 13. Select (Video Auflösung)
 	publishEntity("select", "resolution", map[string]interface{}{
 		"name":            "Video Auflösung",
 		"options":         []string{"1080p", "720p", "360p"},
@@ -151,7 +192,7 @@ func (c *Client) publishDeviceDiscovery(client paho.Client, dev *CameraDevice) {
 		"command_topic":   fmt.Sprintf("%s/resolution/set", dev.baseTopic),
 	})
 
-	// 11. Event (Letzte SD-Aufnahme Event Trigger)
+	// 14. Event (Letzte SD-Aufnahme Event Trigger)
 	publishEntity("event", "recording", map[string]interface{}{
 		"name":        "Letzte SD-Aufnahme Event",
 		"icon":        "mdi:video-box",
@@ -159,7 +200,7 @@ func (c *Client) publishDeviceDiscovery(client paho.Client, dev *CameraDevice) {
 		"event_types": []string{"motion", "manual", "alarm", "record", "plan", "all"},
 	})
 
-	// 12. Sensor (Letzte SD-Aufnahme Status & Attribute)
+	// 15. Sensor (Letzte SD-Aufnahme Status & Attribute)
 	publishEntity("sensor", "recording_latest", map[string]interface{}{
 		"name":                  "Letzte SD-Aufnahme",
 		"icon":                  "mdi:filmstrip",
@@ -169,10 +210,10 @@ func (c *Client) publishDeviceDiscovery(client paho.Client, dev *CameraDevice) {
 		"json_attributes_topic": fmt.Sprintf("%s/recording/latest", dev.baseTopic),
 	})
 
-	// 13. Button (Kamera-Session neu aufbauen / Soft Reconnect)
+	// 16. Button (Kamera-Session neu aufbauen / Soft Reconnect)
 	publishEntity("button", "reconnect", map[string]interface{}{
 		"name":            "Kamera-Session neu aufbauen",
-		"icon":            "mdi:camera-refresh",
+		"icon":            "mdi:camera-retake",
 		"entity_category": "config",
 		"command_topic":   fmt.Sprintf("%s/reconnect/set", dev.baseTopic),
 	})

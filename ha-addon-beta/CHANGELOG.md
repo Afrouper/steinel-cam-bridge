@@ -11,6 +11,10 @@ Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hi
   - Neuer optionaler Konfigurationsparameter `sdcard_download_rate_limit_kbps` (Standard: 400 KB/s) drosselt den Download sanft über TCP-Flow-Control, um den SoC der L 620 CAM und das 2,4 GHz WLAN vor Überlastung und Paketverlusten zu schützen.
   - Dynamische Anpassung von Download-Timeouts und Socket-Deadlines basierend auf Dateigröße und Datenrate verhindert Timeouts bei gedrosselten Übertragungen.
   - Auf der L 625 CAM SC läuft der Download über den WebRTC-DataChannel nach der 35s-Schreibpause ungedrosselt durch, um ein Blockieren des internen Chunk-Puffers zu verhindern.
+- **Home Assistant MQTT Auto-Discovery & Entitäten (Fixes #77)**:
+  - Wiederaufnahme der in v1.5.0 versehentlich entfallenen Entitäten `number.duration` (Nachlaufzeit, 5–900 s) und `number.lowlight` (Grundlicht Helligkeit, 0–50 %).
+  - Neue Entität `number.lowlight_duration` (Grundlicht Dauer, 0–12 h) mit modellübergreifender Umrechnung in der Bridge (Sekunden bei L 625, Stunden/Minuten bei L 620).
+  - Korrektur ungültiger Material Design Icons (`mdi:light-flood-down` statt `mdi:flood-light`, `mdi:camera-retake` statt `mdi:camera-refresh`) zur fehlerfreien Darstellung in Home Assistant.
 
 ## 1.5.2-beta.10
 

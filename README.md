@@ -53,10 +53,12 @@ an der Hardware.
 
 - **🏠 Home Assistant MQTT Auto-Discovery (Strukturierte Gerätesteuerung)**:
   - **🎮 Steuerung**:
+    - **Flutlicht (`light.light`)**: Scheinwerfer an-/ausschalten und Helligkeit stufenlos dimmen.
     - **Betriebsmodus (`select.mode`)**: Umschalten zwischen `Sensor (Automatik)`, `Dauerlicht` und `Aus`.
     - **Alarmsirene (`siren.siren`)**: Sofortiges Auslösen und Stoppen des akustischen Alarms der Außenleuchte mit
       Live-Zustandsrückmeldung (`ON` / `OFF`).
   - **🎬 Ereignisse & Aufnahmen**:
+    - **Bewegung (`binary_sensor.motion`)**: Bewegungserkennung (PIR / Kamera-Bildanalyse oder automatischer Trigger bei neuen SD-Karten-Aufnahmen).
     - **Letzte SD-Aufnahme (`sensor.letzte_sd_aufnahme`)**: Persistente Entität (`retained: true`) für Dashboards mit aktuellem Zeitstempel und vollständigen Attributen (`thumbnail_url`, `video_url`, `duration_sec`, `file_size_bytes`).
     - **Letzte SD-Aufnahme Event (`event.letzte_sd_aufnahme_event`)**: Flüchtiger Event-Trigger (`retained: false`) für Automationen und Push-Mitteilungen ohne unerwünschte Geister-Benachrichtigungen bei Home-Assistant-Neustarts.
     - **Automatisches Thumbnail Self-Healing**: Fehlende Vorschaubilder bestehender Aufnahmen werden beim Start automatisch repariert.
@@ -78,14 +80,16 @@ an der Hardware.
       {% endif %}
     ```
   - **⚙️ Konfiguration (Einstellungsbereich)**:
-    - **Dämmerungsschwelle (`number.lux_threshold`)**: Schaltschwelle in Lux (`2`–`1000 lx`), ab welcher Umgebungsdunkelheit das Licht bei Bewegung schaltet.
+    - **Dämmerungsschwelle (`number.lux_threshold`)**: Schaltschwelle in Lux (`2`–`2000 lx`), ab welcher Umgebungsdunkelheit das Licht bei Bewegung schaltet.
     - **Hauptlicht Helligkeit (`number.highlight`)**: Maximale Leuchtstärke des Flutlichts (`10`–`100 %`).
     - **Grundlicht Helligkeit (`number.lowlight`)**: Dauerhafte Nachtlicht-Helligkeit (`0`–`50 %`).
+    - **Grundlicht Dauer (`number.lowlight_duration`)**: Leuchtdauer des Grundlichts (`0`–`12 h`, modellübergreifend harmonisiert).
     - **Nachlaufzeit (`number.duration`)**: Einschaltdauer des Hauptlichts nach Bewegung (`5`–`900 s`).
     - **PIR-Empfindlichkeit (`number.pir_sensitivity`)**: Reichweite / Sensitivität des Bewegungsmelders (`0`–`100 %`).
     - **Videoauflösung (`select.resolution`)**: Live-Umschaltung der Kameraauflösung (`1080p`, `720p`, `360p`).
-  - **🩺 Diagnose**:
+  - **🩺 Diagnose & Aktionen**:
     - **PIR-Status (`binary_sensor.pir_status`)**: Zeigt den Betriebszustand des PIR-Sensors an (`running`).
+    - **Kamera-Session neu aufbauen (`button.reconnect`)**: Manueller Reconnect und Neuinitialisierung der Kamera-Verbindung.
 
 - **💡 Hinweise zu Hardware-Grenzen & Bewegungserkennung**:
   - **Kein kontinuierlicher Luxmeter-Sensor (`sensor.lux`)**: Die Steinel-Kamera besitzt keinen digitalen Helligkeitsmesser
@@ -300,7 +304,16 @@ Die Konfiguration erfolgt nach den Grundsätzen einer [12-Factor App](https://12
 | `RTSP_PORT` | `-port` | `8554` | Port des integrierten RTSP-Servers |
 | `RTSP_PATH` | `-path` | `steinel` | Stream-Pfad des RTSP-Servers (`rtsp://<host>:<port>/<path>`) |
 | `ONVIF_PORT` | `-onvif` | `8000` | Port des integrierten ONVIF HTTP- und SD-Karten REST API-Servers |
+
+### Speicherung & MicroSD-Synchronisation
+
+| Umgebungsvariable | CLI-Flag | Standard | Beschreibung |
+|---|---|---|---|
 | `SDCARD_SYNC_INTERVAL` / `SYNC_INTERVAL` | `-sync-interval` *(oder `-sdcard-sync-interval`)* | `60` | Intervall in Sekunden für die Hintergrundabfrage neuer MicroSD-Aufnahmen (5–300 s) |
+| `SDCARD_DOWNLOAD_RATE_LIMIT_KBPS` | `-sdcard-rate-limit` | `400` | Rate-Limit in KB/s für Hintergrund-Downloads von der SD-Karte (schützt SoC und Live-Stream; 0 = ungedrosselt) |
+| `SDCARD_RECOVERY_TIMEOUT_MINUTES` | — | `45` | Timeout in Minuten zur automatischen Reinitialisierung bei hängenden SD-Karten-Downloads |
+| `CACHE_RECORDINGS` | `-cache-recordings` | `5` | Anzahl der lokal vorgehaltenen Aufnahmen (MP4-Videos und JPG-Thumbnails) |
+| `CACHE_DIR` | `-cache-dir` | `/data/recordings` | Lokaler Speicherpfad für zwischengespeicherte Videoaufnahmen und Vorschaubilder |
 
 ### Nabto Edge Treiber & Diagnose (L 625 CAM SC)
 

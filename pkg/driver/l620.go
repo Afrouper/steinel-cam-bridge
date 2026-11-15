@@ -103,9 +103,21 @@ func (d *L620Driver) SetLowlight(percent int) error {
 	return d.xmDriver.SetNightlight(percent)
 }
 
-// SetLowlightTime sets the nightlight duration.
+// SetLowlightTime sets the nightlight duration (hours 0-12, or legacy minutes/seconds).
 func (d *L620Driver) SetLowlightTime(timeVal int) error {
-	return d.xmDriver.SetNightlightDuration(fmt.Sprintf("%dh", timeVal/60))
+	hours := timeVal
+	if timeVal > 720 { // seconds (e.g. 7200, 14400, 43200)
+		hours = (timeVal + 1800) / 3600
+	} else if timeVal > 12 { // minutes (e.g. 120, 240, 1440)
+		hours = (timeVal + 30) / 60
+	}
+	if hours <= 0 {
+		return d.xmDriver.SetNightlightDuration("off")
+	}
+	if hours >= 12 {
+		return d.xmDriver.SetNightlightDuration("all_night")
+	}
+	return d.xmDriver.SetNightlightDuration(fmt.Sprintf("%dh", hours))
 }
 
 // SetPIRSensitivity sets the motion detector sensitivity (mapped to 3m, 6m, 10m).
