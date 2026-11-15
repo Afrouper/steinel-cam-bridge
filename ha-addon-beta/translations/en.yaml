@@ -47,6 +47,9 @@ configuration:
   sdcard_sync_interval:
     name: "SD Card Sync Interval"
     description: "Interval in seconds to check the camera's MicroSD card for new recordings (default: 120s, 0 disables periodic checks)."
+  sdcard_download_rate_limit_kbps:
+    name: "SD Card Download Rate Limit (KB/s)"
+    description: "Maximum bandwidth in KB/s when downloading SD-card video recordings into local cache (default: 400 KB/s). Protects camera SoC and live RTSP stream from congestion. Set to 0 to disable."
   cache_recordings:
     name: "Local Recording Cache"
     description: "Number of recent recordings to keep in local bridge storage (default: 10, approx. 80–150 MB). Enables instant access, extracts snapshots, and reduces camera stress. Set to 0 to disable."
