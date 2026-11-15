@@ -354,6 +354,10 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 		primaryInst.eventBus,
 	)
 	onvifServer.SetChannels(onvifChannels)
+	if cfg.DebugAPI {
+		logger.Warn("Config", "🧪 Diagnostic API enabled: POST /api/debug/command passes raw commands to the camera. Switch 'debug_api' off after use.")
+		onvifServer.SetDebugCommandFunc(primaryInst.bridgeMgr.DebugCommand)
+	}
 	onvifServer.SetTimeFunc(func(t time.Time, tz string) error {
 		var lastErr error
 		for _, cam := range camInstances {

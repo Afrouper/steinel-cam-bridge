@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -288,4 +290,72 @@ func (s *Server) handleAPISDCardItem(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// DebugCommandFunc sends a raw command to the camera and returns its replies.
+type DebugCommandFunc func(cmd, action string, info map[string]interface{}, timeout time.Duration) ([]json.RawMessage, error)
+
+// SetDebugCommandFunc enables the diagnostic endpoint /api/debug/command.
+// Without it the endpoint answers 404.
+func (s *Server) SetDebugCommandFunc(fn DebugCommandFunc) {
+	s.channelsMu.Lock()
+	defer s.channelsMu.Unlock()
+	s.debugCommand = fn
+}
+
+var debugCommandName = regexp.MustCompile(`^[a-z][a-z0-9_]{1,63}$`)
+
+// handleAPIDebugCommand passes a single JSON command to the camera (L 625) and
+// returns what the camera answers. Only "get_..." commands are accepted unless
+// the request explicitly sets "write": true.
+//
+//	POST /api/debug/command  {"cmd":"get_video_setting","action":"all","info":{},"timeout_ms":4000}
+func (s *Server) handleAPIDebugCommand(w http.ResponseWriter, r *http.Request) {
+	s.channelsMu.RLock()
+	fn := s.debugCommand
+	s.channelsMu.RUnlock()
+	if fn == nil {
+		http.NotFound(w, r)
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error":"POST required"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Cmd       string                 `json:"cmd"`
+		Action    string                 `json:"action"`
+		Info      map[string]interface{} `json:"info"`
+		TimeoutMS int                    `json:"timeout_ms"`
+		Write     bool                   `json:"write"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid JSON body"}`, http.StatusBadRequest)
+		return
+	}
+	if !debugCommandName.MatchString(req.Cmd) {
+		http.Error(w, `{"error":"invalid command name"}`, http.StatusBadRequest)
+		return
+	}
+	if !strings.HasPrefix(req.Cmd, "get_") && !req.Write {
+		http.Error(w, `{"error":"only get_ commands are allowed without \"write\": true"}`, http.StatusForbidden)
+		return
+	}
+	timeout := time.Duration(req.TimeoutMS) * time.Millisecond
+	if timeout <= 0 || timeout > 20*time.Second {
+		timeout = 4 * time.Second
+	}
+
+	replies, err := fn(req.Cmd, req.Action, req.Info, timeout)
+	w.Header().Set("Content-Type", "application/json")
+	if err != nil {
+		w.WriteHeader(http.StatusBadGateway)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"cmd": req.Cmd, "error": err.Error()})
+		return
+	}
+	if replies == nil {
+		replies = []json.RawMessage{}
+	}
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"cmd": req.Cmd, "replies": replies})
 }

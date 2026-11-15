@@ -33,6 +33,7 @@ type Server struct {
 	recordingHandler  *RecordingHandler
 	discovery         *DiscoveryServer
 	recordingProvider func() storage.RecordingProvider
+	debugCommand      DebugCommandFunc
 
 	channelsMu sync.RWMutex
 	channels   []CameraChannel
@@ -118,6 +119,7 @@ func NewServer(
 	mux.HandleFunc("/api/cameras", s.withBasicAuth(s.handleAPICameras))
 	mux.HandleFunc("/api/status", s.withBasicAuth(s.handleAPIStatus))
 	mux.HandleFunc("/api/light", s.withBasicAuth(s.handleAPILight))
+	mux.HandleFunc("/api/debug/command", s.withBasicAuth(s.handleAPIDebugCommand))
 	mux.HandleFunc("/api/sdcard/events", s.withBasicAuth(s.handleAPISDCardEvents))
 	mux.HandleFunc("/api/sdcard/events/", s.withBasicAuth(s.handleAPISDCardItem))
 
