@@ -39,8 +39,23 @@ type Driver struct {
 	mu               sync.Mutex
 	streamMu         sync.Mutex
 	lastClientSeen   time.Time
+	forceRTSPIngest  bool
 	running          bool
 	closeChan        chan struct{}
+}
+
+// SetForceRTSPIngest enables or disables forcing RTSP Port 554 video ingest instead of Sofia port 34567.
+func (d *Driver) SetForceRTSPIngest(force bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.forceRTSPIngest = force
+}
+
+// ForceRTSPIngest reports whether forced RTSP ingest is enabled.
+func (d *Driver) ForceRTSPIngest() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.forceRTSPIngest
 }
 
 // NewDriver creates a new driver instance for a Steinel L 620 CAM.
@@ -88,6 +103,15 @@ func (d *Driver) GetSDCardManager() *SDCardManager {
 	return d.sdcard
 }
 
+// SetSDCardRateLimit configures the download rate limit on the SDCardManager in KB/s.
+func (d *Driver) SetSDCardRateLimit(kbps int) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.sdcard != nil {
+		d.sdcard.SetRateLimit(kbps)
+	}
+}
+
 // Start connects to the camera, activates RTSP, queries state, and starts streaming and keepalive loops.
 func (d *Driver) Start(ctx context.Context) error {
 	d.mu.Lock()
@@ -123,7 +147,10 @@ func (d *Driver) Start(ctx context.Context) error {
 		d.syncInitialState()
 
 		// Step 4: On-demand streaming check
-		if d.rtspServer != nil && d.rtspServer.ActiveClients() > 0 {
+		if d.forceRTSPIngest {
+			logger.Info("Xiongmai Driver", "📡 Forced RTSP Port %d mode enabled: Sofia video stream disabled, starting native RTSP ingest", RTSPPort)
+			sofiaAvailable = false
+		} else if d.rtspServer != nil && d.rtspServer.ActiveClients() > 0 {
 			d.lastClientSeen = time.Now()
 			if err := d.startSofiaStreamLocked(ctx); err != nil {
 				logger.Warn("Xiongmai Driver", "⚠️ Failed to start initial Sofia stream (%v), falling back to RTSP ingest", err)
@@ -142,8 +169,8 @@ func (d *Driver) Start(ctx context.Context) error {
 	// Step 6: Launch on-demand media supervisor (handles start/stop based on RTSP client count)
 	go d.superviseOnDemandLoop(ctx)
 
-	// Step 7: Fallback to RTSP Ingest only if Sofia is completely unavailable (failed login / port closed)
-	if !sofiaAvailable {
+	// Step 7: Fallback or forced RTSP Ingest
+	if !sofiaAvailable || d.forceRTSPIngest {
 		effectivePwd := d.client.GetEffectivePassword()
 		if effectivePwd == "" && d.password != "" {
 			effectivePwd = d.password
@@ -152,11 +179,11 @@ func (d *Driver) Start(ctx context.Context) error {
 		if d.resolution == "360p" {
 			streamSubtype = 1
 		}
-		logger.Trace("Xiongmai Driver", "Starting RTSP Ingest fallback: IP=%s, Port=%d, User=%s, PwdMasked=%s",
+		logger.Info("Xiongmai Driver", "Starting RTSP Ingest: IP=%s, Port=%d, User=%s, PwdMasked=%s",
 			d.cameraIP, RTSPPort, d.user, MaskPassword(effectivePwd))
 		d.ingest = NewRTSPIngest(d.cameraIP, RTSPPort, d.user, effectivePwd, streamSubtype, d.rtspServer, d.password)
 		if err := d.ingest.Start(ctx); err != nil {
-			logger.Warn("Xiongmai Driver", "⚠️ Failed to start RTSP Ingest fallback: %v", err)
+			logger.Warn("Xiongmai Driver", "⚠️ Failed to start RTSP Ingest: %v", err)
 		}
 	} else {
 		if d.ingest != nil {
@@ -216,6 +243,33 @@ func (d *Driver) syncInitialState() {
 	}
 
 	logger.Trace("Xiongmai Driver", "Synchronizing initial camera state via Sofia port %d...", DefaultPort)
+
+	// Propagate detected FPS and Resolution from client Simplify.Encode
+	if d.client != nil {
+		targetStream := "Main"
+		if strings.EqualFold(d.resolution, "360p") || strings.EqualFold(d.resolution, "sub") {
+			targetStream = "Extra1"
+		}
+		if fps := d.client.GetVideoFPS(targetStream); fps > 0 {
+			if d.sofiaStream != nil {
+				d.sofiaStream.SetFPS(fps)
+			}
+			logger.Info("Xiongmai Driver", "📹 Detected camera video framerate: %d FPS (%s)", fps, targetStream)
+		}
+		if res := d.client.GetVideoResolution(targetStream); res != "" {
+			if strings.EqualFold(res, "720p") || strings.EqualFold(res, "720") {
+				if d.resolution != "360p" {
+					d.resolution = "720p"
+				}
+			} else if strings.EqualFold(res, "1080p") || strings.EqualFold(res, "1080") {
+				if d.resolution != "360p" {
+					d.resolution = "1080p"
+				}
+			}
+			logger.Info("Xiongmai Driver", "📹 Detected camera video resolution: %s (active: %s)", res, d.resolution)
+		}
+	}
+
 	st := d.eventBus.GetStatus()
 	st.Resolution = d.resolution
 	st.FirmwareVer = "Xiongmai-Sofia"
@@ -262,13 +316,13 @@ func (d *Driver) superviseSofiaLoop(ctx context.Context) {
 				_ = d.client.EnsureH264Encoding()
 				d.syncInitialState()
 
-				if d.ingest != nil {
+				if !d.forceRTSPIngest && d.ingest != nil {
 					logger.Info("Xiongmai Driver", "⏹️ Closing fallback RTSP ingest now that Sofia control is restored")
 					_ = d.ingest.Close()
 					d.ingest = nil
 				}
 
-				if d.sofiaStream != nil && !d.sofiaStream.IsRunning() && d.rtspServer != nil && d.rtspServer.ActiveClients() > 0 {
+				if !d.forceRTSPIngest && d.sofiaStream != nil && !d.sofiaStream.IsRunning() && d.rtspServer != nil && d.rtspServer.ActiveClients() > 0 {
 					go func() {
 						_ = d.startSofiaStream(ctx)
 					}()
@@ -455,9 +509,9 @@ func (d *Driver) SetNightlightDuration(val string) error {
 	var durInt int
 	valLower := strings.ToLower(strings.TrimSpace(val))
 	switch {
-	case valLower == "all_night" || valLower == "ganze nacht":
+	case valLower == "all_night" || valLower == "ganze nacht" || valLower == "24h" || valLower == "all" || valLower == "12h":
 		durInt = 20
-	case valLower == "off" || valLower == "aus":
+	case valLower == "off" || valLower == "aus" || valLower == "0" || valLower == "0h":
 		durInt = 0
 	case strings.HasSuffix(valLower, "h"):
 		hStr := strings.TrimSuffix(valLower, "h")
@@ -469,7 +523,11 @@ func (d *Driver) SetNightlightDuration(val string) error {
 	err := d.client.SetLowlightDuration(durInt)
 	if err == nil && d.eventBus != nil {
 		st := d.eventBus.GetStatus()
-		if dur, err := strconv.Atoi(strings.TrimSuffix(valLower, "h")); err == nil {
+		if valLower == "off" || valLower == "aus" || valLower == "0" || valLower == "0h" {
+			st.LowlightTime = 0
+		} else if valLower == "all_night" || valLower == "ganze nacht" || valLower == "24h" || valLower == "all" || valLower == "12h" {
+			st.LowlightTime = 12 * 60
+		} else if dur, err := strconv.Atoi(strings.TrimSuffix(valLower, "h")); err == nil {
 			st.LowlightTime = dur * 60
 		}
 		d.eventBus.UpdateStatus(st)
@@ -504,9 +562,28 @@ func (d *Driver) SetResolution(res string) error {
 	// 1. If SofiaStream is configured:
 	if d.sofiaStream != nil {
 		d.sofiaStream.SetStreamType(sofiaStreamType)
+		if d.client != nil {
+			if fps := d.client.GetVideoFPS(sofiaStreamType); fps > 0 {
+				d.sofiaStream.SetFPS(fps)
+			}
+		}
 	}
 
-	// If Sofia client is connected and active:
+	// 2. Forced RTSP Ingest mode
+	if d.forceRTSPIngest {
+		if d.ingest != nil {
+			effectivePwd := d.client.GetEffectivePassword()
+			if effectivePwd == "" && d.password != "" {
+				effectivePwd = d.password
+			}
+			_ = d.ingest.Close()
+			d.ingest = NewRTSPIngest(d.cameraIP, RTSPPort, d.user, effectivePwd, streamSubtype, d.rtspServer, d.password)
+			return d.ingest.Start(context.Background())
+		}
+		return nil
+	}
+
+	// 3. If Sofia client is connected and active:
 	if d.client != nil && d.client.IsLoggedIn() && d.sofiaStream != nil {
 		d.streamMu.Lock()
 		defer d.streamMu.Unlock()
@@ -662,7 +739,10 @@ func (d *Driver) superviseOnDemandLoop(ctx context.Context) {
 		case <-d.closeChan:
 			return
 		case <-ticker.C:
-			if d.rtspServer == nil {
+			d.mu.Lock()
+			forceRTSP := d.forceRTSPIngest
+			d.mu.Unlock()
+			if forceRTSP || d.rtspServer == nil {
 				continue
 			}
 
@@ -694,10 +774,11 @@ func (d *Driver) superviseOnDemandLoop(ctx context.Context) {
 func (d *Driver) RequestKeyframe() {
 	d.mu.Lock()
 	d.lastClientSeen = time.Now()
+	forceRTSP := d.forceRTSPIngest
 	ctx := d.ctx
 	d.mu.Unlock()
 
-	if d.sofiaStream != nil && !d.sofiaStream.IsRunning() && d.client != nil && d.client.IsLoggedIn() && ctx != nil {
+	if !forceRTSP && d.sofiaStream != nil && !d.sofiaStream.IsRunning() && d.client != nil && d.client.IsLoggedIn() && ctx != nil {
 		go func() {
 			_ = d.startSofiaStream(ctx)
 		}()

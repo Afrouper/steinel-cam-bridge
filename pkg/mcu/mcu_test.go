@@ -13,8 +13,11 @@ func TestParseFrame(t *testing.T) {
 		t.Fatalf("ParseFrame failed: %v", err)
 	}
 
-	if cfg.Lux != 100 { // 0x0064 = 100
-		t.Errorf("Expected Lux 100, got %d", cfg.Lux)
+	if cfg.Lux != 175 { // 0x0064 = 100 raw -> 175 lx
+		t.Errorf("Expected Lux 175, got %d", cfg.Lux)
+	}
+	if cfg.RawLux != 100 {
+		t.Errorf("Expected RawLux 100, got %d", cfg.RawLux)
 	}
 	if !cfg.PIRActive {
 		t.Errorf("Expected PIRActive true")

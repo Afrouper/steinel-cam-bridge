@@ -27,11 +27,13 @@ func TestRecordingSyncer(t *testing.T) {
 	prov := &mockProvider{items: items}
 
 	var published []RecordingItem
+	var publishedInitials []bool
 	var pubMu sync.Mutex
 
-	onNew := func(item RecordingItem) {
+	onNew := func(item RecordingItem, isInitial bool) {
 		pubMu.Lock()
 		published = append(published, item)
+		publishedInitials = append(publishedInitials, isInitial)
 		pubMu.Unlock()
 	}
 
@@ -54,6 +56,7 @@ func TestRecordingSyncer(t *testing.T) {
 	pubMu.Lock()
 	assert.Len(t, published, 1)
 	assert.Equal(t, "rec_100", published[0].ID)
+	assert.True(t, publishedInitials[0], "First recording during initial sync must have isInitial=true")
 	pubMu.Unlock()
 
 	// Calling again with same items -> no duplicate publication
@@ -81,6 +84,7 @@ func TestRecordingSyncer(t *testing.T) {
 	pubMu.Lock()
 	assert.Len(t, published, 2)
 	assert.Equal(t, "rec_101", published[1].ID)
+	assert.False(t, publishedInitials[1], "New recording discovered during runtime must have isInitial=false")
 	pubMu.Unlock()
 }
 
@@ -96,7 +100,7 @@ func TestSyncer_SkipsEmptyItem(t *testing.T) {
 	}
 
 	var published []RecordingItem
-	onNew := func(item RecordingItem) {
+	onNew := func(item RecordingItem, _ bool) {
 		published = append(published, item)
 	}
 
@@ -132,7 +136,7 @@ func TestSyncer_NoDuplicateUpstreamQueryOnCached(t *testing.T) {
 	cachedProv := &mockCachedProvider{}
 	syncer := NewRecordingSyncer(
 		func() RecordingProvider { return cachedProv },
-		func(RecordingItem) {},
+		func(RecordingItem, bool) {},
 		100*time.Millisecond,
 	)
 
@@ -163,7 +167,7 @@ func TestSyncer_RestoresFromCacheOnInitialSync(t *testing.T) {
 	var published []RecordingItem
 	syncer := NewRecordingSyncer(
 		func() RecordingProvider { return cachedProv },
-		func(item RecordingItem) {
+		func(item RecordingItem, _ bool) {
 			published = append(published, item)
 		},
 		100*time.Millisecond,
@@ -186,14 +190,14 @@ func TestSyncer_RestoresFromCacheOnInitialSync(t *testing.T) {
 func TestSyncer_ZeroIntervalDisablesPeriodicSync(t *testing.T) {
 	syncer := NewRecordingSyncer(
 		func() RecordingProvider { return &mockProvider{} },
-		func(RecordingItem) {},
+		func(RecordingItem, bool) {},
 		0,
 	)
 	assert.Equal(t, time.Duration(0), syncer.pollInterval, "pollInterval 0 should be retained to disable periodic polling")
 
 	negSyncer := NewRecordingSyncer(
 		func() RecordingProvider { return &mockProvider{} },
-		func(RecordingItem) {},
+		func(RecordingItem, bool) {},
 		-5*time.Second,
 	)
 	assert.Equal(t, time.Duration(0), negSyncer.pollInterval, "negative pollInterval should normalize to 0")
@@ -235,7 +239,7 @@ func TestSyncer_FallsThroughOnFeatureDisabled(t *testing.T) {
 	var published []RecordingItem
 	syncer := NewRecordingSyncer(
 		func() RecordingProvider { return prov },
-		func(item RecordingItem) { published = append(published, item) },
+		func(item RecordingItem, _ bool) { published = append(published, item) },
 		100*time.Millisecond,
 	)
 
@@ -275,4 +279,71 @@ func TestSyncer_FallsThroughOnFeatureDisabled(t *testing.T) {
 	syncer.syncOnce(ctx, false)
 	require.Len(t, published, 2, "New recording must be published when detected")
 	assert.Equal(t, "1794212320", published[1].ID)
+}
+
+type mockCacheSyncerProvider struct {
+	mockProvider
+	syncLatestCalls int
+	listCalls       int
+}
+
+func (m *mockCacheSyncerProvider) SyncLatest(ctx context.Context) ([]RecordingItem, error) {
+	m.syncLatestCalls++
+	return m.items, nil
+}
+
+func (m *mockCacheSyncerProvider) ListRecordings(ctx context.Context, start, end time.Time, page, limit int, eventType string) (*RecordingListResponse, error) {
+	m.listCalls++
+	return m.mockProvider.ListRecordings(ctx, start, end, page, limit, eventType)
+}
+
+func TestRecordingSyncer_StreamActiveAllowsSyncLatest(t *testing.T) {
+	now := time.Now().UTC()
+	prov := &mockCacheSyncerProvider{
+		mockProvider: mockProvider{
+			items: []RecordingItem{
+				{
+					ID:              "rec_live_1",
+					FileName:        "rec_live_1.mp4",
+					StartTime:       now.Add(-1 * time.Minute),
+					EndTime:         now,
+					DurationSeconds: 60,
+					EventType:       "motion",
+				},
+			},
+		},
+	}
+
+	var published []RecordingItem
+	syncer := NewRecordingSyncer(
+		func() RecordingProvider { return prov },
+		func(item RecordingItem, _ bool) { published = append(published, item) },
+		100*time.Millisecond,
+	)
+
+	// Stream is active (e.g. RTSP client connected)
+	syncer.SetStreamActiveFunc(func() bool { return true })
+
+	ctx := context.Background()
+
+	// Initial sync runs once at startup
+	syncer.syncOnce(ctx, true)
+	assert.Equal(t, 1, prov.syncLatestCalls)
+
+	// Runtime sync when stream is active: SyncLatest proceeds safely under rate limiting!
+	prov.items = append([]RecordingItem{
+		{
+			ID:              "rec_live_2",
+			FileName:        "rec_live_2.mp4",
+			StartTime:       now,
+			EndTime:         now.Add(30 * time.Second),
+			DurationSeconds: 30,
+			EventType:       "motion",
+		},
+	}, prov.items...)
+
+	syncer.syncOnce(ctx, false)
+	assert.Equal(t, 2, prov.syncLatestCalls, "SyncLatest should be called even when RTSP stream is active")
+	require.Len(t, published, 2, "Motion detection event must still be published")
+	assert.Equal(t, "rec_live_2", published[1].ID)
 }

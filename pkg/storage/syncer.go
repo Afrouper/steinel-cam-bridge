@@ -13,7 +13,7 @@ import (
 // and pushes new recording events to Home Assistant / MQTT.
 type RecordingSyncer struct {
 	providerFunc     func() RecordingProvider
-	onNewRecording   func(RecordingItem)
+	onNewRecording   func(item RecordingItem, isInitial bool)
 	pollInterval     time.Duration
 	isStreamActive   func() bool
 	lastPeriodicPoll time.Time
@@ -26,7 +26,7 @@ type RecordingSyncer struct {
 // NewRecordingSyncer creates a new RecordingSyncer instance.
 func NewRecordingSyncer(
 	providerFunc func() RecordingProvider,
-	onNewRecording func(RecordingItem),
+	onNewRecording func(item RecordingItem, isInitial bool),
 	pollInterval time.Duration,
 ) *RecordingSyncer {
 	if pollInterval < 0 {
@@ -91,6 +91,10 @@ initialLoop:
 		}
 	}
 
+	s.mu.Lock()
+	s.lastPeriodicPoll = time.Now()
+	s.mu.Unlock()
+
 	var tickerChan <-chan time.Time
 	if s.pollInterval > 0 {
 		ticker := time.NewTicker(s.pollInterval)
@@ -124,7 +128,7 @@ initialLoop:
 			s.syncOnce(ctx, false)
 
 		case <-s.triggerChan:
-			logger.Info("Recording Sync", "⏳ Motion detected: waiting 35s to allow camera to finish writing MP4 clip before syncing...")
+			logger.Debug("Recording Sync", "⏳ Motion detected: waiting 35s to allow camera to finish writing MP4 clip before syncing...")
 			// Wait 35 seconds so camera can finalize writing the MP4 file to SD card without concurrent I/O stress
 			select {
 			case <-ctx.Done():
@@ -149,6 +153,14 @@ func (s *RecordingSyncer) syncOnce(ctx context.Context, isInitial bool) {
 	if cacheSyncer, ok := provider.(interface {
 		SyncLatest(ctx context.Context) ([]RecordingItem, error)
 	}); ok {
+		s.mu.Lock()
+		activeFn := s.isStreamActive
+		s.mu.Unlock()
+
+		if !isInitial && activeFn != nil && activeFn() {
+			logger.Debug("Recording Sync", "RTSP stream is active; performing rate-limited background sync")
+		}
+
 		newlyCached, err := cacheSyncer.SyncLatest(ctx)
 		if err != nil {
 			if errors.Is(err, ErrFeatureDisabled) {
@@ -181,7 +193,7 @@ func (s *RecordingSyncer) syncOnce(ctx context.Context, isInitial bool) {
 			logger.Trace("Recording Sync", "Recording details: %+v", latest)
 
 			if s.onNewRecording != nil {
-				s.onNewRecording(latest)
+				s.onNewRecording(latest, isFirst)
 			}
 			return
 		} else if isInitial {
@@ -203,7 +215,7 @@ func (s *RecordingSyncer) syncOnce(ctx context.Context, isInitial bool) {
 						logger.Info("Recording Sync", "📌 Restored latest recording from cache: %s (%s, %.1f MB, Thumb: %t)",
 							latest.ID, latest.FileName, float64(latest.FileSizeBytes)/(1024*1024), latest.ThumbnailURL != "")
 						if s.onNewRecording != nil {
-							s.onNewRecording(latest)
+							s.onNewRecording(latest, true)
 						}
 						return
 					}
@@ -270,7 +282,7 @@ queryFallback:
 		logger.Trace("Recording Sync", "Recording details: %+v", latest)
 
 		if s.onNewRecording != nil {
-			s.onNewRecording(latest)
+			s.onNewRecording(latest, isFirst)
 		}
 	} else {
 		s.mu.Unlock()

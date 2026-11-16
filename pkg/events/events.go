@@ -17,6 +17,7 @@ const (
 type MotionEvent struct {
 	IsMotion  bool      `json:"is_motion"`
 	Timestamp time.Time `json:"timestamp"`
+	Source    string    `json:"source,omitempty"`
 }
 
 type DeviceStatus struct {
@@ -85,9 +86,14 @@ func (b *Bus) Publish(evt EventType, data interface{}) {
 }
 
 func (b *Bus) SetMotion(isMotion bool) {
+	b.SetMotionWithSource(isMotion, "hardware")
+}
+
+func (b *Bus) SetMotionWithSource(isMotion bool, source string) {
 	b.Publish(EventMotion, MotionEvent{
 		IsMotion:  isMotion,
 		Timestamp: time.Now(),
+		Source:    source,
 	})
 }
 

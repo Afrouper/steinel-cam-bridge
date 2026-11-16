@@ -37,6 +37,10 @@ type Client struct {
 	serialTransActive bool
 	lastMCUConfig     *MCUConfig
 	telemetryBuf      string
+	videoFPS          int
+	videoResolution   string
+	extraFPS          int
+	extraResolution   string
 	onTelemetry       func(*MCUConfig)
 	onAlarm           func(event string, isStart bool)
 	closeChan         chan struct{}
@@ -54,6 +58,11 @@ var defaultNotEncryptMsgIDs = map[uint16]bool{
 	MsgAlarmResp:        true, // 1501
 	MsgMonitorClaimReq:  true, // 1413
 	MsgMonitorClaimResp: true, // 1414
+	MsgPlayData:         true, // 1422
+	MsgPlayEOF:          true, // 1423
+	MsgPlayClaimReq:     true, // 1424
+	MsgPlayClaimResp:    true, // 1425
+	MsgPlayClaimData:    true, // 1426
 	MsgTalkAudioData:    true, // 1432
 	MsgTalkClaimReq:     true, // 1434
 	MsgTalkClaimResp:    true, // 1435
@@ -724,18 +733,36 @@ func (c *Client) EnsureH264Encoding() error {
 	}
 
 	mainVideo := &items[0].MainFormat.Video
+	c.videoFPS = mainVideo.FPS
+	c.videoResolution = mainVideo.Resolution
 	logger.Info("Xiongmai", "🎥 Video encode config: Compression=%s, Resolution=%s, FPS=%d, BitRate=%d kbps, AudioEnable=%v",
 		mainVideo.Compression, mainVideo.Resolution, mainVideo.FPS, mainVideo.BitRate, items[0].MainFormat.AudioEnable)
 
-	// If compression is not H.264 (e.g. H.265 / HEVC), update it to H.264
+	if items[0].ExtraFormat.Video.Resolution != "" || items[0].ExtraFormat.Video.FPS > 0 {
+		extraVideo := &items[0].ExtraFormat.Video
+		c.extraFPS = extraVideo.FPS
+		c.extraResolution = extraVideo.Resolution
+		logger.Info("Xiongmai", "🎥 Sub-stream encode config (ExtraFormat): Compression=%s, Resolution=%s, FPS=%d, BitRate=%d kbps",
+			extraVideo.Compression, extraVideo.Resolution, extraVideo.FPS, extraVideo.BitRate)
+	}
+
+	// If compression is not H.264 (e.g. H.265 / HEVC), update it to H.264 for Main and/or ExtraFormat
+	needUpdate := false
 	compUpper := strings.ToUpper(strings.TrimSpace(mainVideo.Compression))
 	if strings.Contains(compUpper, "H.265") || strings.Contains(compUpper, "H265") || strings.Contains(compUpper, "HEVC") {
-		logger.Info("Xiongmai", "🔄 Camera video compression is %s — switching to H.264 for RTSP/ONVIF Profile S compatibility...", mainVideo.Compression)
+		logger.Info("Xiongmai", "🔄 Main video compression is %s — switching to H.264 for RTSP/ONVIF Profile S compatibility...", mainVideo.Compression)
 		items[0].MainFormat.Video.Compression = "H.264"
-		if items[0].ExtraFormat.Video.Compression != "" {
-			items[0].ExtraFormat.Video.Compression = "H.264"
-		}
+		needUpdate = true
+	}
 
+	extraCompUpper := strings.ToUpper(strings.TrimSpace(items[0].ExtraFormat.Video.Compression))
+	if extraCompUpper != "" && (strings.Contains(extraCompUpper, "H.265") || strings.Contains(extraCompUpper, "H265") || strings.Contains(extraCompUpper, "HEVC")) {
+		logger.Info("Xiongmai", "🔄 Sub-stream compression is %s — switching to H.264 for RTSP/ONVIF Profile S compatibility...", items[0].ExtraFormat.Video.Compression)
+		items[0].ExtraFormat.Video.Compression = "H.264"
+		needUpdate = true
+	}
+
+	if needUpdate {
 		var encodeVal interface{} = items
 		if !isArray {
 			encodeVal = items[0]
@@ -769,6 +796,30 @@ func (c *Client) EnsureH264Encoding() error {
 	}
 
 	return nil
+}
+
+// GetVideoFPS returns the video frame rate reported by the camera, optionally for a specific stream type ("Main" or "Extra1").
+func (c *Client) GetVideoFPS(streamType ...string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(streamType) > 0 && (strings.EqualFold(streamType[0], "Extra1") || strings.EqualFold(streamType[0], "sub")) {
+		if c.extraFPS > 0 {
+			return c.extraFPS
+		}
+	}
+	return c.videoFPS
+}
+
+// GetVideoResolution returns the video resolution reported by the camera (e.g. "720P"), optionally for a specific stream type.
+func (c *Client) GetVideoResolution(streamType ...string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(streamType) > 0 && (strings.EqualFold(streamType[0], "Extra1") || strings.EqualFold(streamType[0], "sub")) {
+		if c.extraResolution != "" {
+			return c.extraResolution
+		}
+	}
+	return c.videoResolution
 }
 
 // StartSerialTrans establishes the OPTrans RS232 transparent serial channel (MsgID 1578).

@@ -1,6 +1,7 @@
 package xiongmai
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
@@ -1779,6 +1780,146 @@ func TestEnsureH264Encoding(t *testing.T) {
 			t.Fatal("timed out waiting for MsgConfigSetReq to switch to H.264")
 		}
 	})
+
+	// 3. Test case: MainFormat is H.264, but ExtraFormat is H.265 -> Reconfigures ExtraFormat to H.264
+	t.Run("SwitchExtraFormatFromH265ToH264", func(t *testing.T) {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("failed to listen: %v", err)
+		}
+		defer func() { _ = listener.Close() }()
+
+		port := listener.Addr().(*net.TCPAddr).Port
+		setReceived := make(chan struct{}, 1)
+
+		go func() {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			defer func() { _ = conn.Close() }()
+
+			for {
+				hdrBytes := make([]byte, 20)
+				if _, err := io.ReadFull(conn, hdrBytes); err != nil {
+					return
+				}
+				hdr, err := DecodeHeader(hdrBytes)
+				if err != nil {
+					return
+				}
+
+				payload := make([]byte, hdr.DataLength)
+				if _, err := io.ReadFull(conn, payload); err != nil {
+					return
+				}
+
+				switch hdr.MsgID {
+				case MsgMonitorClaimReq:
+					respPayload := []byte(`{"Ret":-100}` + "\x00")
+					respHdr := Header{
+						Magic:      HeaderMagic,
+						Channel:    1,
+						SessionID:  0,
+						Sequence:   hdr.Sequence,
+						MsgID:      MsgMonitorClaimResp,
+						DataLength: uint32(len(respPayload)),
+					}
+					_, _ = conn.Write(append(respHdr.Encode(), respPayload...))
+				case MsgLoginReq:
+					respPayload := []byte(`{"Ret":100,"SessionID":"0x00000001"}` + "\x00")
+					respHdr := Header{
+						Magic:      HeaderMagic,
+						Channel:    1,
+						SessionID:  0x01,
+						Sequence:   hdr.Sequence,
+						MsgID:      MsgLoginResp,
+						DataLength: uint32(len(respPayload)),
+					}
+					_, _ = conn.Write(append(respHdr.Encode(), respPayload...))
+				case MsgTransStartReq:
+					respPayload := []byte(`{"Ret":100,"SessionID":"0x00000001"}` + "\x00")
+					respHdr := Header{
+						Magic:      HeaderMagic,
+						Channel:    1,
+						SessionID:  0x01,
+						Sequence:   hdr.Sequence,
+						MsgID:      MsgTransStartResp,
+						DataLength: uint32(len(respPayload)),
+					}
+					_, _ = conn.Write(append(respHdr.Encode(), respPayload...))
+				case MsgLogoutReq:
+					respPayload := []byte(`{"Ret":100,"SessionID":"0x00000001"}` + "\x00")
+					respHdr := Header{
+						Magic:      HeaderMagic,
+						Channel:    1,
+						SessionID:  0x01,
+						Sequence:   hdr.Sequence,
+						MsgID:      MsgLogoutResp,
+						DataLength: uint32(len(respPayload)),
+					}
+					_, _ = conn.Write(append(respHdr.Encode(), respPayload...))
+				case MsgConfigGetReq:
+					// Return MainFormat as H.264 (25 FPS, 1080P), but ExtraFormat as H.265 (15 FPS, 360P)
+					respPayload := []byte(`{"Name":"Simplify.Encode","Ret":100,"SessionID":"0x00000001","Simplify.Encode":[{"MainFormat":{"AudioEnable":true,"Video":{"Compression":"H.264","Resolution":"1080P","FPS":25,"BitRate":2048}},"ExtraFormat":{"AudioEnable":true,"Video":{"Compression":"H.265","Resolution":"360P","FPS":15,"BitRate":512}}}]}` + "\x00")
+					respHdr := Header{
+						Magic:      HeaderMagic,
+						Channel:    1,
+						SessionID:  0x01,
+						Sequence:   hdr.Sequence,
+						MsgID:      MsgConfigGetResp,
+						DataLength: uint32(len(respPayload)),
+					}
+					_, _ = conn.Write(append(respHdr.Encode(), respPayload...))
+				case MsgConfigSetReq:
+					var req struct {
+						SimplifyEncode []SimplifyEncodeItem `json:"Simplify.Encode"`
+					}
+					payloadClean := bytes.TrimRight(payload, "\x00")
+					if err := json.Unmarshal(payloadClean, &req); err == nil && len(req.SimplifyEncode) > 0 {
+						if req.SimplifyEncode[0].ExtraFormat.Video.Compression == "H.264" {
+							setReceived <- struct{}{}
+						}
+					}
+					respPayload := []byte(`{"Name":"Simplify.Encode","Ret":100,"SessionID":"0x00000001"}` + "\x00")
+					respHdr := Header{
+						Magic:      HeaderMagic,
+						Channel:    1,
+						SessionID:  0x01,
+						Sequence:   hdr.Sequence,
+						MsgID:      MsgConfigSetResp,
+						DataLength: uint32(len(respPayload)),
+					}
+					_, _ = conn.Write(append(respHdr.Encode(), respPayload...))
+				}
+			}
+		}()
+
+		client := NewClient("127.0.0.1", port, "admin", "")
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		if err := client.Connect(ctx); err != nil {
+			t.Fatalf("failed to connect: %v", err)
+		}
+		defer func() { _ = client.Close() }()
+
+		if err := client.EnsureH264Encoding(); err != nil {
+			t.Fatalf("EnsureH264Encoding failed: %v", err)
+		}
+
+		select {
+		case <-setReceived:
+			// Expected! Set request was received with ExtraFormat converted to H.264
+		case <-time.After(1 * time.Second):
+			t.Fatal("timed out waiting for MsgConfigSetReq to switch ExtraFormat to H.264")
+		}
+
+		assert.Equal(t, 25, client.GetVideoFPS("Main"))
+		assert.Equal(t, 15, client.GetVideoFPS("Extra1"))
+		assert.Equal(t, "1080P", client.GetVideoResolution("Main"))
+		assert.Equal(t, "360P", client.GetVideoResolution("Extra1"))
+	})
 }
 
 func TestSuperviseSofiaLoop(t *testing.T) {
@@ -2074,6 +2215,7 @@ func (m *mockOnDemandRTSPServer) WriteAudioPacket(pkt *rtp.Packet)              
 func (m *mockOnDemandRTSPServer) GetAudioCodec() string                                           { return "aac" }
 func (m *mockOnDemandRTSPServer) SetAudioBackchannelHandler(handler rtsp.AudioBackchannelHandler) {}
 func (m *mockOnDemandRTSPServer) SetOnPlayHandler(handler rtsp.OnPlayHandler)                     {}
+func (m *mockOnDemandRTSPServer) SetH264Parameters(sps, pps []byte)                               {}
 func (m *mockOnDemandRTSPServer) ActiveClients() int64                                            { return m.clients.Load() }
 
 var _ rtsp.MediaStream = (*mockOnDemandRTSPServer)(nil)
@@ -2449,4 +2591,15 @@ func TestDriver_AlarmSetsMotion(t *testing.T) {
 	d.handleAlarmEvent("MotionDetect", false)
 	assert.False(t, receivedMotion, "eventBus should have received motion=false")
 	assert.False(t, bus.GetStatus().IsMotion, "bus status should be motion=false")
+}
+
+func TestDriver_ForceRTSPIngest(t *testing.T) {
+	d := &Driver{}
+	assert.False(t, d.ForceRTSPIngest())
+
+	d.SetForceRTSPIngest(true)
+	assert.True(t, d.ForceRTSPIngest())
+
+	d.SetForceRTSPIngest(false)
+	assert.False(t, d.ForceRTSPIngest())
 }

@@ -211,7 +211,7 @@ Hex:  [5A] [0F] [0F] [HW] [SW] [MD] [ LUX ] [PIR][TX] [PS] [CT] [HL] [ HLT ] [LL
 | **3** | `6..7` | `HVersion` | Hex | Hardware-Revision des MCU-Boards |
 | **4** | `8..9` | `SVersion` | Hex | Software-/Firmware-Version der MCU |
 | **5** | `10..11` | `Mode` | uint8 | Betriebsmodus: `0` = Aus, `1` = Dauerlicht AN, `2` = Sensor Auto |
-| **6–7** | `12..15` | `Lux` | uint16 | Gemessene Umgebungshelligkeit in Lux ($2$ bis $1000\text{ lx}$, $10000 = \text{Tag}$) |
+| **6–7** | `12..15` | `Lux` | uint16 | Dämmerungsschwellen-Rohwert im 10er-Raster ($\text{Rohwert} = 250 - 10 \times \text{Stufe}$, wobei Stufe $0 = 2\text{ lx}$, Stufe $25 = 2000\text{ lx} / \text{Tagbetrieb}$; zentral verwaltet via `pkg/mcu/lux.go`) |
 | **8** | `16..17` | `PIRActive` | bool | PIR-Sensor aktiv (`0` = inaktiv, `1` = aktiv) |
 | **9** | `18..19` | `tuxingVal` | Bitmaske | Bewegungserkennung: Bit 0 = PIR-Sensor, Bit 1 = Kamera-Bilderkennung |
 | **10** | `20..21` | `PIRSensitivity` | uint8 | PIR-Erfassungsbereich / Empfindlichkeit ($0\ \%$ bis $100\ \%$) |
@@ -239,7 +239,7 @@ Alle Steuerbefehle beginnen mit Header `0x5A`, gefolgt von der Befehlslänge, de
 | **Grundlicht dimmen** | `5A 02 0A <PCT>` | `5A020A147A` | Setzt Grundlicht auf z. B. 20 % (`0x14`) |
 | **Grundlicht-Dauer** | `5A 03 0B <VAL16>` | `5A030B...` | Setzt Einschaltdauer des Grundlichts |
 | **PIR-Sensitivität** | `5A 02 06 <PCT>` | `5A020650B2` | Setzt PIR-Empfindlichkeit auf z. B. 80 % (`0x50`) |
-| **Dämmerungsschwelle** | `5A 03 04 <LUX16>` | `5A0304000A6B` | Setzt Dämmerungsschwelle auf z. B. 10 Lux (`0x000A`) |
+| **Dämmerungsschwelle** | `5A 03 04 <RAW16>` | `5A030400DC33` | Setzt Dämmerungsschwelle auf z. B. 7 Lux (Rohwert 220 = `0x00DC`) |
 
 ---
 
@@ -281,6 +281,17 @@ Die Kamera antwortet asynchron mit der Liste der Aufnahme-Einträge (`time_tag`,
 Die embedded CPU der Leuchte stürzt ab, wenn parallele Leseanfragen an die SD-Karte gestellt werden.
 - Sowohl `GetEventList` als auch `StreamVideo` sind durch strikte **Single-Flight Mutexes** (`eventListQueryMu` und `transferMu.TryLock()`) geschützt.
 - Parallele Anfragen erhalten sofort `ErrSDCardBusy` (`HTTP 429 / 503`), wodurch die Kamera-Hardware zuverlässig geschützt wird.
+
+### 5. Deterministische chronologische Sortierung
+Die von der Kamera via `get_event_list` zurückgegebenen Aufnahme-Einträge werden in `CachedRecordingProvider` modellübergreifend deterministisch absteigend nach `StartTime` (neueste zuerst) sortiert. Dadurch erhalten REST-Clients, Home Assistant und ONVIF Profile G NVRs stets die aktuellsten Clips an erster Position.
+
+### 6. Modellunabhängiger Bewegungs-Trigger bei neuen Aufnahmen
+Der Hintergrund-Syncer (`RecordingSyncer`) erkennt neue SD-Karten-Aufnahmen zur Laufzeit (`!isInitial`) und feuert unmittelbar einen Bewegungsalarm an den lokalen Event-Bus (`camBus.SetMotion(true)` mit 10-Sekunden Auto-Reset Timer). Dies garantiert, dass auch Leuchten ohne separaten PIR-Live-Push zuverlässig Bewegung in Home Assistant und ONVIF Profile T PullPoint signalisieren.
+
+### 7. Livestream-Schutz, Schreibpause & Ungedrosselter DataChannel
+- **35s Schreibpause**: Bei Bewegungserkennung wartet der Syncer vor dem SD-Karten-Abruf 35 Sekunden, damit die Kamera das MP4-Video vollständig auf die SD-Karte schreiben kann, ohne dass I/O-Kollisionen den internen Storage-Dienst der Leuchte abstürzen lassen.
+- **Ungedrosselter DataChannel-Transfer**: Der WebRTC DataChannel (SCTP über DTLS/UDP) arbeitet nach dem Push-Prinzip. Eine künstliche Drosselung der Datenrate würde den internen Puffer (`chunkChan`) der Bridge innerhalb von 5 Sekunden zum Überlaufen bringen (`Chunk buffer full for >5s`). Da die L 625 über eine leistungsfähigere SoC-Architektur mit separaten Pipelines für WebRTC-Streaming und DataChannels verfügt, erfolgt der Download nach der 35s-Schreibpause ungedrosselt mit voller Geschwindigkeit auch bei aktivem Livestream.
+- **Fast-Fail**: Bei Verbindungsfehlern oder Timeouts bricht die Download-Schleife sofort ab (`fast-fail`), um ein unnötiges Blockieren des DataChannels zu verhindern.
 
 ---
 

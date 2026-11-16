@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -19,22 +20,39 @@ var _ RecordingProvider = (*CachedRecordingProvider)(nil)
 // (Decorator Pattern). It serves queries, video streams, and snapshot thumbnails directly
 // from disk when available, avoiding expensive camera SD-card operations.
 type CachedRecordingProvider struct {
-	cache        *RecordingCache
-	upstreamFunc func() RecordingProvider
-	syncMu       sync.Mutex
+	cache          *RecordingCache
+	upstreamFunc   func() RecordingProvider
+	syncMu         sync.Mutex
+	isStreamActive func() bool
+	rateLimitKBps  int
 }
 
 // NewCachedRecordingProvider creates a new CachedRecordingProvider.
 func NewCachedRecordingProvider(cache *RecordingCache, upstreamFunc func() RecordingProvider) *CachedRecordingProvider {
 	return &CachedRecordingProvider{
-		cache:        cache,
-		upstreamFunc: upstreamFunc,
+		cache:         cache,
+		upstreamFunc:  upstreamFunc,
+		rateLimitKBps: 400, // Default 400 KB/s rate limit for safe background downloads
 	}
+}
+
+// SetRateLimitKBps configures the expected download rate limit in KB/s for dynamic timeout calculations.
+func (p *CachedRecordingProvider) SetRateLimitKBps(kbps int) {
+	p.syncMu.Lock()
+	defer p.syncMu.Unlock()
+	p.rateLimitKBps = kbps
 }
 
 // Cache returns the underlying RecordingCache.
 func (p *CachedRecordingProvider) Cache() *RecordingCache {
 	return p.cache
+}
+
+// SetStreamActiveFunc registers an optional callback to check whether live streaming is active.
+func (p *CachedRecordingProvider) SetStreamActiveFunc(fn func() bool) {
+	p.syncMu.Lock()
+	defer p.syncMu.Unlock()
+	p.isStreamActive = fn
 }
 
 // ListRecordings implements RecordingProvider.
@@ -250,6 +268,11 @@ func (p *CachedRecordingProvider) SyncLatest(ctx context.Context) ([]RecordingIt
 			break
 		}
 
+		// Log rate-limited background sync status when stream is active
+		if p.isStreamActive != nil && p.isStreamActive() {
+			logger.Debug("CacheProvider", "RTSP stream is actively playing; downloading recording %s with rate-limit protection (%d KB/s)", item.ID, p.rateLimitKBps)
+		}
+
 		// Skip if already in local cache
 		if p.cache.Has(item.ID) {
 			continue
@@ -257,9 +280,27 @@ func (p *CachedRecordingProvider) SyncLatest(ctx context.Context) ([]RecordingIt
 
 		logger.Debug("CacheProvider", "📥 Pre-loading recording %s (%s) into bridge cache...", item.ID, item.FileName)
 
+		// Calculate dynamic download timeout based on rate limit and file size
+		downloadTimeout := 60 * time.Second
+		if p.rateLimitKBps > 0 {
+			expectedBytes := item.FileSizeBytes
+			if expectedBytes <= 0 {
+				if item.DurationSeconds > 0 {
+					expectedBytes = int64(item.DurationSeconds) * 400 * 1024
+				} else {
+					expectedBytes = 15 * 1024 * 1024
+				}
+			}
+			transferSec := float64(expectedBytes) / float64(p.rateLimitKBps*1024)
+			calcTimeout := time.Duration(transferSec*1.5)*time.Second + 45*time.Second
+			if calcTimeout > downloadTimeout {
+				downloadTimeout = calcTimeout
+			}
+		}
+
 		// Download video via streaming pipe into cache
 		pr, pw := io.Pipe()
-		downloadCtx, dCancel := context.WithTimeout(ctx, 60*time.Second)
+		downloadCtx, dCancel := context.WithTimeout(ctx, downloadTimeout)
 
 		var streamErr error
 		var wg sync.WaitGroup
@@ -288,7 +329,7 @@ func (p *CachedRecordingProvider) SyncLatest(ctx context.Context) ([]RecordingIt
 			if permanentlyFailed := p.cache.RecordFailure(item.ID, addErr); permanentlyFailed {
 				logger.Warn("CacheProvider", "🛑 Marking recording %s as permanently failed (.failed marker written to disk). Will not retry.", item.ID)
 			}
-			continue
+			break
 		}
 
 		newlyCached = append(newlyCached, *savedItem)
@@ -296,10 +337,16 @@ func (p *CachedRecordingProvider) SyncLatest(ctx context.Context) ([]RecordingIt
 		// Brief delay to let the camera's embedded CPU breathe between downloads
 		select {
 		case <-ctx.Done():
+			sort.Slice(newlyCached, func(i, j int) bool {
+				return newlyCached[i].StartTime.After(newlyCached[j].StartTime)
+			})
 			return newlyCached, ctx.Err()
 		case <-time.After(500 * time.Millisecond):
 		}
 	}
 
+	sort.Slice(newlyCached, func(i, j int) bool {
+		return newlyCached[i].StartTime.After(newlyCached[j].StartTime)
+	})
 	return newlyCached, nil
 }

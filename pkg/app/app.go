@@ -159,6 +159,14 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 		camCacheDir := filepath.Join(cfg.CacheDir, cam.Path)
 		recordingCache := storage.NewRecordingCache(camCacheDir, cfg.CacheRecordings, extractor)
 		cachedProvider := storage.NewCachedRecordingProvider(recordingCache, camBridgeMgr.GetRecordingProvider)
+		rateLimit := cfg.SDCardDownloadRateLimitKBps
+		if cam.SDCardDownloadRateLimitKBps != nil && *cam.SDCardDownloadRateLimitKBps >= 0 {
+			rateLimit = *cam.SDCardDownloadRateLimitKBps
+		}
+		cachedProvider.SetRateLimitKBps(rateLimit)
+		cachedProvider.SetStreamActiveFunc(func() bool {
+			return camStream.ActiveClients() > 0
+		})
 
 		getRecProvider := func() storage.RecordingProvider {
 			if cfg.CacheRecordings > 0 {
@@ -167,16 +175,35 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 			return camBridgeMgr.GetRecordingProvider()
 		}
 
-		// Recording Syncer
-		var onNewRec func(storage.RecordingItem)
-		if mqttClient != nil {
-			camID := cam.Path
-			if cam.Nabto != nil && cam.Nabto.DeviceID != "" {
-				camID = cam.Nabto.DeviceID
-			}
-			onNewRec = func(item storage.RecordingItem) {
+		// Recording Syncer & Motion Trigger
+		var motionResetTimer *time.Timer
+		var motionTimerMu sync.Mutex
+
+		onNewRec := func(item storage.RecordingItem, isInitial bool) {
+			if mqttClient != nil {
+				camID := cam.Path
+				if cam.Nabto != nil && cam.Nabto.DeviceID != "" {
+					camID = cam.Nabto.DeviceID
+				}
 				item.Camera = camID
 				mqttClient.PublishRecordingEvent(item)
+			}
+
+			// Model-agnostic motion trigger: A newly recorded clip on the SD card (non-initial)
+			// reliably indicates motion detection across all camera models (L 620, L 625, XLED).
+			if !isInitial {
+				logger.Debug("Recording Sync", "🚨 Motion event triggered by new SD card recording: %s (%s)", item.ID, item.FileName)
+				camBus.SetMotionWithSource(true, "recording")
+
+				motionTimerMu.Lock()
+				if motionResetTimer != nil {
+					motionResetTimer.Stop()
+				}
+				motionResetTimer = time.AfterFunc(10*time.Second, func() {
+					logger.Debug("Recording Sync", "⚪ Motion cleared (10s timeout after recording)")
+					camBus.SetMotionWithSource(false, "recording")
+				})
+				motionTimerMu.Unlock()
 			}
 		}
 
@@ -188,9 +215,11 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 		syncer.SetStreamActiveFunc(func() bool {
 			return camStream.ActiveClients() > 0
 		})
-		camBus.SubscribeMotion(func(isMotion bool) {
-			if isMotion {
-				syncer.TriggerSync()
+		camBus.Subscribe(func(evt events.EventType, data interface{}) {
+			if evt == events.EventMotion {
+				if m, ok := data.(events.MotionEvent); ok && m.IsMotion && m.Source != "recording" {
+					syncer.TriggerSync()
+				}
 			}
 		})
 

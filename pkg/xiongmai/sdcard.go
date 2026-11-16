@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
+	"sync"
 	"time"
 
 	"github.com/Afrouper/steinel-cam-bridge/pkg/logger"
@@ -21,20 +23,37 @@ type SofiaFileItem struct {
 
 // SDCardManager manages querying and streaming SD card recordings for Xiongmai Sofia cameras
 type SDCardManager struct {
-	client     *Client
-	cameraIP   string
-	cameraUser string
-	cameraPwd  string
+	client        *Client
+	cameraIP      string
+	cameraUser    string
+	cameraPwd     string
+	mu            sync.RWMutex
+	rateLimitKBps int
 }
 
 // NewSDCardManager creates a new Xiongmai SD-Card recording manager
 func NewSDCardManager(client *Client, cameraIP, user, password string) *SDCardManager {
 	return &SDCardManager{
-		client:     client,
-		cameraIP:   cameraIP,
-		cameraUser: user,
-		cameraPwd:  password,
+		client:        client,
+		cameraIP:      cameraIP,
+		cameraUser:    user,
+		cameraPwd:     password,
+		rateLimitKBps: 400, // Default 400 KB/s rate limit for safe background downloads during live streams
 	}
+}
+
+// SetRateLimit sets the download rate limit in KB/s. 0 disables rate limiting.
+func (m *SDCardManager) SetRateLimit(kbps int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.rateLimitKBps = kbps
+}
+
+// RateLimit returns the configured download rate limit in KB/s.
+func (m *SDCardManager) RateLimit() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.rateLimitKBps
 }
 
 func (m *SDCardManager) getPassword() string {
@@ -127,6 +146,11 @@ func (m *SDCardManager) ListRecordings(ctx context.Context, start, end time.Time
 		})
 	}
 
+	// Sort recordings descending by StartTime (newest first) to ensure consistent indexing
+	sort.Slice(recordings, func(i, j int) bool {
+		return recordings[i].StartTime.After(recordings[j].StartTime)
+	})
+
 	logger.Trace("Xiongmai SDCard", "OPFileQuery [%s - %s]: found %d recordings", beginStr, endStr, len(recordings))
 
 	return &storage.RecordingListResponse{
@@ -161,17 +185,12 @@ func (m *SDCardManager) StreamThumbnail(ctx context.Context, id string, w io.Wri
 
 // StreamVideo implements storage.RecordingProvider
 func (m *SDCardManager) StreamVideo(ctx context.Context, id string, w io.Writer, onStart func(name string, size int64)) error {
-	// For Sofia cameras without direct MP4 chunk streaming protocol over NetIP,
-	// raw video downloading to bridge disk is not supported.
-	// Video replay is served directly over RTSP playback on port 554.
 	rec, err := m.GetRecording(ctx, id)
 	if err != nil {
 		return err
 	}
 
-	playbackURL := fmt.Sprintf("rtsp://%s:%d/user=%s_password=%s_channel=1_stream=0.sdp?playback&start=%s",
-		m.cameraIP, RTSPPort, m.cameraUser, m.getPassword(), rec.StartTime.Format("20060102150405"))
-	logger.Debug("Xiongmai SDCard", "RTSP playback URL for recording ID %s: %s", id, SanitizeRTSPURL(playbackURL))
-
-	return storage.ErrFeatureDisabled
+	downloader := NewSofiaDownloader(m.cameraIP, DefaultPort, m.client, m.cameraUser, m.getPassword())
+	downloader.SetRateLimit(m.RateLimit())
+	return downloader.Download(ctx, rec, w, onStart)
 }

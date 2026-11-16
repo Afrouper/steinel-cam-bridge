@@ -316,11 +316,13 @@ connectionLoop:
 			continue
 		}
 		logger.Info("Supervisor", "✅ Nabto signaling stream connected on port %d", port)
-
-		logger.Info("Bridge", "🚀 [ONLINE] Stream ready at rtsp://0.0.0.0:%d/%s", d.cfg.RTSPPort, d.cfg.RTSPPath)
-		logger.Info("Bridge", "🛰️ [ONVIF] Endpoints active at http://0.0.0.0:%d/onvif/device_service", d.cfg.ONVIFPort)
+		logger.Info("Supervisor", "🚀 Establishing WebRTC bridge session for /%s...", d.cfg.RTSPPath)
 
 		bridge := webrtc.NewBridge(client, stream, d.rtspServer, d.eventBus, d.cfg.Resolution, 1*time.Second)
+		bridge.SetOnConnected(func() {
+			logger.Info("Bridge", "🚀 [ONLINE] Stream ready at rtsp://0.0.0.0:%d/%s", d.cfg.RTSPPort, d.cfg.RTSPPath)
+			logger.Info("Bridge", "🛰️ [ONVIF] Endpoints active at http://0.0.0.0:%d/onvif/device_service", d.cfg.ONVIFPort)
+		})
 		if d.cfg != nil {
 			if d.cfg.SDCardRecoveryTimeoutMinutes > 0 {
 				bridge.SetRecoveryTimeout(time.Duration(d.cfg.SDCardRecoveryTimeoutMinutes) * time.Minute)
@@ -331,7 +333,10 @@ connectionLoop:
 		d.setBridge(bridge)
 
 		sessionStart := time.Now()
-		_ = bridge.Run(ctx)
+		runErr := bridge.Run(ctx)
+		if runErr != nil && ctx.Err() == nil {
+			logger.Warn("Bridge", "⚠️ WebRTC bridge session ended with error: %v", runErr)
+		}
 
 		reason := bridge.ResetReason()
 		d.setBridge(nil)
@@ -351,7 +356,13 @@ connectionLoop:
 				cooldown = softRecoveryCooldown
 				logger.Info("Supervisor", "🔄 Soft-recovery session reset complete (%s). Reconnecting in %v (skipping full hardware reboot cooldown)...", reason, cooldown)
 			} else {
-				logger.Info("Supervisor", "⏳ Stream session disconnected / Watchdog reset. Waiting %v cooldown before reconnecting to allow camera reboot...", cooldown)
+				if consecutiveFailures > 1 {
+					backoff := CalculateBackoff(consecutiveFailures)
+					if backoff > cooldown {
+						cooldown = backoff
+					}
+				}
+				logger.Info("Supervisor", "⏳ Stream session disconnected / Watchdog reset. Waiting %v cooldown before reconnecting to allow camera reboot (failure #%d)...", cooldown, consecutiveFailures)
 			}
 
 			select {
@@ -430,7 +441,13 @@ func (d *L625Driver) SetHighlightTime(seconds int) error {
 	if err != nil {
 		return err
 	}
-	return b.SendCommand("tran_ctl", map[string]interface{}{"data": b64})
+	err = b.SendCommand("tran_ctl", map[string]interface{}{"data": b64})
+	if err == nil && d.eventBus != nil {
+		st := d.eventBus.GetStatus()
+		st.HighlightTime = seconds
+		d.eventBus.UpdateStatus(st)
+	}
+	return err
 }
 
 // SetLowlight sets the nightlight brightness percentage.
@@ -443,20 +460,36 @@ func (d *L625Driver) SetLowlight(percent int) error {
 	if err != nil {
 		return err
 	}
-	return b.SendCommand("tran_ctl", map[string]interface{}{"data": b64})
+	err = b.SendCommand("tran_ctl", map[string]interface{}{"data": b64})
+	if err == nil && d.eventBus != nil {
+		st := d.eventBus.GetStatus()
+		st.Lowlight = percent
+		d.eventBus.UpdateStatus(st)
+	}
+	return err
 }
 
-// SetLowlightTime sets the nightlight duration.
+// SetLowlightTime sets the nightlight duration (hours 0-12 or seconds 0-43200).
 func (d *L625Driver) SetLowlightTime(timeVal int) error {
 	b := d.getBridge()
 	if b == nil {
 		return ErrCameraOffline
 	}
-	b64, err := mcu.BuildSetLowlightTime(timeVal)
+	seconds := timeVal
+	if timeVal <= 12 {
+		seconds = timeVal * 3600
+	}
+	b64, err := mcu.BuildSetLowlightTime(seconds)
 	if err != nil {
 		return err
 	}
-	return b.SendCommand("tran_ctl", map[string]interface{}{"data": b64})
+	err = b.SendCommand("tran_ctl", map[string]interface{}{"data": b64})
+	if err == nil && d.eventBus != nil {
+		st := d.eventBus.GetStatus()
+		st.LowlightTime = seconds
+		d.eventBus.UpdateStatus(st)
+	}
+	return err
 }
 
 // SetPIRSensitivity sets the PIR detection sensitivity.

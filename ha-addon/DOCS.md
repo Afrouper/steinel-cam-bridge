@@ -57,6 +57,7 @@ Die Bridge stellt alle Kameras über denselben RTSP-Port (`:8554/steinel-haustue
 | `rtsp_port` | Port | `8554` | RTSP Server Port |
 | `onvif_port` | Port | `8000` | ONVIF HTTP & SD-Karten REST API Service Port |
 | `sdcard_sync_interval` | Ganzzahl | `120` | Intervall in Sekunden für die Hintergrundabfrage neuer SD-Karten-Aufnahmen (0–300 s, 0 = deaktiviert) |
+| `sdcard_download_rate_limit_kbps` | Ganzzahl | `400` | Download-Bandbreitenbegrenzung in KB/s beim Cachen von SD-Aufnahmen (0–5000 KB/s, Standard: 400 KB/s, 0 = unbegrenzt). Schützt den Kamera-SoC und paralleles RTSP-Live-Streaming vor Überlastung |
 | `cache_recordings` | Ganzzahl | `5` | Anzahl der jüngsten Aufnahmen im lokalen Bridge-Cache (0–100). Hält Videos und 5s-Snapshots vor, entlastet die Kamera und ermöglicht sofortiges Abspielen / Vorschaubilder (0 = deaktiviert) |
 | `nabto_driver` | Liste | `cgo` | Nabto-Treiber-Engine für L 625: `cgo` (offizielles C-SDK, empfohlen & Standard) oder `pure` (nativer Go-Stack, experimentell) |
 | `reset_pairing` | Boolean | `false` | Setzen Sie diese Option auf `true`, um den gespeicherten Schlüssel zu löschen und ein erneutes Pairing der L 625 mit dem angegebenen `qr_code` zu erzwingen |

@@ -165,8 +165,12 @@ func (c *Client) publishDeviceStatus(dev *CameraDevice, st events.DeviceStatus) 
 	pub("duration/state", strconv.Itoa(st.HighlightTime))
 	pub("lowlight/state", strconv.Itoa(st.Lowlight))
 
+	lowlightHours := LowlightTimeToHours(st.LowlightTime)
+	pub("lowlight_duration/state", strconv.Itoa(lowlightHours))
+	pub("lowlight_time/state", strconv.Itoa(lowlightHours))
+
 	// 3. Sensor values & thresholds
-	if st.Lux >= 2 {
+	if st.Lux > 0 {
 		pub("lux_threshold/state", strconv.Itoa(st.Lux))
 		pub("lux/state", strconv.Itoa(st.Lux))
 	}
@@ -182,4 +186,35 @@ func (c *Client) publishDeviceStatus(dev *CameraDevice, st events.DeviceStatus) 
 	if st.Resolution != "" {
 		pub("resolution/state", st.Resolution)
 	}
+}
+
+// LowlightTimeToHours converts model-dependent LowlightTime into hours (0-12) for Home Assistant.
+// L 625 stores seconds (43200s = 12h, 7200s = 2h, etc.).
+// L 620 stores minutes (1440m / 720m = 12h, 240m = 4h, etc.) or hours directly.
+func LowlightTimeToHours(val int) int {
+	if val <= 0 {
+		return 0
+	}
+	if val > 720 {
+		if val > 1440 {
+			// L 625 seconds (e.g. 43200s -> 12h, 36000s -> 10h, etc.)
+			h := (val + 1800) / 3600
+			if h > 12 {
+				h = 12
+			}
+			return h
+		}
+		// 1440m = 24h = all night -> 12h max on HA slider
+		return 12
+	}
+	if val > 12 {
+		// Minutes (e.g. 120m -> 2h, 240m -> 4h, etc.)
+		h := (val + 30) / 60
+		if h > 12 {
+			h = 12
+		}
+		return h
+	}
+	// Already hours (0-12)
+	return val
 }

@@ -36,6 +36,7 @@ type Bridge struct {
 	resetReason      atomic.Uint32
 	recoveryTimeout  time.Duration
 	sessCancel       context.CancelFunc
+	onConnected      func()
 	backchannelBuf   []byte
 	backchannelSeq   uint16
 	backchannelTs    uint32
@@ -86,6 +87,13 @@ func (b *Bridge) GetSDCardManager() *SDCardManager {
 // ResetReason returns the recorded reason for session termination.
 func (b *Bridge) ResetReason() ResetReason {
 	return ResetReason(b.resetReason.Load())
+}
+
+// SetOnConnected sets a callback invoked when the WebRTC peer connection is established.
+func (b *Bridge) SetOnConnected(fn func()) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.onConnected = fn
 }
 
 // SetRecoveryTimeout configures the maximum duration the SD control plane is permitted to stall
@@ -227,6 +235,15 @@ func (b *Bridge) Run(ctx context.Context) error {
 	// WebRTC connection state listener
 	pc.OnConnectionStateChange(func(state pion.PeerConnectionState) {
 		logger.Debug("WebRTC", "Peer connection state changed to: %s", state)
+		if state == pion.PeerConnectionStateConnected {
+			logger.Info("WebRTC", "✅ WebRTC peer connection established successfully")
+			b.mu.Lock()
+			fn := b.onConnected
+			b.mu.Unlock()
+			if fn != nil {
+				fn()
+			}
+		}
 		if state == pion.PeerConnectionStateFailed || state == pion.PeerConnectionStateClosed {
 			logger.Warn("WebRTC", "⚠️ Connection dropped (%s). Terminating session...", state)
 			sessCancel()

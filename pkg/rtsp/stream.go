@@ -26,6 +26,7 @@ type MediaStream interface {
 	SetAudioBackchannelHandler(handler AudioBackchannelHandler)
 	SetOnPlayHandler(handler OnPlayHandler)
 	ActiveClients() int64
+	SetH264Parameters(sps, pps []byte)
 }
 
 var _ MediaStream = (*Stream)(nil)
@@ -226,7 +227,7 @@ func (st *Stream) WriteAACFrame(au []byte, pts time.Duration) {
 		return
 	}
 
-	ts := uint32(pts.Seconds() * 16000)
+	ts := uint32((pts * 16) / time.Millisecond)
 	for _, pkt := range pkts {
 		pkt.Timestamp = ts
 		_ = sStream.WritePacketRTP(st.audioMedia, pkt)
@@ -244,6 +245,14 @@ func (st *Stream) WriteAudioPacket(pkt *rtp.Packet) {
 	}
 	pkt.PayloadType = 0
 	_ = sStream.WritePacketRTP(st.audioMedia, pkt)
+}
+
+// SetH264Parameters dynamically updates the SPS and PPS parameter sets for the H.264 video track.
+// Subsequent RTSP DESCRIBE requests return sprop-parameter-sets and profile-level-id in the SDP.
+func (st *Stream) SetH264Parameters(sps, pps []byte) {
+	if st.videoFormat != nil && len(sps) > 0 && len(pps) > 0 {
+		st.videoFormat.SafeSetParams(sps, pps)
+	}
 }
 
 // handlePlay tracks an active client session and triggers the OnPlay callback.

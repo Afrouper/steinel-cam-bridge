@@ -1,11 +1,11 @@
 package xiongmai
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -23,10 +23,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// mockMediaStream tracks packets received via VideoWriter.WriteVideoPacket.
+// mockMediaStream tracks packets received via VideoWriter.WriteVideoPacket and WriteAudioPacket.
 type mockMediaStream struct {
 	mu           sync.Mutex
 	videoPackets []*rtp.Packet
+	audioPackets []*rtp.Packet
+	sps          []byte
+	pps          []byte
 }
 
 func (m *mockMediaStream) WriteVideoPacket(pkt *rtp.Packet) {
@@ -35,11 +38,36 @@ func (m *mockMediaStream) WriteVideoPacket(pkt *rtp.Packet) {
 	m.videoPackets = append(m.videoPackets, pkt)
 }
 
+func (m *mockMediaStream) WriteAudioPacket(pkt *rtp.Packet) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.audioPackets = append(m.audioPackets, pkt)
+}
+
+func (m *mockMediaStream) GetAudioCodec() string {
+	return "pcmu"
+}
+
+func (m *mockMediaStream) SetH264Parameters(sps, pps []byte) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sps = sps
+	m.pps = pps
+}
+
 func (m *mockMediaStream) getPackets() []*rtp.Packet {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	res := make([]*rtp.Packet, len(m.videoPackets))
 	copy(res, m.videoPackets)
+	return res
+}
+
+func (m *mockMediaStream) getAudioPackets() []*rtp.Packet {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	res := make([]*rtp.Packet, len(m.audioPackets))
+	copy(res, m.audioPackets)
 	return res
 }
 
@@ -173,9 +201,12 @@ func TestSofiaStreamLifecycle(t *testing.T) {
 								var iFramePayload []byte
 								iFramePayload = append(iFramePayload, MarkerIFrame...)     // 4 bytes
 								iFramePayload = append(iFramePayload, make([]byte, 12)...) // 12 bytes pad -> 16 bytes total
-								iFramePayload = append(iFramePayload, spsNalu...)
-								iFramePayload = append(iFramePayload, ppsNalu...)
-								iFramePayload = append(iFramePayload, idrNalu...)
+								var iFrameData []byte
+								iFrameData = append(iFrameData, spsNalu...)
+								iFrameData = append(iFrameData, ppsNalu...)
+								iFrameData = append(iFrameData, idrNalu...)
+								binary.LittleEndian.PutUint32(iFramePayload[12:16], uint32(len(iFrameData)))
+								iFramePayload = append(iFramePayload, iFrameData...)
 
 								vHdr1 := Header{
 									Magic:      HeaderMagic,
@@ -190,7 +221,10 @@ func TestSofiaStreamLifecycle(t *testing.T) {
 								// 2. Send Audio Packet (MarkerAudio 00 00 01 FA): should be safely skipped
 								var audioPayload []byte
 								audioPayload = append(audioPayload, MarkerAudio...)
-								audioPayload = append(audioPayload, make([]byte, 12)...)
+								audioPayload = append(audioPayload, make([]byte, 4)...)
+								audioData := make([]byte, 12)
+								binary.LittleEndian.PutUint16(audioPayload[6:8], uint16(len(audioData)))
+								audioPayload = append(audioPayload, audioData...)
 								vHdrAudio := Header{
 									Magic:      HeaderMagic,
 									Channel:    1,
@@ -201,10 +235,11 @@ func TestSofiaStreamLifecycle(t *testing.T) {
 								}
 								_, _ = mConn.Write(append(vHdrAudio.Encode(), audioPayload...))
 
-								// 3. Send P-Frame Packet: 8-byte record header + P-frame NALU (flushes the I-frame)
+								// 3. Send P-Frame Packet: 8-byte record header + P-frame NALU
 								var pFramePayload []byte
 								pFramePayload = append(pFramePayload, MarkerPFrame...)    // 4 bytes
 								pFramePayload = append(pFramePayload, make([]byte, 4)...) // 4 bytes pad -> 8 bytes total
+								binary.LittleEndian.PutUint32(pFramePayload[4:8], uint32(len(pNalu)))
 								pFramePayload = append(pFramePayload, pNalu...)
 
 								vHdr2 := Header{
@@ -217,7 +252,7 @@ func TestSofiaStreamLifecycle(t *testing.T) {
 								}
 								_, _ = mConn.Write(append(vHdr2.Encode(), pFramePayload...))
 
-								// 4. Send another P-Frame to flush the previous P-frame
+								// 4. Send another P-Frame
 								vHdr3 := Header{
 									Magic:      HeaderMagic,
 									Channel:    1,
@@ -297,52 +332,81 @@ func TestSofiaStreamMediaMarkersDemuxing(t *testing.T) {
 	require.NoError(t, enc.Init())
 	sofiaStream.encoder = enc
 
-	var frameBuf bytes.Buffer
-
-	// 1. Feed I-Frame record: 16 bytes header + SPS/PPS/IDR
+	// 1. Feed partial I-Frame record: 16 bytes header + SPS/PPS + partial IDR
 	spsNalu := []byte{0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0x00, 0x1f, 0x96, 0x35, 0x40}
 	ppsNalu := []byte{0x00, 0x00, 0x00, 0x01, 0x68, 0xce, 0x3c, 0x80}
 	idrNalu := []byte{0x00, 0x00, 0x00, 0x01, 0x65, 0x88, 0x84, 0x00, 0x10, 0xff}
 
+	var iFrameData []byte
+	iFrameData = append(iFrameData, spsNalu...)
+	iFrameData = append(iFrameData, ppsNalu...)
+	iFrameData = append(iFrameData, idrNalu...)
+
 	var iFrameChunk []byte
 	iFrameChunk = append(iFrameChunk, MarkerIFrame...)
 	iFrameChunk = append(iFrameChunk, make([]byte, 12)...) // 16 bytes total record header
+	binary.LittleEndian.PutUint32(iFrameChunk[12:16], uint32(len(iFrameData)))
 	iFrameChunk = append(iFrameChunk, spsNalu...)
 	iFrameChunk = append(iFrameChunk, ppsNalu...)
 	iFrameChunk = append(iFrameChunk, idrNalu[:4]...) // partial IDR
 
-	sofiaStream.handleMediaPayload(iFrameChunk, &frameBuf)
-	assert.True(t, frameBuf.Len() > 0, "expected frame buffer to contain partial I-frame")
+	sofiaStream.handleMediaPayload(iFrameChunk)
+	assert.Empty(t, mockStream.getPackets(), "partial I-frame must not be dispatched prematurely")
 
-	// 2. Feed Continuation chunk (no marker, rest of IDR)
+	// 2. Feed Continuation chunk (rest of IDR)
 	continuationChunk := idrNalu[4:]
-	sofiaStream.handleMediaPayload(continuationChunk, &frameBuf)
-	assert.Equal(t, len(spsNalu)+len(ppsNalu)+len(idrNalu), frameBuf.Len())
+	sofiaStream.handleMediaPayload(continuationChunk)
+	packets := mockStream.getPackets()
+	require.NotEmpty(t, packets, "expected completed I-frame to be dispatched")
+	assert.Equal(t, uint8(96), packets[0].PayloadType)
+	assert.NotEmpty(t, mockStream.sps, "SPS should be injected into RTSP stream")
+	assert.NotEmpty(t, mockStream.pps, "PPS should be injected into RTSP stream")
+	iFrameTS := packets[0].Timestamp
 
-	// 3. Feed Audio chunk: should not affect video buffer
+	// 3. Feed Audio chunk: should be dispatched to audioWriter
 	var audioChunk []byte
 	audioChunk = append(audioChunk, MarkerAudio...)
-	audioChunk = append(audioChunk, []byte{0x01, 0x02, 0x03, 0x04}...)
-	prevLen := frameBuf.Len()
-	sofiaStream.handleMediaPayload(audioChunk, &frameBuf)
-	assert.Equal(t, prevLen, frameBuf.Len(), "audio chunk must not be appended to video frame buffer")
+	audioChunk = append(audioChunk, make([]byte, 4)...)
+	audioData := []byte{0x01, 0x02, 0x03, 0x04}
+	binary.LittleEndian.PutUint16(audioChunk[6:8], uint16(len(audioData)))
+	audioChunk = append(audioChunk, audioData...)
+	sofiaStream.handleMediaPayload(audioChunk)
 
-	// 4. Feed P-Frame record: 8 bytes header + P-frame NALU (this triggers dispatch of the completed I-frame!)
+	audioPkts1 := mockStream.getAudioPackets()
+	require.Len(t, audioPkts1, 1, "audio chunk should be dispatched to audioWriter")
+
+	// 4. Feed Metadata chunk (MarkerMeta 00 00 01 F9): must be safely consumed without being dispatched to audio (Issue #74)
+	var metaChunk []byte
+	metaChunk = append(metaChunk, MarkerMeta...)
+	metaChunk = append(metaChunk, make([]byte, 4)...)
+	metaData := []byte{0xAA, 0xBB, 0xCC, 0xDD}
+	binary.LittleEndian.PutUint16(metaChunk[6:8], uint16(len(metaData)))
+	metaChunk = append(metaChunk, metaData...)
+	sofiaStream.handleMediaPayload(metaChunk)
+
+	assert.Len(t, mockStream.getAudioPackets(), 1, "0xF9 metadata packet must be ignored and not dispatched as audio to prevent clicking noise")
+
+	// 5. Feed second Audio chunk: verify monotonic timestamp increment by payload length
+	sofiaStream.handleMediaPayload(audioChunk)
+	audioPkts2 := mockStream.getAudioPackets()
+	require.Len(t, audioPkts2, 2, "second audio chunk should be dispatched")
+	assert.Equal(t, audioPkts1[0].Timestamp+uint32(len(audioData)), audioPkts2[1].Timestamp, "audio RTP timestamps must increment monotonically by sample count")
+
+	// 6. Feed P-Frame record: 8 bytes header + P-frame NALU
 	pNalu := []byte{0x00, 0x00, 0x00, 0x01, 0x41, 0x9a, 0x01, 0x02, 0x03}
 	var pFrameChunk []byte
 	pFrameChunk = append(pFrameChunk, MarkerPFrame...)
 	pFrameChunk = append(pFrameChunk, make([]byte, 4)...) // 8 bytes total record header
+	binary.LittleEndian.PutUint32(pFrameChunk[4:8], uint32(len(pNalu)))
 	pFrameChunk = append(pFrameChunk, pNalu...)
 
-	sofiaStream.handleMediaPayload(pFrameChunk, &frameBuf)
+	sofiaStream.handleMediaPayload(pFrameChunk)
 
-	// Verify that the I-frame was dispatched to mockStream
-	packets := mockStream.getPackets()
-	require.NotEmpty(t, packets, "I-frame should have been dispatched when P-frame marker arrived")
-	assert.Equal(t, uint8(96), packets[0].PayloadType)
-
-	// Now frameBuf should hold the new P-frame
-	assert.Equal(t, len(pNalu), frameBuf.Len())
+	// Verify that the P-frame was dispatched immediately and has a strictly monotonic timestamp
+	allPackets := mockStream.getPackets()
+	require.Greater(t, len(allPackets), len(packets), "P-frame should have been dispatched immediately")
+	lastPkt := allPackets[len(allPackets)-1]
+	assert.Greater(t, lastPkt.Timestamp, iFrameTS, "P-frame RTP timestamp must be strictly greater than I-frame timestamp")
 }
 
 func TestSofiaStreamLifecycle_EncryptedAES(t *testing.T) {
@@ -528,9 +592,12 @@ func TestSofiaStreamLifecycle_EncryptedAES(t *testing.T) {
 								var iFramePayload []byte
 								iFramePayload = append(iFramePayload, MarkerIFrame...)
 								iFramePayload = append(iFramePayload, make([]byte, 12)...)
-								iFramePayload = append(iFramePayload, spsNalu...)
-								iFramePayload = append(iFramePayload, ppsNalu...)
-								iFramePayload = append(iFramePayload, idrNalu...)
+								var iFrameData []byte
+								iFrameData = append(iFrameData, spsNalu...)
+								iFrameData = append(iFrameData, ppsNalu...)
+								iFrameData = append(iFrameData, idrNalu...)
+								binary.LittleEndian.PutUint32(iFramePayload[12:16], uint32(len(iFrameData)))
+								iFramePayload = append(iFramePayload, iFrameData...)
 
 								vHdr1 := Header{
 									Magic:      HeaderMagic,
@@ -548,6 +615,7 @@ func TestSofiaStreamLifecycle_EncryptedAES(t *testing.T) {
 								var pFramePayload []byte
 								pFramePayload = append(pFramePayload, MarkerPFrame...)
 								pFramePayload = append(pFramePayload, make([]byte, 4)...)
+								binary.LittleEndian.PutUint32(pFramePayload[4:8], uint32(len(pNalu)))
 								pFramePayload = append(pFramePayload, pNalu...)
 
 								vHdr2 := Header{
@@ -631,4 +699,29 @@ func TestSofiaStream_StreamType(t *testing.T) {
 	// 4. Empty string defaults back to "Main"
 	sDefault.SetStreamType("")
 	assert.Equal(t, "Main", sDefault.StreamType())
+}
+
+func TestSofiaStream_MonotonicTimestamps_NoDrift(t *testing.T) {
+	sofiaStream := NewSofiaStream("127.0.0.1", 34567, nil, nil)
+	sofiaStream.fps = 6
+	start := time.Now()
+	sofiaStream.streamStartTime = start
+
+	// Generate 50 consecutive timestamps simulating bursts at same wall-clock time
+	var timestamps []uint32
+	sofiaStream.tsMu.Lock()
+	for i := 0; i < 50; i++ {
+		ts := sofiaStream.generateTimestampLocked()
+		timestamps = append(timestamps, ts)
+	}
+	sofiaStream.tsMu.Unlock()
+
+	// 1. Strict monotonicity check
+	for i := 1; i < len(timestamps); i++ {
+		assert.Greater(t, timestamps[i], timestamps[i-1], "Each consecutive timestamp must be strictly greater")
+	}
+
+	// 2. Verify no runaway drift: 50 timestamps within <10ms should not race ahead to hundreds of thousands
+	lastTS := timestamps[len(timestamps)-1]
+	assert.Less(t, lastTS, uint32(10000), "Timestamps must not drift ahead into the future during burst delivery")
 }

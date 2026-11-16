@@ -15,7 +15,7 @@ Im Gegensatz zur **Steinel L 625 CAM SC** (Nabto Edge P2P + WebRTC DataChannel) 
 │  ├─ Video Fallback: Lokaler nativer RTSP-Stream (TCP Port 554, 1080p H.264) │
 │  ├─ Talk-Backchannel: Xiongmai Talk Protokoll (MsgID 1432/1434, PCMA 8kHz)  │
 │  ├─ Steuerung & MCU: Xiongmai Sofia / NetIP Protokoll (TCP Port 34567)      │
-│  └─ Speicher: MicroSD-Karten Abfrage via OPFileQuery (MsgID 1440/1441)      │
+│  └─ Speicher: OPFileQuery (1440/1441) & OPPlayBack Download (1420/1422/1426)│
 └──────────────────────────────────────┬──────────────────────────────────────┘
                                        │ Port 34567 (NetIP)
                                        ▼
@@ -28,6 +28,7 @@ Im Gegensatz zur **Steinel L 625 CAM SC** (Nabto Edge P2P + WebRTC DataChannel) 
 │  5. Telemetrie & Push: MsgTransSerialData (1582) & MsgAlarmPush (1500)      │
 │  6. On-Demand Video: OPMonitor (1410/1412) bei aktiven RTSP-Zuschauern      │
 │  7. Talk Backchannel: OPTalk (1434/1432) mit PCMU <-> PCMA Transkodierung   │
+│  8. Speicher-Sync: OPPlayBack Download (1420/1422/1426) & MP4/Thumb Cache   │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -99,18 +100,18 @@ $$\mathbf{B}\;[\text{dist}]\;[\text{hld}]\;[\text{lux}]\;[\text{mode}]\;[\text{i
 ## 5. Exakte Konvertierungsformeln (nach App-Referenz)
 
 ### 1. Dämmerungsschwelle (Lux)
-Die App nutzt eine feste 26-Elemente-Tabelle (`DetectSettingActivity.java`, Zeile 63):
+Die Steinel-Firmware nutzt eine feste 26-Stufen-Tabelle (`DetectSettingActivity.java`, Zeile 63), die in der Bridge zentral in `pkg/mcu/lux.go` (`mcu.LuxTable`, `mcu.StepToLux`, `mcu.LuxToStep`) implementiert ist und von allen Kameramodellen geteilt wird:
 ```
 luxs = [2, 3, 5, 7, 10, 18, 30, 38, 50, 58, 70, 85, 100, 125, 150, 175, 200, 250, 300, 400, 500, 750, 1000, 1300, 1600, 2000]
 ```
 - **Dekodierung (Empfang)**:
   $$\text{progress} = 25 - (\text{char} - \text{'a'})$$
-  $$\text{Lux} = \text{luxs}[\text{progress}]$$
+  $$\text{Lux} = \text{mcu.StepToLux}(\text{progress}) = \text{luxs}[\text{progress}]$$
   *Beispiele aus Traces:*
   - `'n'` ($13$) $\rightarrow 25 - 13 = 12 \rightarrow \mathbf{luxs[12] = 100\text{ Lux}}$
   - `'k'` ($10$) $\rightarrow 25 - 10 = 15 \rightarrow \mathbf{luxs[15] = 175\text{ Lux}}$
 - **Kodierung (Senden)**:
-  Finde Index $i \in [0, 25]$ mit geringstem Abstand zu gewünschtem Lux-Wert.
+  Ermittelt über `mcu.LuxToStep(lux)` den passenden Tabellenindex $i \in [0, 25]$:
   $$\text{conv} = 25 - i \implies \text{Befehl: } \mathbf{"BX" + (\text{'a'} + \text{conv}) + "U"}$$
 
 ### 2. PIR-Empfindlichkeit (Distance)
@@ -174,7 +175,7 @@ Die L 620 MCU unterstützt genau 3 diskrete Stufen (`XMDetectSettingPresenter.ja
 
 ---
 
-## 7. Video-Streaming Pipeline (Natives Sofia 34567 & RTSP Fallback 554)
+## 7. Video- & Audio-Streaming Pipeline (Natives Sofia 34567 & RTSP Fallback 554)
 
 ### 1. Primärpfad: Natives Sofia Video-Streaming (`OPMonitor` MsgID 1410 / 1412)
 Die L 620 Firmware besitzt auf ihrem internen RTSP-Server (Port 554) bekannte Speicherbegrenzungen und Pufferüberläufe. Die Bridge nutzt daher das native Xiongmai Sofia/NetIP Medienprotokoll als **bevorzugten Primärpfad**:
@@ -200,6 +201,23 @@ Schlägt die Verbindung zu Sofia Port 34567 fehl, schaltet die Bridge nahtlos au
 ### 4. Sofia Video-Encoding & H.264 Erzwingung (`Simplify.Encode`)
 Beim Start prüft die Bridge über `MsgConfigGetReq` (1040) die Konfiguration `Simplify.Encode`:
 - Antwortet die Kamera mit `Compression: "H.265"` (HEVC), rekonfiguriert die Bridge die Kamera automatisch via `MsgConfigSetReq` (1042) auf `Compression: "H.264"`, um die volle Kompatibilität mit RTSP, go2rtc, Home Assistant und ONVIF Profile S sicherzustellen.
+
+### 5. Sofia Audio-Demuxing & Beseitigung von Knackgeräuschen (Issue #74)
+Im Sofia-Stream werden Video-, Audio- und Metadaten-Frames über den gemeinsamen Medien-Socket in `MsgMonitorData` (1412) übertragen. Das Demuxing erfolgt über 4-Byte Start-Marker:
+- **Audio-Frames (`MarkerAudio` = `00 00 01 FA`)**:
+  - 8-Byte Header: `00 00 01 FA 0E 02 <size16_le>`.
+  - Enthält rohe 8-kHz G.711 A-law (PCMA) Audiodaten.
+  - Wird transkodiert nach PCMU bzw. AAC-LC und an den RTSP-Server weitergeleitet.
+- **Encoder- & Sync-Metadaten (`MarkerMeta` = `00 00 01 F9`)**:
+  - 8-Byte Header: `00 00 01 F9 0E 02 <size16_le>`.
+  - Proprietäre Xiongmai DSP-Synchronisations- und Encoder-Steuerpakete.
+  - **Ursache des rhythmischen Knackens:** Werden diese Metadaten-Pakete versehentlich an den Audiopfad weitergereicht und als Audio-Samples dekodiert, führen die Header- und Bitmaskenbytes zu extremen Rechteck-Impulsspitzen (Clipping auf $\pm 32767$), die sich als permanentes rhythmisches Klopfen/Knacken äußern.
+  - **Lösung:** `0xF9`-Pakete werden im Stream-Parser (`processStreamBufferLocked`) strikt ignoriert und verworfen.
+- **Jitterfreie monotone RTP-Timestamps**:
+  - Um Buffer-Underruns und Stottern in RTSP-Clients (Scrypted, Home Assistant, go2rtc) zu vermeiden, inkrementiert die Bridge den PCMU RTP-Timestamp streng monoton um die exakte Sample-Anzahl des Payloads:
+    $$\text{timestamp} \leftarrow \text{timestamp} + \text{len}(\text{payload})$$
+  - AAC-Audio-Timestamps im RTSP-Stream verwenden exakte Integer-Arithmetik:
+    $$\text{RTP Timestamp} = \frac{\text{PTS} \times 16}{1\,\text{ms}}$$
 
 ---
 
@@ -235,7 +253,7 @@ Die L 620 CAM unterstützt zwei komplementäre Mechanismen zur Bewegungsüberwac
 
 ---
 
-## 10. MicroSD-Karten Edge Storage (OPFileQuery MsgID 1440/1441)
+## 10. MicroSD-Karten Edge Storage & Sofia Download (OPPlayBack)
 
 Die L 620 CAM speichert Videoaufnahmen als H.264/MP4 Dateien auf der internen MicroSD-Karte:
 
@@ -254,9 +272,25 @@ Die L 620 CAM speichert Videoaufnahmen als H.264/MP4 Dateien auf der internen Mi
    ```
 2. **SoC-Schutz bei Initial-Query**:
    - Um bei vollen SD-Karten einen CPU-Lockout der Kamera zu verhindern, verwendet die Bridge beim Start ein pragmatisches **4-Stunden-Zeitfenster**.
-3. **Download & Playback**:
-   - Aufnahmen werden über den Sofia Dateitransfer oder HTTP heruntergeladen und lokal in `/data/recordings` gecacht.
+3. **Nativer Sofia High-Speed Download (`OPPlayBack` 1424 / 1420)**:
+   - Der dedizierte `SofiaDownloader` (`pkg/xiongmai/sofia_download.go`) baut einen isolierten sekundären TCP-Socket auf Port 34567 auf.
+   - **Claim Handshake**: Beansprucht den Datenkanal via `OPPlayBack Claim` (MsgID 1424).
+   - **DownloadStart über Kontrollsocket**: Das Startkommando `DownloadStart` (`MsgPlayReq` MsgID 1420) muss **zwingend verschlüsselt über den primären, authentifizierten Kontrollsocket** der Kamera gesendet werden (nicht auf dem Daten-Socket).
+   - **Datenpakete**: Unterstützt sowohl reguläre `MsgPlayData` (1422) als auch `MsgPlayClaimData` (1426) Binärpakete.
+   - **Demuxing & Reiner H.264 Stream**: Die Demux-Routine `demuxAndWriteH264` filtert neben den Sofia-Headern (`00 00 01 FC` I-Frames, `00 00 01 FD` P-Frames) sowohl Audio-Frames (`00 00 01 FA`) als auch Metadaten-Frames (`00 00 01 F9`) heraus, um Bitstream-Korruptionen beim Muxen zu verhindern.
+   - Bei `MsgPlayEOF` (1423) oder Verbindungsende wird das Video über `ffmpeg -c:v copy -movflags +faststart` verlustfrei in `/data/recordings/<cam>/<id>.mp4` verpackt.
+   - Der integrierte `FFmpegExtractor` extrahiert bei Sekunde 5 ein Standbild (`thumbnail.jpg`) und publiziert das Event samt `thumbnail_url` an MQTT / Home Assistant.
    - Der REST-Endpunkt liefert Videos mit vollständiger HTTP 206 Partial-Content (Range Requests) Unterstützung aus.
+4. **Livestream-Schutz & Rate Limiting (`ThrottledReader`)**:
+   - Da gleichzeitiges ungedrosseltes 1080p RTSP-Live-Streaming und High-Speed MP4-Download den Xiongmai SoC überlasten würden (CPU-Sättigung und Flash-I/O-Verzögerungen führen zu Frame-Drops im Livestream), verwendet der `SofiaDownloader` ein konfigurierbares Rate Limiting (`sdcard_download_rate_limit_kbps`, Standard: **400 KB/s**).
+   - **TCP Flow Control**: Der `ThrottledReader` verlangsamt das Lesen vom TCP-Empfangssocket. Dadurch verkleinert sich das TCP Receive Window, und der TCP-Stack der Kamera zwingt den internen `dvr_app`-Prozess in blockierende `send()`-Aufrufe. Die Flash-Leseaktivität auf der SD-Karte sinkt drastisch, sodass der Hardware-H.264-Encoder ausreichend Speicherbandbreite und CPU-Zyklen behält.
+   - **Dynamische Timeouts & Deadlines**: Der `SofiaDownloader` und `CachedRecordingProvider` berechnen Download-Timeouts dynamisch anhand der Dateigröße und Datenrate (`time.Duration(transferSec*1.5) + 30s`), während die Socket-Read-Deadline auf 20s angehoben ist.
+   - Dadurch können SD-Karten-Aufnahmen auch bei 24/7 aktiven RTSP-Streams im Hintergrund synchronisiert werden, ohne den Livestream zu beeinträchtigen.
+5. **Fast-Fail im `CachedRecordingProvider`**:
+   - Tritt beim Download ein Netzwerkfehler oder Timeout auf, bricht die Syncer-Schleife sofort ab (`fast-fail`), anstatt wiederholt fehlschlagende Anfragen an die Kamera zu richten.
+6. **Chronologische Sortierung & Modellübergreifender Bewegungs-Trigger**:
+   - Alle SD-Karten-Aufnahmen werden deterministisch absteigend nach `StartTime` (neueste zuerst) sortiert.
+   - Neu erkannte Aufnahmen zur Laufzeit (`!isInitial`) lösen automatisch einen modellübergreifenden Bewegungsalarm (`camBus.SetMotion(true)` mit 10s Auto-Reset) aus, sodass NVR-Systeme (Scrypted, Home Assistant, Synology) zuverlässig benachrichtigt werden.
 
 ---
 

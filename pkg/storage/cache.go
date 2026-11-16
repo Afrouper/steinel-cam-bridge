@@ -391,10 +391,26 @@ func (c *RecordingCache) Delete(id string) bool {
 	return true
 }
 
-// Get returns the cached recording metadata by ID.
+// latestLocked returns the most recent cached recording item without acquiring c.mu.
+func (c *RecordingCache) latestLocked() (*RecordingItem, bool) {
+	for _, id := range c.sortedIDs {
+		if item, ok := c.items[id]; ok {
+			return &item, true
+		}
+	}
+	return nil, false
+}
+
+// Get returns the cached recording metadata by ID (or the latest if id is "latest").
 func (c *RecordingCache) Get(id string) (RecordingItem, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
+	if id == "latest" {
+		if latest, ok := c.latestLocked(); ok {
+			return *latest, true
+		}
+		return RecordingItem{}, false
+	}
 	item, ok := c.items[id]
 	return item, ok
 }
@@ -406,7 +422,15 @@ func (c *RecordingCache) GetVideoPath(id string) (string, bool) {
 	}
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	if _, ok := c.items[id]; !ok {
+	targetID := id
+	if targetID == "latest" {
+		if latest, ok := c.latestLocked(); ok {
+			targetID = latest.ID
+		} else {
+			return "", false
+		}
+	}
+	if _, ok := c.items[targetID]; !ok {
 		return "", false
 	}
 	absDir, err := filepath.Abs(c.dir)
@@ -416,7 +440,7 @@ func (c *RecordingCache) GetVideoPath(id string) (string, bool) {
 	if !strings.HasSuffix(absDir, string(filepath.Separator)) {
 		absDir += string(filepath.Separator)
 	}
-	absPath, err := filepath.Abs(filepath.Join(absDir, id+".mp4"))
+	absPath, err := filepath.Abs(filepath.Join(absDir, targetID+".mp4"))
 	if err != nil || !strings.HasPrefix(absPath, absDir) {
 		return "", false
 	}
@@ -433,7 +457,15 @@ func (c *RecordingCache) GetThumbnailPath(id string) (string, bool) {
 	}
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	if item, ok := c.items[id]; !ok || item.ThumbnailURL == "" {
+	targetID := id
+	if targetID == "latest" {
+		if latest, ok := c.latestLocked(); ok {
+			targetID = latest.ID
+		} else {
+			return "", false
+		}
+	}
+	if item, ok := c.items[targetID]; !ok || item.ThumbnailURL == "" {
 		return "", false
 	}
 	absDir, err := filepath.Abs(c.dir)
@@ -443,7 +475,7 @@ func (c *RecordingCache) GetThumbnailPath(id string) (string, bool) {
 	if !strings.HasSuffix(absDir, string(filepath.Separator)) {
 		absDir += string(filepath.Separator)
 	}
-	absPath, err := filepath.Abs(filepath.Join(absDir, id+".jpg"))
+	absPath, err := filepath.Abs(filepath.Join(absDir, targetID+".jpg"))
 	if err != nil || !strings.HasPrefix(absPath, absDir) {
 		return "", false
 	}

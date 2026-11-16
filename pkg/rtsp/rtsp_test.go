@@ -2,12 +2,14 @@ package rtsp
 
 import (
 	"net"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/bluenviron/gortsplib/v4"
 	"github.com/bluenviron/gortsplib/v4/pkg/base"
 	"github.com/bluenviron/gortsplib/v4/pkg/description"
+	"github.com/bluenviron/gortsplib/v4/pkg/liberrors"
 	"github.com/pion/rtp"
 	"github.com/stretchr/testify/assert"
 )
@@ -275,6 +277,40 @@ func TestServerAuthentication(t *testing.T) {
 
 	_, err = cValid.Play(nil)
 	assert.NoError(t, err)
+
+	// 4. Verify advertised WWW-Authenticate header: must contain Basic and MD5, but NOT SHA-256
+	dummyReq := &base.Request{
+		Method: base.Describe,
+		URL:    uNoAuth,
+	}
+	ok, challengeResp := srv.validateAuth(dummyReq, nil, nil)
+	assert.False(t, ok)
+	assert.Equal(t, base.StatusUnauthorized, challengeResp.StatusCode)
+	authHeaders := challengeResp.Header["WWW-Authenticate"]
+	assert.NotEmpty(t, authHeaders)
+
+	hasBasic := false
+	hasMD5 := false
+	hasSHA256 := false
+	for _, h := range authHeaders {
+		if strings.Contains(h, "Basic") {
+			hasBasic = true
+		}
+		if strings.Contains(h, "algorithm=\"MD5\"") || strings.Contains(h, "algorithm=MD5") {
+			hasMD5 = true
+		}
+		if strings.Contains(h, "SHA-256") {
+			hasSHA256 = true
+		}
+	}
+	assert.True(t, hasBasic, "WWW-Authenticate must advertise Basic")
+	assert.True(t, hasMD5, "WWW-Authenticate must advertise Digest MD5")
+	assert.False(t, hasSHA256, "WWW-Authenticate must NOT advertise SHA-256 to avoid FFmpeg/HA overwriting MD5")
+
+	// 5. Verify OnStreamWriteError callback does not panic and rate-limits
+	srv.OnStreamWriteError(&gortsplib.ServerHandlerOnStreamWriteErrorCtx{
+		Error: liberrors.ErrServerWriteQueueFull{},
+	})
 }
 
 func TestServer_SingleTalkerLock(t *testing.T) {

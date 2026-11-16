@@ -307,3 +307,41 @@ func TestRecordingCacheFailedMarker(t *testing.T) {
 	assert.False(t, cache2.HasFailed("5001"))
 	assert.NoFileExists(t, filepath.Join(tempDir, "5001.failed"))
 }
+
+func TestRecordingCache_LatestResolution(t *testing.T) {
+	tempDir := t.TempDir()
+	mockExt := NewMockExtractor()
+	cache := NewRecordingCache(tempDir, 5, mockExt)
+
+	// When empty:
+	_, ok := cache.Get("latest")
+	assert.False(t, ok)
+	_, ok = cache.GetVideoPath("latest")
+	assert.False(t, ok)
+	_, ok = cache.GetThumbnailPath("latest")
+	assert.False(t, ok)
+
+	// Add older item
+	now := time.Now().UTC()
+	itemOld := RecordingItem{ID: "6001", StartTime: now.Add(-10 * time.Minute)}
+	_, err := cache.Add(context.Background(), itemOld, bytes.NewReader([]byte("video-data-6001")))
+	require.NoError(t, err)
+
+	// Add newer item
+	itemNew := RecordingItem{ID: "6002", StartTime: now}
+	_, err = cache.Add(context.Background(), itemNew, bytes.NewReader([]byte("video-data-6002")))
+	require.NoError(t, err)
+
+	// "latest" should resolve to 6002
+	latestItem, ok := cache.Get("latest")
+	require.True(t, ok)
+	assert.Equal(t, "6002", latestItem.ID)
+
+	vPath, ok := cache.GetVideoPath("latest")
+	require.True(t, ok)
+	assert.Contains(t, vPath, "6002.mp4")
+
+	tPath, ok := cache.GetThumbnailPath("latest")
+	require.True(t, ok)
+	assert.Contains(t, tPath, "6002.jpg")
+}

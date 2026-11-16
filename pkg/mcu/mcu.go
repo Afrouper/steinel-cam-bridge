@@ -13,6 +13,7 @@ type ConfigInfo struct {
 	SVersion                string
 	Mode                    int
 	Lux                     int
+	RawLux                  int
 	PIRActive               bool
 	MotionDetected          bool
 	PhotosensitiveDetection bool
@@ -41,7 +42,8 @@ func ParseFrame(hexStr string) (*ConfigInfo, error) {
 	}
 
 	mode := parseHexInt(body[4:6])
-	lux := parseHexInt(body[6:10])
+	rawLux := parseHexInt(body[6:10])
+	lux := L625RawToLux(rawLux)
 	pirActive := body[10:11] == "1"
 
 	tuxingVal := parseHexInt(body[11:12])
@@ -60,6 +62,7 @@ func ParseFrame(hexStr string) (*ConfigInfo, error) {
 		SVersion:                body[2:4],
 		Mode:                    mode,
 		Lux:                     lux,
+		RawLux:                  rawLux,
 		PIRActive:               pirActive,
 		MotionDetected:          motionDetected,
 		PhotosensitiveDetection: photoDetection,
@@ -175,12 +178,13 @@ func BuildSetPIRSensitivity(percent int) (string, error) {
 	return BuildCommand(fmt.Sprintf("5A0206%02X", percent))
 }
 
-// BuildSetLuxThreshold creates command for ambient light trigger threshold in Lux (2 - 1000 lx, 10000 = day)
+// BuildSetLuxThreshold creates command for ambient light trigger threshold in Lux (2 - 2000 lx, 10000 = day)
 func BuildSetLuxThreshold(lux int) (string, error) {
 	if lux < 2 {
 		lux = 2
 	} else if lux > 10000 {
 		lux = 10000
 	}
-	return BuildCommand(fmt.Sprintf("5A0304%04X", lux))
+	raw := L625LuxToRaw(lux)
+	return BuildCommand(fmt.Sprintf("5A0304%04X", raw))
 }

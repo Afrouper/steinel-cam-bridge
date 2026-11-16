@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -254,6 +255,11 @@ func (m *SDCardManager) ListRecordings(ctx context.Context, start, end time.Time
 		})
 	}
 
+	// Sort recordings descending by StartTime (newest first) to guarantee consistent ordering
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].StartTime.After(items[j].StartTime)
+	})
+
 	return &storage.RecordingListResponse{
 		Count: len(items),
 		Total: rawResp.Total,
@@ -354,7 +360,11 @@ func (m *SDCardManager) streamFile(ctx context.Context, cmd string, timestamp in
 	for {
 		select {
 		case <-ctx.Done():
-			// Client cancelled download (e.g. browser tab closed)
+			// Client cancelled download (e.g. shutdown or client abort)
+			_ = m.sendJSONCmd("get_event_video", map[string]interface{}{
+				"timestamp": timestamp,
+				"action":    "stop",
+			})
 			return ErrTransferAborted
 
 		case err := <-transfer.errChan:
