@@ -2,6 +2,22 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge** Add-on werden hier dokumentiert.
 
+## 1.5.2
+
+### 🚀 Highlights & Neuerungen
+
+- **SD-Karten-Aufnahmen & Vorschaubilder (L 620 CAM)**:
+  - Vollständiger Abruf der Videoaufnahmen von der internen MicroSD-Karte und automatische Erstellung von 5-Sekunden-Vorschaubildern (Thumbnails) für die L 620 CAM.
+  - Einstellbare Bandbreiten-Drosselung (`sdcard_download_rate_limit_kbps`, Standard: 400 KB/s) zum Schutz von Kamera-SoC und parallelem RTSP-Live-Stream.
+- **Bewegungserkennung via SD-Aufnahmen**:
+  - Neue Videoaufnahmen auf der Speicherkarte aktivieren automatisch für 10 Sekunden den Home Assistant Bewegungssensor (`binary_sensor.motion`) – ideal für Kameramodelle ohne lokalen Alarm-Push.
+- **Erweiterte Licht- & Sensor-Steuerung in Home Assistant**:
+  - Wiederaufnahme und Erweiterung der Entitäten für Nachlaufzeit (`number.duration`), Grundlicht-Helligkeit (`number.lowlight`) und Grundlicht-Dauer (`number.lowlight_duration`).
+  - Vereinheitlichte Dämmerungsschwellen (2–2000 Lux) und zuverlässiger Tagbetrieb für alle Modelle.
+- **Audio- & Streaming-Optimierungen**:
+  - Störgeräusche (Knacken/Klopfen) im Live-Ton der L 620 CAM vollständig behoben.
+  - Präzise A/V-Zeitsynchronisation (kein Zeitstempel-Drift) und optimierte RTSP-Digest-Authentifizierung für Home Assistant und FFmpeg.
+
 ## 1.5.1
 
 ### 🐛 Bugfixes: L 620 Flutlicht-Status & SD/HD Auflösung

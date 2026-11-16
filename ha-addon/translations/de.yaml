@@ -47,6 +47,9 @@ configuration:
   sdcard_sync_interval:
     name: "SD-Karten Sync-Intervall"
     description: "Intervall in Sekunden zur Hintergrundabfrage neuer Aufnahmen von der MicroSD-Karte (Standard: 120s, 0 deaktiviert die zyklische Abfrage)."
+  sdcard_download_rate_limit_kbps:
+    name: "SD-Karten Download-Drosselung (KB/s)"
+    description: "Maximale Bandbreite in KB/s beim Herunterladen von SD-Karten-Aufnahmen in den lokalen Cache (Standard: 400 KB/s). Schützt den Kamera-SoC und den RTSP-Livestream vor Überlastung. 0 deaktiviert die Drosselung."
   cache_recordings:
     name: "Lokaler Aufnahme-Cache"
     description: "Anzahl der jüngsten Aufnahmen, die im lokalen Bridge-Speicher vorgehalten werden (Standard: 10, ca. 80–150 MB). Erlaubt sofortigen Zugriff, extrahiert Snapshots und entlastet die Kamera. 0 deaktiviert den Cache."
