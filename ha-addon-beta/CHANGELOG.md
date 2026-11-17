@@ -2,6 +2,16 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.5.3
+
+### 🛠️ Verbesserungen & Stabilität
+
+- **Gemeinsame Cache-Nutzung für SD-Karten-Aufnahmen**:
+  - ONVIF Profile G, REST-API (`/api/sdcard/events`) und Hintergrund-Syncer nutzen nun denselben Cache. Verhindert unnötige Festplattenzugriffe, schützt laufende Downloads und hält konfigurierte Bandbreiten-Limits zuverlässig ein.
+- **Allgemeine Stabilität & Zuverlässigkeit**:
+  - Mehrere Fehlerbehebungen und Aufräumarbeiten für einen noch stabileren Dauerbetrieb (u. a. beim Gegensprechen / 2-Wege-Audio, bei ONVIF-Bewegungsmeldungen, bei L-620-Streams und beim sauberen Beenden der Bridge).
+  - ONVIF-Neustartbefehle werden nun an die L 625 CAM SC weitergeleitet, und in Home Assistant (MQTT) wird die aktuelle Bridge-Version angezeigt.
+
 ## 1.5.3-beta.2
 
 ### 🛠️ Stabilität & Codepflege
