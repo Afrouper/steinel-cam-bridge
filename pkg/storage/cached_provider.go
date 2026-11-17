@@ -43,6 +43,13 @@ func (p *CachedRecordingProvider) SetRateLimitKBps(kbps int) {
 	p.rateLimitKBps = kbps
 }
 
+// RateLimitKBps returns the configured download rate limit in KB/s.
+func (p *CachedRecordingProvider) RateLimitKBps() int {
+	p.syncMu.Lock()
+	defer p.syncMu.Unlock()
+	return p.rateLimitKBps
+}
+
 // Cache returns the underlying RecordingCache.
 func (p *CachedRecordingProvider) Cache() *RecordingCache {
 	return p.cache

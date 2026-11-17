@@ -27,6 +27,7 @@ type cameraInstance struct {
 	eventBus        *events.Bus
 	bridgeMgr       *BridgeManager
 	stream          *rtsp.Stream
+	getRecProvider  func() storage.RecordingProvider
 	recordingSyncer *storage.RecordingSyncer
 	cameraDriver    driver.CameraDriver
 	supervisor      *supervisor.Supervisor
@@ -277,6 +278,7 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 			eventBus:        camBus,
 			bridgeMgr:       camBridgeMgr,
 			stream:          camStream,
+			getRecProvider:  getRecProvider,
 			recordingSyncer: syncer,
 			cameraDriver:    camDrv,
 			supervisor:      camSup,
@@ -324,15 +326,7 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 		},
 		primaryInst.bridgeMgr.SetLampState,
 		primaryInst.bridgeMgr.SetSiren,
-		func() storage.RecordingProvider {
-			if cfg.CacheRecordings > 0 {
-				return storage.NewCachedRecordingProvider(
-					storage.NewRecordingCache(filepath.Join(cfg.CacheDir, primaryCam.Path), cfg.CacheRecordings, extractor),
-					primaryInst.bridgeMgr.GetRecordingProvider,
-				)
-			}
-			return primaryInst.bridgeMgr.GetRecordingProvider()
-		},
+		primaryInst.getRecProvider,
 		primaryInst.eventBus,
 	)
 	onvifServer.SetChannels(onvifChannels)
