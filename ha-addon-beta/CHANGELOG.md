@@ -2,6 +2,15 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.5.3-beta.2
+
+### 🛠️ Stabilität & Codepflege
+
+- **Allgemeine Stabilitätsverbesserungen**:
+  - Mehrere kleine Fehlerbehebungen und Aufräumarbeiten für einen noch zuverlässigeren Dauerbetrieb.
+  - Verbesserte Stabilität beim Gegensprechen (2-Wege-Audio), bei Bewegungsbenachrichtigungen und beim sauberen Beenden der Bridge.
+  - ONVIF-Neustartbefehle werden nun korrekt an die L 625 CAM SC weitergeleitet, und in Home Assistant wird die aktuelle Bridge-Version angezeigt.
+
 ## 1.5.3-beta.1
 
 ### 🛠️ Verbesserungen & Bugfixes
