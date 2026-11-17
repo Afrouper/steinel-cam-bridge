@@ -2,6 +2,14 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.5.3-beta.1
+
+### 🛠️ Verbesserungen & Bugfixes
+
+- **Gemeinsame Cache-Nutzung im ONVIF- & REST-Server (#81)**:
+  - Der ONVIF-Server (Profile G Suche & Standard-REST-Endpunkte `/api/sdcard/events`) nutzt nun dieselbe `RecordingCache`- und `CachedRecordingProvider`-Instanz wie der Kamera-Syncer, statt bei jeder Abfrage eine neue Instanz zu erzeugen.
+  - Verhindert unnötige Festplattenzugriffe pro Anfrage, stellt die korrekte Anwendung des konfigurierten `sdcard_download_rate_limit_kbps` sicher und schützt laufende `.mp4.tmp`-Downloads vor versehentlichem Löschen durch parallele Abfragen.
+
 ## 1.5.2
 
 ### 🚀 Highlights & Neuerungen
