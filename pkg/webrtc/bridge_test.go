@@ -249,3 +249,45 @@ func TestBridge_SetOnConnected(t *testing.T) {
 		t.Fatal("expected onConnected callback to be executed")
 	}
 }
+
+func TestAudioBackchannelBufferCompaction(t *testing.T) {
+	track, err := pion.NewTrackLocalStaticRTP(
+		pion.RTPCodecCapability{MimeType: pion.MimeTypePCMU, ClockRate: 8000, Channels: 1},
+		"audioLabel",
+		"audioStream",
+	)
+	if err != nil {
+		t.Fatalf("failed to create track: %v", err)
+	}
+
+	b := &Bridge{
+		audioSendTrack: track,
+	}
+
+	// Send 500 packets of 160 bytes each (80 KB total); backing array must stay bounded near ~160 bytes
+	payload := make([]byte, 160)
+	for i := 0; i < 500; i++ {
+		if err := b.WriteAudioBackchannel(&rtp.Packet{Payload: payload}); err != nil {
+			t.Fatalf("WriteAudioBackchannel failed at iteration %d: %v", i, err)
+		}
+	}
+
+	b.backchannelMu.Lock()
+	bufLen := len(b.backchannelBuf)
+	bufCap := cap(b.backchannelBuf)
+	b.backchannelMu.Unlock()
+
+	if bufLen != 0 {
+		t.Fatalf("expected empty residual buffer, got len=%d", bufLen)
+	}
+	if bufCap > 1024 {
+		t.Fatalf("expected compacted backing array capacity <= 1024, got cap=%d", bufCap)
+	}
+}
+
+func TestBridge_RebootWithoutDataChannel(t *testing.T) {
+	b := &Bridge{}
+	if err := b.Reboot(); err == nil {
+		t.Fatal("expected error when DataChannel is unavailable")
+	}
+}

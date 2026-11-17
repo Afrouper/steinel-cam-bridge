@@ -26,12 +26,17 @@ func (c *Client) publishDeviceDiscovery(client paho.Client, dev *CameraDevice) {
 	availTopic := fmt.Sprintf("%s/availability", dev.baseTopic)
 	displayName := FormatDisplayName(dev.Model, dev.DeviceID, dev.Name)
 
+	swVersion := c.cfg.AppVersion
+	if swVersion == "" {
+		swVersion = "2.0.0"
+	}
+
 	devMap := map[string]interface{}{
 		"identifiers":  []string{dev.nodeID},
 		"name":         displayName,
 		"manufacturer": "STEINEL",
 		"model":        dev.Model,
-		"sw_version":   "2.0.0",
+		"sw_version":   swVersion,
 	}
 	if c.cfg.BridgeHTTPURL != "" {
 		devMap["configuration_url"] = c.cfg.BridgeHTTPURL

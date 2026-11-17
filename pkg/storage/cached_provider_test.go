@@ -244,6 +244,9 @@ func TestCachedRecordingProviderSyncLatest_StreamActiveRateLimited(t *testing.T)
 	}
 
 	provider := NewCachedRecordingProvider(cache, func() RecordingProvider { return upstream })
+	assert.Equal(t, 400, provider.RateLimitKBps())
+	provider.SetRateLimitKBps(250)
+	assert.Equal(t, 250, provider.RateLimitKBps())
 	provider.SetRateLimitKBps(400)
 	// Stream is active
 	provider.SetStreamActiveFunc(func() bool { return true })

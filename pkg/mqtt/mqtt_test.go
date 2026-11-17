@@ -2,6 +2,7 @@ package mqtt
 
 import (
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -314,6 +315,7 @@ func TestSingleCamera_NoDuplicateDiscovery(t *testing.T) {
 
 type mockPahoClient struct {
 	paho.Client
+	mu        sync.Mutex
 	published map[string]string
 	retained  map[string]bool
 }
@@ -322,7 +324,12 @@ func (m *mockPahoClient) IsConnected() bool { return true }
 func (m *mockPahoClient) Subscribe(topic string, qos byte, callback paho.MessageHandler) paho.Token {
 	return &mockToken{}
 }
+func (m *mockPahoClient) Unsubscribe(topics ...string) paho.Token {
+	return &mockToken{}
+}
 func (m *mockPahoClient) Publish(topic string, qos byte, retained bool, payload interface{}) paho.Token {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.published == nil {
 		m.published = make(map[string]string)
 	}
@@ -666,4 +673,45 @@ func TestLowlightTimeToHours(t *testing.T) {
 		actual := LowlightTimeToHours(tt.input)
 		assert.Equal(t, tt.expected, actual, "LowlightTimeToHours(%d)", tt.input)
 	}
+}
+
+func TestMQTT_AppVersionAndConcurrentUpdate(t *testing.T) {
+	mockCl := &mockPahoClient{published: make(map[string]string)}
+	bus := events.NewBus()
+
+	c := NewClient(Config{
+		Broker:          "tcp://127.0.0.1:1883",
+		TopicPrefix:     "steinel",
+		DiscoveryPrefix: "homeassistant",
+		DeviceID:        "de-init",
+		AppVersion:      "v1.5.3-beta.2",
+	}, Callbacks{}, bus)
+	c.client = mockCl
+	c.RegisterCamera(CameraDevice{
+		Path:      "cam1",
+		Name:      "Einfahrt",
+		DeviceID:  "de-init",
+		ProductID: "pr-test",
+		Model:     "L 625 CAM SC",
+		EventBus:  bus,
+	})
+
+	c.publishDeviceDiscovery(mockCl, c.cameras["cam1"])
+	disc := mockCl.published["homeassistant/light/steinel_de_init/light/config"]
+	assert.Contains(t, disc, `"sw_version":"v1.5.3-beta.2"`)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(2)
+		go func(n int) {
+			defer wg.Done()
+			bus.SetMotion(n%2 == 0)
+			bus.UpdateStatus(events.DeviceStatus{Highlight: 50 + n, LampMode: 1})
+		}(i)
+		go func(n int) {
+			defer wg.Done()
+			c.UpdateCameraDeviceInfo("cam1", fmt.Sprintf("de-upd-%d", n), "pr-test")
+		}(i)
+	}
+	wg.Wait()
 }

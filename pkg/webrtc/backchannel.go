@@ -33,10 +33,11 @@ func (b *Bridge) WriteAudioBackchannel(pkt *rtp.Packet) error {
 	const frameSize = 160
 	const timestampStep = 160
 
-	for len(b.backchannelBuf) >= frameSize {
+	offset := 0
+	for len(b.backchannelBuf)-offset >= frameSize {
 		chunk := make([]byte, frameSize)
-		copy(chunk, b.backchannelBuf[:frameSize])
-		b.backchannelBuf = b.backchannelBuf[frameSize:]
+		copy(chunk, b.backchannelBuf[offset:offset+frameSize])
+		offset += frameSize
 
 		outPkt := &rtp.Packet{
 			Header: rtp.Header{
@@ -62,8 +63,15 @@ func (b *Bridge) WriteAudioBackchannel(pkt *rtp.Packet) error {
 
 		if err := track.WriteRTP(outPkt); err != nil {
 			logger.Warn("Audio Backchannel", "⚠️ WriteRTP error: %v", err)
+			rem := copy(b.backchannelBuf, b.backchannelBuf[offset:])
+			b.backchannelBuf = b.backchannelBuf[:rem]
 			return err
 		}
+	}
+
+	if offset > 0 {
+		rem := copy(b.backchannelBuf, b.backchannelBuf[offset:])
+		b.backchannelBuf = b.backchannelBuf[:rem]
 	}
 
 	return nil

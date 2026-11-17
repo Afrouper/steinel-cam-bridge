@@ -22,6 +22,7 @@ type Subscription struct {
 	ExpiresAt  time.Time
 	LastMotion map[string]bool
 	EventChan  chan motionEventItem
+	mu         sync.Mutex
 }
 
 type EventHandler struct {
@@ -53,6 +54,10 @@ func (h *EventHandler) AddSource(sourceToken string, bus *events.Bus) {
 		return
 	}
 	h.sourcesMu.Lock()
+	if existing, ok := h.sources[sourceToken]; ok && existing == bus {
+		h.sourcesMu.Unlock()
+		return
+	}
 	h.sources[sourceToken] = bus
 	h.sourcesMu.Unlock()
 
@@ -215,9 +220,12 @@ func (h *EventHandler) pullMessages(subID string, reqXML string) string {
 	case it := <-sub.EventChan:
 		item = it
 		hasNewEvent = true
+		sub.mu.Lock()
 		sub.LastMotion[it.sourceToken] = it.isMotion
+		sub.mu.Unlock()
 	case <-time.After(3 * time.Second):
 		h.sourcesMu.RLock()
+		sub.mu.Lock()
 		for token, bus := range h.sources {
 			curr := bus.GetStatus().IsMotion
 			if sub.LastMotion[token] != curr {
@@ -227,14 +235,19 @@ func (h *EventHandler) pullMessages(subID string, reqXML string) string {
 				break
 			}
 		}
+		sub.mu.Unlock()
 		h.sourcesMu.RUnlock()
 	}
+
+	sub.mu.Lock()
+	expiresAt := sub.ExpiresAt
+	sub.mu.Unlock()
 
 	if !hasNewEvent {
 		return fmt.Sprintf(`<tev:PullMessagesResponse xmlns:tev="%s" xmlns:wsnt="%s">
   <tev:CurrentTime>%s</tev:CurrentTime>
   <tev:TerminationTime>%s</tev:TerminationTime>
-</tev:PullMessagesResponse>`, NS_TEV, NS_WSNT, now.Format(time.RFC3339), sub.ExpiresAt.Format(time.RFC3339))
+</tev:PullMessagesResponse>`, NS_TEV, NS_WSNT, now.Format(time.RFC3339), expiresAt.Format(time.RFC3339))
 	}
 
 	motionStr := "false"
@@ -262,7 +275,7 @@ func (h *EventHandler) pullMessages(subID string, reqXML string) string {
       </tt:Message>
     </wsnt:Message>
   </wsnt:NotificationMessage>
-</tev:PullMessagesResponse>`, NS_TEV, NS_WSNT, NS_TT, now.Format(time.RFC3339), sub.ExpiresAt.Format(time.RFC3339), now.Format(time.RFC3339), sourceToken, motionStr)
+</tev:PullMessagesResponse>`, NS_TEV, NS_WSNT, NS_TT, now.Format(time.RFC3339), expiresAt.Format(time.RFC3339), now.Format(time.RFC3339), sourceToken, motionStr)
 }
 
 func (h *EventHandler) renew(subID string) string {
@@ -270,10 +283,13 @@ func (h *EventHandler) renew(subID string) string {
 	expires := now.Add(10 * time.Minute)
 
 	h.mu.Lock()
-	if sub, exists := h.subscriptions[subID]; exists {
-		sub.ExpiresAt = expires
-	}
+	sub := h.subscriptions[subID]
 	h.mu.Unlock()
+	if sub != nil {
+		sub.mu.Lock()
+		sub.ExpiresAt = expires
+		sub.mu.Unlock()
+	}
 
 	return fmt.Sprintf(`<wsnt:RenewResponse xmlns:wsnt="%s">
   <wsnt:TerminationTime>%s</wsnt:TerminationTime>

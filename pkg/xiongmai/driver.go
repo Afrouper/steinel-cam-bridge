@@ -38,6 +38,7 @@ type Driver struct {
 	motionMu         sync.Mutex
 	mu               sync.Mutex
 	streamMu         sync.Mutex
+	ingestMu         sync.Mutex
 	lastClientSeen   time.Time
 	forceRTSPIngest  bool
 	running          bool
@@ -144,7 +145,7 @@ func (d *Driver) Start(ctx context.Context) error {
 		}
 
 		// Step 3: Query initial light and MCU states
-		d.syncInitialState()
+		d.syncInitialStateLocked()
 
 		// Step 4: On-demand streaming check
 		if d.forceRTSPIngest {
@@ -181,15 +182,18 @@ func (d *Driver) Start(ctx context.Context) error {
 		}
 		logger.Info("Xiongmai Driver", "Starting RTSP Ingest: IP=%s, Port=%d, User=%s, PwdMasked=%s",
 			d.cameraIP, RTSPPort, d.user, MaskPassword(effectivePwd))
+		d.ingestMu.Lock()
+		if d.ingest != nil {
+			_ = d.ingest.Close()
+		}
 		d.ingest = NewRTSPIngest(d.cameraIP, RTSPPort, d.user, effectivePwd, streamSubtype, d.rtspServer, d.password)
-		if err := d.ingest.Start(ctx); err != nil {
+		ingestRef := d.ingest
+		d.ingestMu.Unlock()
+		if err := ingestRef.Start(ctx); err != nil {
 			logger.Warn("Xiongmai Driver", "⚠️ Failed to start RTSP Ingest: %v", err)
 		}
 	} else {
-		if d.ingest != nil {
-			_ = d.ingest.Close()
-			d.ingest = nil
-		}
+		d.closeIngest()
 	}
 
 	d.running = true
@@ -237,7 +241,17 @@ func (d *Driver) applyMCUConfig(mcuCfg *MCUConfig) {
 	d.eventBus.UpdateStatus(st)
 }
 
-func (d *Driver) syncInitialState() {
+func (d *Driver) closeIngest() {
+	d.ingestMu.Lock()
+	ing := d.ingest
+	d.ingest = nil
+	d.ingestMu.Unlock()
+	if ing != nil {
+		_ = ing.Close()
+	}
+}
+
+func (d *Driver) syncInitialStateLocked() {
 	if d.eventBus == nil {
 		return
 	}
@@ -314,15 +328,22 @@ func (d *Driver) superviseSofiaLoop(ctx context.Context) {
 				firstAttempt = false
 
 				_ = d.client.EnsureH264Encoding()
-				d.syncInitialState()
+				d.mu.Lock()
+				d.syncInitialStateLocked()
+				forceRTSP := d.forceRTSPIngest
+				d.mu.Unlock()
 
-				if !d.forceRTSPIngest && d.ingest != nil {
-					logger.Info("Xiongmai Driver", "⏹️ Closing fallback RTSP ingest now that Sofia control is restored")
-					_ = d.ingest.Close()
-					d.ingest = nil
+				if !forceRTSP {
+					d.ingestMu.Lock()
+					hasIngest := d.ingest != nil
+					d.ingestMu.Unlock()
+					if hasIngest {
+						logger.Info("Xiongmai Driver", "⏹️ Closing fallback RTSP ingest now that Sofia control is restored")
+						d.closeIngest()
+					}
 				}
 
-				if !d.forceRTSPIngest && d.sofiaStream != nil && !d.sofiaStream.IsRunning() && d.rtspServer != nil && d.rtspServer.ActiveClients() > 0 {
+				if !forceRTSP && d.sofiaStream != nil && !d.sofiaStream.IsRunning() && d.rtspServer != nil && d.rtspServer.ActiveClients() > 0 {
 					go func() {
 						_ = d.startSofiaStream(ctx)
 					}()
@@ -348,6 +369,9 @@ func (d *Driver) superviseSofiaLoop(ctx context.Context) {
 			if d.client.IsLoggedIn() {
 				if err := d.client.SendKeepAlive(); err != nil {
 					logger.Warn("Xiongmai Driver", "⚠️ Sofia heartbeat failed: %v (connection lost, reconnecting in background...)", err)
+					if d.talk != nil {
+						d.talk.Reset()
+					}
 					_ = d.client.Close()
 					reconnectBackoff = 5 * time.Second
 				}
@@ -407,6 +431,9 @@ func (d *Driver) ReconnectSession() error {
 	defer d.mu.Unlock()
 	if d.client != nil {
 		logger.Info("Xiongmai Driver", "🔄 Manual session reconnect requested via MQTT / API")
+		if d.talk != nil {
+			d.talk.Reset()
+		}
 		_ = d.client.Close()
 		return nil
 	}
@@ -571,14 +598,20 @@ func (d *Driver) SetResolution(res string) error {
 
 	// 2. Forced RTSP Ingest mode
 	if d.forceRTSPIngest {
-		if d.ingest != nil {
+		d.ingestMu.Lock()
+		hasIngest := d.ingest != nil
+		d.ingestMu.Unlock()
+		if hasIngest {
 			effectivePwd := d.client.GetEffectivePassword()
 			if effectivePwd == "" && d.password != "" {
 				effectivePwd = d.password
 			}
-			_ = d.ingest.Close()
-			d.ingest = NewRTSPIngest(d.cameraIP, RTSPPort, d.user, effectivePwd, streamSubtype, d.rtspServer, d.password)
-			return d.ingest.Start(context.Background())
+			d.closeIngest()
+			newIngest := NewRTSPIngest(d.cameraIP, RTSPPort, d.user, effectivePwd, streamSubtype, d.rtspServer, d.password)
+			d.ingestMu.Lock()
+			d.ingest = newIngest
+			d.ingestMu.Unlock()
+			return newIngest.Start(context.Background())
 		}
 		return nil
 	}
@@ -601,22 +634,25 @@ func (d *Driver) SetResolution(res string) error {
 		}
 
 		// Ensure fallback Ingest is closed and nil to prevent dual streaming
-		if d.ingest != nil {
-			_ = d.ingest.Close()
-			d.ingest = nil
-		}
+		d.closeIngest()
 		return nil
 	}
 
 	// 2. Fallback mode: RTSP Ingest on port 554
-	if d.ingest != nil {
+	d.ingestMu.Lock()
+	hasIngest := d.ingest != nil
+	d.ingestMu.Unlock()
+	if hasIngest {
 		effectivePwd := d.client.GetEffectivePassword()
 		if effectivePwd == "" && d.password != "" {
 			effectivePwd = d.password
 		}
-		_ = d.ingest.Close()
-		d.ingest = NewRTSPIngest(d.cameraIP, RTSPPort, d.user, effectivePwd, streamSubtype, d.rtspServer, d.password)
-		return d.ingest.Start(context.Background())
+		d.closeIngest()
+		newIngest := NewRTSPIngest(d.cameraIP, RTSPPort, d.user, effectivePwd, streamSubtype, d.rtspServer, d.password)
+		d.ingestMu.Lock()
+		d.ingest = newIngest
+		d.ingestMu.Unlock()
+		return newIngest.Start(context.Background())
 	}
 	return nil
 }
@@ -674,10 +710,9 @@ func (d *Driver) Close() error {
 	}
 	if d.talk != nil {
 		_ = d.talk.StopTalk()
+		d.talk.Reset()
 	}
-	if d.ingest != nil {
-		_ = d.ingest.Close()
-	}
+	d.closeIngest()
 	if d.client != nil {
 		_ = d.client.Close()
 	}
@@ -705,10 +740,7 @@ func (d *Driver) startSofiaStreamLocked(ctx context.Context) error {
 		return err
 	}
 	logger.Info("Xiongmai Driver", "🎥 Native Sofia video stream active on port %d", DefaultPort)
-	if d.ingest != nil {
-		_ = d.ingest.Close()
-		d.ingest = nil
-	}
+	d.closeIngest()
 	return nil
 }
 

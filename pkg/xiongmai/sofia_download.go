@@ -75,8 +75,10 @@ func (d *SofiaDownloader) Download(ctx context.Context, rec *storage.RecordingIt
 	}
 
 	targetAddr := fmt.Sprintf("%s:%d", d.cameraIP, d.port)
-	if d.client != nil && d.client.addr != "" {
-		targetAddr = d.client.addr
+	if d.client != nil {
+		if addr := d.client.GetAddr(); addr != "" {
+			targetAddr = addr
+		}
 	}
 
 	sessionID := uint32(0)

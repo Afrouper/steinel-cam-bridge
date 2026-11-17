@@ -155,8 +155,10 @@ func (s *SofiaStream) Start(ctx context.Context) error {
 	sessionHex := fmt.Sprintf("0x%010x", sessionID)
 
 	targetAddr := fmt.Sprintf("%s:%d", s.cameraIP, s.port)
-	if s.client != nil && s.client.addr != "" {
-		targetAddr = s.client.addr
+	if s.client != nil {
+		if addr := s.client.GetAddr(); addr != "" {
+			targetAddr = addr
+		}
 	}
 	logger.Info("Xiongmai Stream", "🎥 Connecting to Sofia media port %s (Session: %s)...", targetAddr, sessionHex)
 
@@ -299,19 +301,20 @@ func (s *SofiaStream) Start(ctx context.Context) error {
 	s.audioSSRC = uint32(time.Now().UnixNano())
 	s.audioSeq = 0
 	s.audioTimestamp = 0
+	fps := s.fps
 	s.tsMu.Unlock()
 	s.running.Store(true)
 
 	s.wg.Add(1)
-	go s.readLoop(ctx)
+	go s.readLoop(ctx, conn)
 
-	logger.Info("Xiongmai Stream", "▶️ Sofia native video streaming pipeline active (Port %d, FPS %d)", s.port, s.fps)
+	logger.Info("Xiongmai Stream", "▶️ Sofia native video streaming pipeline active (Port %d, FPS %d)", s.port, fps)
 	return nil
 }
 
 // readLoop continuously reads binary Sofia packets from the media socket,
 // reassembles H.264 video frames, and forwards them to the RTSP server.
-func (s *SofiaStream) readLoop(ctx context.Context) {
+func (s *SofiaStream) readLoop(ctx context.Context, conn net.Conn) {
 	defer s.wg.Done()
 
 	var firstPacketOnce sync.Once
@@ -327,8 +330,8 @@ func (s *SofiaStream) readLoop(ctx context.Context) {
 		}
 
 		// Read 20-byte Sofia header
-		_ = s.mediaConn.SetReadDeadline(time.Now().Add(5 * time.Second))
-		if _, err := io.ReadFull(s.mediaConn, hdrBuf); err != nil {
+		_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		if _, err := io.ReadFull(conn, hdrBuf); err != nil {
 			if s.running.Load() {
 				logger.Warn("Xiongmai Stream", "⚠️ Sofia media socket read header error: %v", err)
 			}
@@ -347,8 +350,8 @@ func (s *SofiaStream) readLoop(ctx context.Context) {
 		}
 
 		payload := make([]byte, hdr.DataLength)
-		_ = s.mediaConn.SetReadDeadline(time.Now().Add(5 * time.Second))
-		if _, err := io.ReadFull(s.mediaConn, payload); err != nil {
+		_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		if _, err := io.ReadFull(conn, payload); err != nil {
 			if s.running.Load() {
 				logger.Warn("Xiongmai Stream", "⚠️ Sofia media socket read payload error: %v", err)
 			}

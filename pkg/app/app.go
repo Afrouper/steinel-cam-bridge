@@ -27,6 +27,7 @@ type cameraInstance struct {
 	eventBus        *events.Bus
 	bridgeMgr       *BridgeManager
 	stream          *rtsp.Stream
+	getRecProvider  func() storage.RecordingProvider
 	recordingSyncer *storage.RecordingSyncer
 	cameraDriver    driver.CameraDriver
 	supervisor      *supervisor.Supervisor
@@ -114,6 +115,7 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 			DeviceID:        primaryDID,
 			ProductID:       primaryPID,
 			Model:           primaryModelName,
+			AppVersion:      appVersion,
 			BridgeHTTPURL:   fmt.Sprintf("http://%s:%d", getLocalBridgeIP(primaryCam.IP), cfg.ONVIFPort),
 		}, mqtt.Callbacks{}, nil)
 	} else {
@@ -277,6 +279,7 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 			eventBus:        camBus,
 			bridgeMgr:       camBridgeMgr,
 			stream:          camStream,
+			getRecProvider:  getRecProvider,
 			recordingSyncer: syncer,
 			cameraDriver:    camDrv,
 			supervisor:      camSup,
@@ -320,19 +323,11 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 		primaryInst.bridgeMgr.SetResolution,
 		func() error {
 			logger.Info("ONVIF", "Reboot requested")
-			return nil
+			return primaryInst.bridgeMgr.Reboot()
 		},
 		primaryInst.bridgeMgr.SetLampState,
 		primaryInst.bridgeMgr.SetSiren,
-		func() storage.RecordingProvider {
-			if cfg.CacheRecordings > 0 {
-				return storage.NewCachedRecordingProvider(
-					storage.NewRecordingCache(filepath.Join(cfg.CacheDir, primaryCam.Path), cfg.CacheRecordings, extractor),
-					primaryInst.bridgeMgr.GetRecordingProvider,
-				)
-			}
-			return primaryInst.bridgeMgr.GetRecordingProvider()
-		},
+		primaryInst.getRecProvider,
 		primaryInst.eventBus,
 	)
 	onvifServer.SetChannels(onvifChannels)
@@ -389,14 +384,19 @@ func (a *App) Run(ctx context.Context) error {
 			}
 		}()
 	}
+
+	// 4. Run Recording Syncers and Camera Supervisors in parallel
+	var wg sync.WaitGroup
 	for _, inst := range a.cameras {
 		if inst.recordingSyncer != nil {
-			go inst.recordingSyncer.Start(ctx)
+			syncer := inst.recordingSyncer
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				syncer.Start(ctx)
+			}()
 		}
 	}
-
-	// 4. Run Camera Supervisors in parallel
-	var wg sync.WaitGroup
 	for _, inst := range a.cameras {
 		camInst := inst
 		wg.Add(1)

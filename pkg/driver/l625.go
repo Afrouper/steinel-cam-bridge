@@ -386,6 +386,15 @@ func (d *L625Driver) ReconnectSession() error {
 	return errors.New("no active camera bridge session")
 }
 
+// Reboot triggers a controlled hardware reboot of the L 625 camera.
+func (d *L625Driver) Reboot() error {
+	b := d.getBridge()
+	if b == nil {
+		return ErrCameraOffline
+	}
+	return b.Reboot()
+}
+
 // Close disconnects the active bridge.
 func (d *L625Driver) Close() error {
 	d.setBridge(nil)

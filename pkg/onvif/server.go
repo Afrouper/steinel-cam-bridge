@@ -193,6 +193,22 @@ func (s *Server) Channels() []CameraChannel {
 	return res
 }
 
+// RecordingProvider returns the primary RecordingProvider resolved for ONVIF search and default REST queries.
+func (s *Server) RecordingProvider() storage.RecordingProvider {
+	if s.recordingProvider == nil {
+		return nil
+	}
+	return s.recordingProvider()
+}
+
+// HTTPHandler returns the underlying HTTP handler for testing and inspection.
+func (s *Server) HTTPHandler() http.Handler {
+	if s.httpServer == nil {
+		return nil
+	}
+	return s.httpServer.Handler
+}
+
 // SetTimeFunc registers the callback for handling SetSystemDateAndTime requests.
 func (s *Server) SetTimeFunc(f func(t time.Time, tz string) error) {
 	if s.deviceHandler != nil {
