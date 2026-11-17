@@ -21,13 +21,13 @@ func (c *Client) PublishRecordingEvent(item storage.RecordingItem) {
 
 	c.mu.RLock()
 	cl := c.client
+	targetBaseTopic := c.baseTopic
 	c.mu.RUnlock()
 
 	if cl == nil || !cl.IsConnected() {
 		return
 	}
 
-	targetBaseTopic := c.baseTopic
 	if item.Camera != "" {
 		c.camerasMu.RLock()
 		for _, dev := range c.cameras {
@@ -75,20 +75,32 @@ func (c *Client) PublishRecordingEvent(item storage.RecordingItem) {
 
 // publishMotion publishes the binary sensor motion state (ON/OFF) for the primary device.
 func (c *Client) publishMotion(isMotion bool) {
+	c.mu.RLock()
+	primaryDID := c.cfg.DeviceID
+	baseTopic := c.baseTopic
+	c.mu.RUnlock()
+
+	var devSnapshot CameraDevice
+	var found bool
 	c.camerasMu.RLock()
-	dev := c.cameras[c.cfg.DeviceID]
-	if dev == nil {
+	if dev := c.cameras[primaryDID]; dev != nil {
+		devSnapshot = *dev
+		found = true
+	} else {
 		for _, d := range c.cameras {
-			dev = d
-			break
+			if d != nil {
+				devSnapshot = *d
+				found = true
+				break
+			}
 		}
 	}
 	c.camerasMu.RUnlock()
 
-	if dev != nil {
-		c.publishDeviceMotion(dev, isMotion)
+	if found {
+		c.publishDeviceMotion(&devSnapshot, isMotion)
 	} else {
-		c.publishDeviceMotion(&CameraDevice{baseTopic: c.baseTopic}, isMotion)
+		c.publishDeviceMotion(&CameraDevice{baseTopic: baseTopic}, isMotion)
 	}
 }
 
@@ -111,20 +123,32 @@ func (c *Client) publishDeviceMotion(dev *CameraDevice, isMotion bool) {
 
 // publishStatus publishes telemetry and device status to Home Assistant for the primary device.
 func (c *Client) publishStatus(st events.DeviceStatus) {
+	c.mu.RLock()
+	primaryDID := c.cfg.DeviceID
+	baseTopic := c.baseTopic
+	c.mu.RUnlock()
+
+	var devSnapshot CameraDevice
+	var found bool
 	c.camerasMu.RLock()
-	dev := c.cameras[c.cfg.DeviceID]
-	if dev == nil {
+	if dev := c.cameras[primaryDID]; dev != nil {
+		devSnapshot = *dev
+		found = true
+	} else {
 		for _, d := range c.cameras {
-			dev = d
-			break
+			if d != nil {
+				devSnapshot = *d
+				found = true
+				break
+			}
 		}
 	}
 	c.camerasMu.RUnlock()
 
-	if dev != nil {
-		c.publishDeviceStatus(dev, st)
+	if found {
+		c.publishDeviceStatus(&devSnapshot, st)
 	} else {
-		c.publishDeviceStatus(&CameraDevice{baseTopic: c.baseTopic}, st)
+		c.publishDeviceStatus(&CameraDevice{baseTopic: baseTopic}, st)
 	}
 }
 

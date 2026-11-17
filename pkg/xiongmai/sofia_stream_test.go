@@ -725,3 +725,44 @@ func TestSofiaStream_MonotonicTimestamps_NoDrift(t *testing.T) {
 	lastTS := timestamps[len(timestamps)-1]
 	assert.Less(t, lastTS, uint32(10000), "Timestamps must not drift ahead into the future during burst delivery")
 }
+
+func TestTalkClient_ResetAndGetAddr(t *testing.T) {
+	c := NewClient("127.0.0.1", 34567, "admin", "")
+	assert.Equal(t, "127.0.0.1:34567", c.GetAddr())
+
+	tc := NewTalkClient(c)
+	tc.mu.Lock()
+	tc.talkActive = true
+	tc.mu.Unlock()
+
+	tc.Reset()
+
+	tc.mu.Lock()
+	active := tc.talkActive
+	tc.mu.Unlock()
+	assert.False(t, active)
+}
+
+func TestSofiaStream_ConcurrentStopAndReadLoop(t *testing.T) {
+	c1, c2 := net.Pipe()
+	defer func() { _ = c2.Close() }()
+
+	s := NewSofiaStream("127.0.0.1", 34567, nil, nil)
+	s.mediaConn = c1
+	s.stopChan = make(chan struct{})
+	s.running.Store(true)
+
+	s.wg.Add(1)
+	go s.readLoop(context.Background(), c1)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = s.Stop()
+		}()
+	}
+	wg.Wait()
+	assert.False(t, s.IsRunning())
+}

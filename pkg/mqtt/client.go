@@ -24,6 +24,7 @@ type Config struct {
 	DeviceID        string // e.g. "de-m4yfowbr"
 	ProductID       string // e.g. "pr-qtatbtbi"
 	Model           string // e.g. "L 625 CAM SC"
+	AppVersion      string // Bridge version reported in HA device discovery
 	BridgeHTTPURL   string
 }
 
@@ -210,19 +211,32 @@ func (c *Client) RegisterCamera(dev CameraDevice) {
 			c.mu.RUnlock()
 
 			if client != nil && client.IsConnected() {
+				snap, ok := c.getCameraSnapshot(camKey)
+				if !ok {
+					snap = camCopy
+				}
 				switch evt {
 				case events.EventMotion:
 					if m, ok := data.(events.MotionEvent); ok {
-						c.publishDeviceMotion(&camCopy, m.IsMotion)
+						c.publishDeviceMotion(&snap, m.IsMotion)
 					}
 				case events.EventDevice:
 					if st, ok := data.(events.DeviceStatus); ok {
-						c.publishDeviceStatus(&camCopy, st)
+						c.publishDeviceStatus(&snap, st)
 					}
 				}
 			}
 		})
 	}
+}
+
+func (c *Client) getCameraSnapshot(key string) (CameraDevice, bool) {
+	c.camerasMu.RLock()
+	defer c.camerasMu.RUnlock()
+	if dev, ok := c.cameras[key]; ok && dev != nil {
+		return *dev, true
+	}
+	return CameraDevice{}, false
 }
 
 // UpdateCameraDeviceInfo updates the device identifiers for a specific camera (identified by cameraPath or deviceID)
@@ -367,7 +381,10 @@ func (c *Client) Start(_ context.Context) error {
 		opts.SetPassword(c.cfg.Password)
 	}
 
-	availTopic := fmt.Sprintf("%s/availability", c.baseTopic)
+	c.mu.RLock()
+	willBaseTopic := c.baseTopic
+	c.mu.RUnlock()
+	availTopic := fmt.Sprintf("%s/availability", willBaseTopic)
 	opts.SetWill(availTopic, "offline", 1, true)
 	opts.SetAutoReconnect(true)
 	opts.SetKeepAlive(30 * time.Second)
@@ -380,13 +397,16 @@ func (c *Client) Start(_ context.Context) error {
 		logger.Info("MQTT", "🔌 Connected to MQTT broker: %s", c.cfg.Broker)
 
 		c.camerasMu.RLock()
-		devs := make([]*CameraDevice, 0, len(c.cameras))
+		devs := make([]CameraDevice, 0, len(c.cameras))
 		for _, d := range c.cameras {
-			devs = append(devs, d)
+			if d != nil {
+				devs = append(devs, *d)
+			}
 		}
 		c.camerasMu.RUnlock()
 
-		for _, dev := range devs {
+		for i := range devs {
+			dev := &devs[i]
 			devAvailTopic := fmt.Sprintf("%s/availability", dev.baseTopic)
 			client.Publish(devAvailTopic, 1, true, "online")
 
@@ -453,11 +473,17 @@ func (c *Client) Close() {
 
 	if cl != nil && cl.IsConnected() {
 		c.camerasMu.RLock()
+		availTopics := make([]string, 0, len(c.cameras))
 		for _, dev := range c.cameras {
-			devAvailTopic := fmt.Sprintf("%s/availability", dev.baseTopic)
-			cl.Publish(devAvailTopic, 1, true, "offline").Wait()
+			if dev != nil {
+				availTopics = append(availTopics, fmt.Sprintf("%s/availability", dev.baseTopic))
+			}
 		}
 		c.camerasMu.RUnlock()
+
+		for _, topic := range availTopics {
+			cl.Publish(topic, 1, true, "offline").Wait()
+		}
 		cl.Disconnect(250)
 	}
 }

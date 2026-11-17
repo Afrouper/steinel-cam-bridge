@@ -88,13 +88,22 @@ func (t *TalkClient) SendAudioPacket(pkt *rtp.Packet) error {
 	return err
 }
 
+// Reset marks the talk channel as inactive (e.g. after a Sofia control reconnect)
+// so the next outgoing audio packet re-claims OPTalk cleanly.
+func (t *TalkClient) Reset() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.talkActive = false
+}
+
 func (t *TalkClient) startTalkLocked() error {
 	if t.talkActive {
 		return nil
 	}
 
+	sessionID := t.client.GetSessionID()
 	logger.Debug("Xiongmai Talk", "🎙️ Claiming audio talk channel (MsgTalkClaimReq)...")
-	logger.Trace("Xiongmai Talk", "Claiming talk channel (SessionID: 0x%08X)...", t.client.sessionID)
+	logger.Trace("Xiongmai Talk", "Claiming talk channel (SessionID: 0x%08X)...", sessionID)
 
 	// 1. Claim talk channel (MsgID 1434 / 1410)
 	claimReq := OPTalkReq{
@@ -102,7 +111,7 @@ func (t *TalkClient) startTalkLocked() error {
 		OPTalk: OPTalkInfo{
 			Action: "Claim",
 		},
-		SessionID: fmt.Sprintf("0x%08X", t.client.sessionID),
+		SessionID: fmt.Sprintf("0x%08X", sessionID),
 	}
 	claimPayload, _ := json.Marshal(claimReq)
 	respClaim, err := t.client.SendPacket(MsgTalkClaimV2Req, claimPayload)
@@ -142,7 +151,7 @@ func (t *TalkClient) startTalkLocked() error {
 		OPTalk: OPTalkInfo{
 			Action: "Start",
 		},
-		SessionID: fmt.Sprintf("0x%08X", t.client.sessionID),
+		SessionID: fmt.Sprintf("0x%08X", sessionID),
 	}
 	startPayload, _ := json.Marshal(startReq)
 	startResp, err := t.client.SendPacket(MsgTalkControlReq, startPayload)
@@ -167,13 +176,14 @@ func (t *TalkClient) StopTalk() error {
 		return nil
 	}
 
-	logger.Trace("Xiongmai Talk", "Stopping talk channel (SessionID: 0x%08X)...", t.client.sessionID)
+	sessionID := t.client.GetSessionID()
+	logger.Trace("Xiongmai Talk", "Stopping talk channel (SessionID: 0x%08X)...", sessionID)
 	req := OPTalkReq{
 		Name: "OPTalk",
 		OPTalk: OPTalkInfo{
 			Action: "Stop",
 		},
-		SessionID: fmt.Sprintf("0x%08X", t.client.sessionID),
+		SessionID: fmt.Sprintf("0x%08X", sessionID),
 	}
 	payload, _ := json.Marshal(req)
 	_, _ = t.client.SendPacket(MsgTalkControlReq, payload)

@@ -164,3 +164,16 @@ func (m *BridgeManager) SetSystemDateAndTime(t time.Time, tz string) error {
 	}
 	return nil
 }
+
+// Reboot triggers a controlled camera reboot if supported by the active driver.
+func (m *BridgeManager) Reboot() error {
+	d := m.getDriver()
+	if d != nil {
+		if rebootDriver, ok := d.(interface {
+			Reboot() error
+		}); ok {
+			return rebootDriver.Reboot()
+		}
+	}
+	return nil
+}

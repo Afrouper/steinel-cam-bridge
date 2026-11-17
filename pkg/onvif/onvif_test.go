@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -855,4 +856,49 @@ func TestONVIF_DynamicResolution720p(t *testing.T) {
 	// 3. GetVideoSourceConfigurations should report width="1280" height="720"
 	sourceConfigs := handler.getVideoSourceConfigurations()
 	assert.Contains(t, sourceConfigs, `width="1280" height="720"`)
+}
+
+func TestEventHandler_NoDuplicateSubscription(t *testing.T) {
+	bus := events.NewBus()
+	h := NewEventHandler(8000, bus)
+	// Re-registering the same source token & bus (as SetChannels does for primary cam) must be a no-op
+	h.AddSource("VideoSourceConfig_1", bus)
+
+	subResp := h.createPullPointSubscription("127.0.0.1:8000")
+	// Extract subID from ?sub=<id>
+	idx := strings.Index(subResp, "?sub=")
+	require.Greater(t, idx, 0)
+	subID := subResp[idx+5:]
+	subID = subID[:strings.Index(subID, "</wsa:Address>")]
+
+	bus.SetMotion(true)
+
+	h.mu.Lock()
+	sub := h.subscriptions[subID]
+	h.mu.Unlock()
+	require.NotNil(t, sub)
+	assert.Equal(t, 1, len(sub.EventChan), "motion event must only be queued once")
+}
+
+func TestEventHandler_ConcurrentPullMessagesAndRenew(t *testing.T) {
+	bus := events.NewBus()
+	h := NewEventHandler(8000, bus)
+
+	subResp := h.createPullPointSubscription("127.0.0.1:8000")
+	idx := strings.Index(subResp, "?sub=")
+	require.Greater(t, idx, 0)
+	subID := subResp[idx+5:]
+	subID = subID[:strings.Index(subID, "</wsa:Address>")]
+
+	var wg sync.WaitGroup
+	for i := 0; i < 6; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			bus.SetMotion(n%2 == 0)
+			_ = h.pullMessages(subID, "")
+			_ = h.renew(subID)
+		}(i)
+	}
+	wg.Wait()
 }

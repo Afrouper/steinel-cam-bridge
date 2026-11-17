@@ -115,6 +115,7 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 			DeviceID:        primaryDID,
 			ProductID:       primaryPID,
 			Model:           primaryModelName,
+			AppVersion:      appVersion,
 			BridgeHTTPURL:   fmt.Sprintf("http://%s:%d", getLocalBridgeIP(primaryCam.IP), cfg.ONVIFPort),
 		}, mqtt.Callbacks{}, nil)
 	} else {
@@ -322,7 +323,7 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 		primaryInst.bridgeMgr.SetResolution,
 		func() error {
 			logger.Info("ONVIF", "Reboot requested")
-			return nil
+			return primaryInst.bridgeMgr.Reboot()
 		},
 		primaryInst.bridgeMgr.SetLampState,
 		primaryInst.bridgeMgr.SetSiren,
@@ -383,14 +384,19 @@ func (a *App) Run(ctx context.Context) error {
 			}
 		}()
 	}
+
+	// 4. Run Recording Syncers and Camera Supervisors in parallel
+	var wg sync.WaitGroup
 	for _, inst := range a.cameras {
 		if inst.recordingSyncer != nil {
-			go inst.recordingSyncer.Start(ctx)
+			syncer := inst.recordingSyncer
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				syncer.Start(ctx)
+			}()
 		}
 	}
-
-	// 4. Run Camera Supervisors in parallel
-	var wg sync.WaitGroup
 	for _, inst := range a.cameras {
 		camInst := inst
 		wg.Add(1)

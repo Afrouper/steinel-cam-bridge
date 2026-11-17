@@ -676,6 +676,13 @@ func (c *Client) GetSessionID() uint32 {
 	return c.sessionID
 }
 
+// GetAddr returns the configured Sofia camera target address (host:port).
+func (c *Client) GetAddr() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.addr
+}
+
 // EnableRTSP is deprecated and kept as a no-op for backwards compatibility.
 // Xiongmai video is streamed natively via Sofia NetIP port 34567 (MsgID 1410/1412),
 // completely eliminating the need for RTSP port 554 on the camera.

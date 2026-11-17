@@ -230,3 +230,9 @@ func TestAppDisabledCacheDelegatesDirectly(t *testing.T) {
 	assert.Nil(t, app.cameras[0].getRecProvider())
 	assert.Nil(t, app.onvifServer.RecordingProvider())
 }
+
+func TestBridgeManager_Reboot(t *testing.T) {
+	bm := NewBridgeManager()
+	// Offline / no driver: returns nil cleanly
+	assert.NoError(t, bm.Reboot())
+}

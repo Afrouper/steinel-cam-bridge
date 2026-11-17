@@ -123,6 +123,14 @@ func (b *Bridge) SetSystemDateAndTime(t time.Time, tz string) error {
 	})
 }
 
+// Reboot triggers a controlled reboot of the L 625 camera via WebRTC DataChannel.
+func (b *Bridge) Reboot() error {
+	logger.Info("DataChannel", "🔄 Requesting controlled camera reboot via DataChannel")
+	return b.sendJSONCmd("reboot", map[string]interface{}{
+		"do_update_check": false,
+	})
+}
+
 func (b *Bridge) sendJSONCmd(cmdName string, info map[string]interface{}) error {
 	b.mu.Lock()
 	dc := b.dc
