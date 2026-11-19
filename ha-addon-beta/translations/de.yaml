@@ -44,6 +44,9 @@ configuration:
   hold_last_frame_seconds:
     name: "Standbild bei Aussetzern (Sekunden)"
     description: "Liefert die Kamera kein Bild (Verbindungsabriss), wird das letzte Schlüsselbild so viele Sekunden lang weitergesendet, damit Home Assistant und Rekorder verbunden bleiben und ohne Neuaufbau weiterlaufen. Danach bleibt der Strom still, damit ein echter Ausfall auffällt. 0 schaltet das Standbild ab. Nur L 625."
+  debug_api:
+    name: "Diagnose-Schnittstelle"
+    description: "Schaltet POST /api/debug/command frei, über das einzelne Befehle direkt an die Kamera gehen (nur L 625). Nur zur Fehlersuche einschalten und danach wieder ausschalten."
   rtsp_port:
     name: "RTSP-Port"
     description: "Netzwerkport des integrierten RTSP-Servers (Standard: 8554)."
