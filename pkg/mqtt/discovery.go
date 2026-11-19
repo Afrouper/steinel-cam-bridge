@@ -237,5 +237,9 @@ func (c *Client) publishDeviceDiscovery(client paho.Client, dev *CameraDevice) {
 	// Diagnostic sensors reported by the camera itself (Wi-Fi, SD card, firmware)
 	c.publishCameraInfoDiscovery(dev, publishEntity)
 
+	// Camera-side settings and controls (timestamp, volume, detection, ...)
+	c.publishCameraSettingsDiscovery(dev, publishEntity)
+	c.publishCameraControlsDiscovery(dev, publishEntity)
+
 	logger.Info("MQTT", "📢 Published Home Assistant Auto-Discovery entities for %s (%s) under %s", dev.nodeID, displayName, c.cfg.DiscoveryPrefix)
 }

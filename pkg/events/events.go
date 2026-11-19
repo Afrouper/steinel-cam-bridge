@@ -41,6 +41,29 @@ type DeviceStatus struct {
 	SDFreeMB   int    `json:"sd_free_mb"`  // free space on the SD card as reported (MiB)
 	SDTotalMB  int    `json:"sd_total_mb"` // card size as reported (MiB); 0 = unknown / no card
 	SDStatus   string `json:"sd_status"`   // e.g. "normal"
+
+	// Camera-side settings (L 625, from get_device_info).
+	OSDPosition   int    `json:"osd_position"`   // timestamp overlay: 0 = off, 1-4 = corner, -1 = unknown
+	SpeakerVolume int    `json:"speaker_volume"` // 0 - 100 %, -1 = unknown
+	DetectMode    string `json:"detect_mode"`    // e.g. "ai"
+
+	// Lamp setting from the MCU status frame: 1 = "Pixel Change Detection" on,
+	// 0 = off, -1 = unknown.
+	PixelChangeDetection int `json:"pixel_change_detection"`
+
+	// Camera-side detection and recording settings (L 625, from
+	// get_detect_data / get_record_setting). -1 = unknown.
+	DrawFrame  int `json:"draw_frame"`  // 1 = detection boxes are burnt into the picture
+	AIPerson   int `json:"ai_person"`   // person detection sensitivity (app: 2 / 5 / 7)
+	RecordMode int `json:"record_mode"` // SD recording: 4 = none, 2 = camera, 3 = camera or PIR
+
+	// Firmware update offer reported by the camera itself (get_device_info).
+	UpdateInfoKnown bool   `json:"update_info_known"`
+	FirmwareRemote  string `json:"firmware_remote"`
+	FirmwareUpdate  bool   `json:"firmware_update"`
+	MCUVersion      string `json:"mcu_version"`
+	MCURemote       string `json:"mcu_remote"`
+	MCUUpdate       bool   `json:"mcu_update"`
 }
 
 type Listener func(evt EventType, data interface{})
@@ -61,6 +84,13 @@ func NewBus() *Bus {
 			PIRSensitivity: 50,
 			Resolution:     "1080p",
 			LastSeen:       time.Now(),
+			OSDPosition:    -1,
+			SpeakerVolume:  -1,
+
+			PixelChangeDetection: -1,
+			DrawFrame:            -1,
+			AIPerson:             -1,
+			RecordMode:           -1,
 		},
 	}
 }

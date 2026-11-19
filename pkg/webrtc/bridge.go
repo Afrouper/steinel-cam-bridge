@@ -31,7 +31,6 @@ type Bridge struct {
 	audioSSRC        uint32
 	videoTrack       *pion.TrackRemote
 	lastVideoPacket  atomic.Int64
-	motionResetTimer *time.Timer
 	sdcardManager    *SDCardManager
 	resetReason      atomic.Uint32
 	recoveryTimeout  time.Duration
@@ -323,7 +322,7 @@ func (b *Bridge) Run(ctx context.Context) error {
 		// Start periodic MCU polling (every 2s)
 		go b.runMCUPollingLoop(sessCtx)
 
-		// Read Wi-Fi signal, SD card usage and firmware version
+		// Read Wi-Fi signal, SD card usage and camera-side settings
 		go b.runCameraInfoLoop(sessCtx)
 	})
 

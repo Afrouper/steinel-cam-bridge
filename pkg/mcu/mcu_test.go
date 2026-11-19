@@ -1,6 +1,8 @@
 package mcu
 
 import (
+	"encoding/base64"
+	"encoding/hex"
 	"testing"
 )
 
@@ -22,8 +24,25 @@ func TestParseFrame(t *testing.T) {
 	if !cfg.PIRActive {
 		t.Errorf("Expected PIRActive true")
 	}
-	if !cfg.MotionDetected {
-		t.Errorf("Expected MotionDetected true")
+	if !cfg.PixelChangeDetection {
+		t.Errorf("Expected PixelChangeDetection true")
+	}
+	if cfg.ImagePhotosensitiveDetection {
+		t.Errorf("Expected ImagePhotosensitiveDetection false")
+	}
+}
+
+func TestBuildSetPixelChangeDetection(t *testing.T) {
+	// 5A020201 -> CS = 5A+02+02+01 = 5F; 5A020200 -> CS 5E
+	for on, want := range map[bool]string{true: "5a0202015f", false: "5a0202005e"} {
+		b64, err := BuildSetPixelChangeDetection(on)
+		if err != nil {
+			t.Fatalf("BuildSetPixelChangeDetection(%v) failed: %v", on, err)
+		}
+		raw, _ := base64.StdEncoding.DecodeString(b64)
+		if got := hex.EncodeToString(raw); got != want {
+			t.Errorf("BuildSetPixelChangeDetection(%v) = %s, want %s", on, got, want)
+		}
 	}
 }
 

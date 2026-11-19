@@ -44,6 +44,19 @@ type Callbacks struct {
 	// CameraInfo announces the diagnostic sensors for cameras that report
 	// Wi-Fi signal, SD card usage and firmware version (L 625).
 	CameraInfo bool
+
+	// Camera-side settings (L 625). Each setter announces its control entity
+	// when set.
+	SetTimestampPosition func(position int) error
+	SetSpeakerVolume     func(percent int) error
+	SetDetectMode        func(mode string) error
+
+	SetPixelChangeDetection func(on bool) error
+	SetDrawFrame            func(on bool) error
+	SetAIPersonSensitivity  func(level int) error
+	SetRecordMode           func(mode int) error
+	InstallUpdate           func(target string) error
+	RebootCamera            func() error
 }
 
 // CameraDevice represents an individual camera's metadata, control hooks, and event bus for MQTT.
@@ -88,6 +101,7 @@ type Client struct {
 	// device topic, so the base light switch can restore it.
 	lowlightMu   sync.Mutex
 	lowlightLast map[string]int
+	osdLast      map[string]int
 }
 
 // defaultLowlightPercent is used by the base light switch when no brightness

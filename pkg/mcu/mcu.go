@@ -9,20 +9,25 @@ import (
 )
 
 type ConfigInfo struct {
-	HVersion                string
-	SVersion                string
-	Mode                    int
-	Lux                     int
-	RawLux                  int
-	PIRActive               bool
-	MotionDetected          bool
-	PhotosensitiveDetection bool
-	PIRSensitivity          int
-	ColorTemp               int
-	Highlight               int
-	HighlightTime           int
-	Lowlight                int
-	LowlightTime            int
+	HVersion  string
+	SVersion  string
+	Mode      int
+	Lux       int
+	RawLux    int
+	PIRActive bool
+	// PixelChangeDetection and ImagePhotosensitiveDetection are SETTINGS of the
+	// lamp (switches in the STEINEL CAM app), not motion events: bit 0 of the
+	// "tuxing" nibble = "Pixel Change Detection" (light reacts to changes in the
+	// camera picture), bit 1 = "Image Photosensitive Detection" (twilight from
+	// the picture; only offered by the app from FW 0.1.2.30 and MCU 1.6).
+	PixelChangeDetection         bool
+	ImagePhotosensitiveDetection bool
+	PIRSensitivity               int
+	ColorTemp                    int
+	Highlight                    int
+	HighlightTime                int
+	Lowlight                     int
+	LowlightTime                 int
 }
 
 // ParseFrame parses the 18-byte (36-hex) MCU frame starting with 5A0F0F
@@ -47,8 +52,8 @@ func ParseFrame(hexStr string) (*ConfigInfo, error) {
 	pirActive := body[10:11] == "1"
 
 	tuxingVal := parseHexInt(body[11:12])
-	motionDetected := (tuxingVal & 0x01) != 0
-	photoDetection := (tuxingVal & 0x02) != 0
+	pixelChange := (tuxingVal & 0x01) != 0
+	imagePhotosensitive := (tuxingVal & 0x02) != 0
 
 	pirSens := parseHexInt(body[12:14])
 	colorTemp := parseHexInt(body[14:16])
@@ -58,20 +63,20 @@ func ParseFrame(hexStr string) (*ConfigInfo, error) {
 	lowlightTime := parseHexInt(body[24:28])
 
 	return &ConfigInfo{
-		HVersion:                body[0:2],
-		SVersion:                body[2:4],
-		Mode:                    mode,
-		Lux:                     lux,
-		RawLux:                  rawLux,
-		PIRActive:               pirActive,
-		MotionDetected:          motionDetected,
-		PhotosensitiveDetection: photoDetection,
-		PIRSensitivity:          pirSens,
-		ColorTemp:               colorTemp,
-		Highlight:               highlight,
-		HighlightTime:           highlightTime,
-		Lowlight:                lowlight,
-		LowlightTime:            lowlightTime,
+		HVersion:                     body[0:2],
+		SVersion:                     body[2:4],
+		Mode:                         mode,
+		Lux:                          lux,
+		RawLux:                       rawLux,
+		PIRActive:                    pirActive,
+		PixelChangeDetection:         pixelChange,
+		ImagePhotosensitiveDetection: imagePhotosensitive,
+		PIRSensitivity:               pirSens,
+		ColorTemp:                    colorTemp,
+		Highlight:                    highlight,
+		HighlightTime:                highlightTime,
+		Lowlight:                     lowlight,
+		LowlightTime:                 lowlightTime,
 	}, nil
 }
 
@@ -187,4 +192,14 @@ func BuildSetLuxThreshold(lux int) (string, error) {
 	}
 	raw := L625LuxToRaw(lux)
 	return BuildCommand(fmt.Sprintf("5A0304%04X", raw))
+}
+
+// BuildSetPixelChangeDetection switches the lamp's "Pixel Change Detection"
+// (light reacts to changes in the camera picture) on or off: 5A 02 02 00/01.
+func BuildSetPixelChangeDetection(on bool) (string, error) {
+	val := 0
+	if on {
+		val = 1
+	}
+	return BuildCommand(fmt.Sprintf("5A0202%02X", val))
 }

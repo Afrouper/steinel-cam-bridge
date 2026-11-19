@@ -562,3 +562,75 @@ func (d *L625Driver) SetSystemDateAndTime(t time.Time, tz string) error {
 	}
 	return b.SetSystemDateAndTime(t, tz)
 }
+
+// SetTimestampPosition switches the timestamp overlay off (0) or moves it to a corner (1-4).
+func (d *L625Driver) SetTimestampPosition(position int) error {
+	b := d.getBridge()
+	if b == nil {
+		return ErrCameraOffline
+	}
+	return b.SetTimestampPosition(position)
+}
+
+// SetSpeakerVolume sets the volume of the camera's speaker (0-100).
+func (d *L625Driver) SetSpeakerVolume(percent int) error {
+	b := d.getBridge()
+	if b == nil {
+		return ErrCameraOffline
+	}
+	return b.SetSpeakerVolume(percent)
+}
+
+// SetDetectMode sets the camera-side detection mode.
+func (d *L625Driver) SetDetectMode(mode string) error {
+	b := d.getBridge()
+	if b == nil {
+		return ErrCameraOffline
+	}
+	return b.SetDetectMode(mode)
+}
+
+// SetPixelChangeDetection switches the lamp's "Pixel Change Detection" (light reacts to picture changes).
+func (d *L625Driver) SetPixelChangeDetection(on bool) error {
+	b := d.getBridge()
+	if b == nil {
+		return ErrCameraOffline
+	}
+	return b.SetPixelChangeDetection(on)
+}
+
+// SetDrawFrame switches the detection boxes burnt into the picture on or off.
+func (d *L625Driver) SetDrawFrame(on bool) error {
+	b := d.getBridge()
+	if b == nil {
+		return ErrCameraOffline
+	}
+	return b.SetDrawFrame(on)
+}
+
+// SetAIPersonSensitivity sets the person detection sensitivity (2, 5 or 7).
+func (d *L625Driver) SetAIPersonSensitivity(level int) error {
+	b := d.getBridge()
+	if b == nil {
+		return ErrCameraOffline
+	}
+	return b.SetAIPersonSensitivity(level)
+}
+
+// SetRecordMode chooses what makes the camera record to its SD card (2, 3 or 4).
+func (d *L625Driver) SetRecordMode(mode int) error {
+	b := d.getBridge()
+	if b == nil {
+		return ErrCameraOffline
+	}
+	return b.SetRecordMode(mode)
+}
+
+// InstallUpdate starts an update the camera offers ("camera" or "mcu").
+func (d *L625Driver) InstallUpdate(target string) error {
+	b := d.getBridge()
+	if b == nil {
+		return ErrCameraOffline
+	}
+	return b.InstallUpdate(target)
+}
