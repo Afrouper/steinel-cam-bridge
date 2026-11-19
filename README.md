@@ -84,12 +84,23 @@ an der Hardware.
     - **Hauptlicht Helligkeit (`number.highlight`)**: Maximale Leuchtstärke des Flutlichts (`10`–`100 %`).
     - **Grundlicht Helligkeit (`number.lowlight`)**: Dauerhafte Nachtlicht-Helligkeit (`0`–`50 %`).
     - **Grundlicht Dauer (`number.lowlight_duration`)**: Leuchtdauer des Grundlichts (`0`–`12 h`, modellübergreifend harmonisiert).
+    - **Grundlicht (`switch.lowlight_switch`)**: Ein/Aus wie der Schalter in der STEINEL CAM App (aus = `0 %`, ein = zuletzt eingestellte Helligkeit).
     - **Nachlaufzeit (`number.duration`)**: Einschaltdauer des Hauptlichts nach Bewegung (`5`–`900 s`).
     - **PIR-Empfindlichkeit (`number.pir_sensitivity`)**: Reichweite / Sensitivität des Bewegungsmelders (`0`–`100 %`).
     - **Videoauflösung (`select.resolution`)**: Live-Umschaltung der Kameraauflösung (`1080p`, `720p`, `360p`).
+    - **Kamera-Einstellungen (nur L 625)**:
+      - **Zeitstempel im Bild (`switch.osd_switch`)** und **Zeitstempel Position (`select.osd_position`)**: Einblendung aus oder in einer der vier Ecken.
+      - **Lautsprecher Lautstärke (`number.volume`)**: `0`–`100 %`.
+      - **Kamera-Erkennung (`select.detect_mode`)**: `KI-Erkennung` oder `Aus` (ohne Erkennung schreibt die Kamera keine SD-Aufnahmen).
+      - **Erkennungsrahmen im Bild (`switch.draw_frame`)**: Blendet die von der Kamera ins Video gezeichneten Rahmen (rot = Person, grün = Bewegungsbereich) aus.
+      - **Personenerkennung Empfindlichkeit (`select.ai_person`)**: `Niedrig`, `Mittel`, `Hoch`.
+      - **SD-Aufnahme (`select.record_mode`)**: `Keine Aufnahme`, `Bewegung durch Kamera`, `Kamera oder Bewegungsmelder`.
+      - **Licht bei Bildänderung (`switch.pixel_change`)**: Schaltet das Licht auch bei Änderungen im Kamerabild.
   - **🩺 Diagnose & Aktionen**:
     - **PIR-Status (`binary_sensor.pir_status`)**: Zeigt den Betriebszustand des PIR-Sensors an (`running`).
     - **Kamera-Diagnose (nur L 625)**: WLAN-Signal (`sensor.wifi_signal`, %), SD-Karte frei / belegt / Größe (`sensor.sd_free`, `sensor.sd_used`, `sensor.sd_total`, GB), SD-Karte Status (`sensor.sd_status`), Firmware (`sensor.firmware`).
+    - **Kamera-Firmware / Leuchten-Firmware (`update.firmware_update`, `update.mcu_update`)**: Zeigen installierte und von der Kamera gemeldete Version; die Installation ist nur möglich, wenn die Kamera selbst ein Update anbietet.
+    - **Kamera neu starten (`button.reboot`)**: Kontrollierter Neustart des Kamera-SoC.
     - **Kamera-Session neu aufbauen (`button.reconnect`)**: Manueller Reconnect und Neuinitialisierung der Kamera-Verbindung.
 
 - **💡 Hinweise zu Hardware-Grenzen & Bewegungserkennung**:

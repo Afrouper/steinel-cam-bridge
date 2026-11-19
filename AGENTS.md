@@ -122,8 +122,11 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
     - `signaling.go`: TURN-Exchange, Vanilla-ICE Gathering, SDP Offer/Answer Negotiation & Sanitization; 20-Sekunden ICE Grace Period für robuste Erholung bei transienten WLAN-Schwankungen oder Kamera-CPU-Spitzen.
     - `media.go`: H.264 Video-Ingest, Audio-Ingest & AAC-Transcoder, 6s Silence-Watchdog & PLI-Burst/Intervallschleife.
     - `backchannel.go`: Zwei-Wege-Audio (Kamera-Lautsprecher) mit 160-Byte G.711u Frame-Chunking und SSRC/Timestamp-Management.
-    - `mcu_dispatch.go`: DataChannel Message Handler, JSON-RPC Commands, Hex-MCU-Befehle, 30s Status-Polling und 10s PIR/Motion-Reset Timer.
+    - `mcu_dispatch.go`: DataChannel Message Handler, JSON-RPC Commands, Hex-MCU-Befehle, 30s Status-Polling und 10s PIR/Motion-Reset Timer. Antworten auf eigene Befehle (`resp`) gelten nicht als Bewegung.
   - `camera_info.go`: Fragt `get_device_info` beim Session-Start und danach einmal pro Minute ab und übernimmt WLAN-Signal, SD-Karten-Belegung und Firmware-Version in den Gerätestatus. Die Antwort enthält den WLAN-Namen und darf nie geloggt werden.
+  - `camera_settings.go`: Übernimmt aus derselben Antwort Zeitstempel-Einblendung, Lautstärke und Erkennungsmodus und setzt Zeitstempel-Position (`set_time_setting`, `action: "OSD"`), Lautsprecher-Lautstärke (`set_volume_setting`) und Erkennungsmodus (`set_detect_setting`, `action: "mode"`).
+  - `camera_detection.go`: Liest `get_detect_data` und `get_record_setting` (einmal pro Minute) und setzt Erkennungsrahmen (`draw_frame`), Personen-Empfindlichkeit (`ai_person`), SD-Aufnahmemodus (`set_record_setting`) sowie die MCU-Einstellung „Licht bei Bildänderung“ (`5A 02 02`).
+  - `camera_maintenance.go`: Firmware-Update von Kamera und Leuchten-MCU. Ausgelöst wird nur, wenn die Kamera selbst ein Update meldet (`update_avaiable` bzw. `mcu_update_avaiable` in `get_device_info`).
   - `sdcard.go`: Verwaltet das Auslesen der internen SD-Karte (`get_event_list`, `get_event_video`) mit striktem Single-Flight Mutex (`eventListQueryMu`) zur Verhinderung von Response-Channel-Kollisionen bei parallelen Abfragen, Entkopplung von SD-Timeouts und Live-Video-Streaming (verhindert Session-Abbrüche bei gesundem Videofluss), Client-Abbruchüberwachung und 15s Watchdog.
 
 - **`pkg/xiongmai/`**:
@@ -174,6 +177,7 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
     - `state.go`: Status- und Telemetrie-Publizierung pro Kamera (`steinel/<deviceID>/...`) sowie Aufnahme-Events (`PublishRecordingEvent`).
     - `command.go`: Sicheres Parsen und Dispatching eingehender MQTT-Kommandos an die Callbacks der jeweils adressierten Kamera.
   - `camera_info.go`: Diagnose-Sensoren für Werte, die die Kamera selbst meldet (WLAN-Signal, SD-Karte frei / belegt / Größe und Status, Firmware). Sie werden nur angekündigt, wenn der Treiber `Callbacks.CameraInfo` setzt; höhere Schichten enthalten dafür keine Modellweichen.
+  - `camera_settings.go` und `camera_controls.go`: Entitäten für kameraseitige Einstellungen der L 625 (Zeitstempel, Lautstärke, Erkennung, Erkennungsrahmen, SD-Aufnahme, Licht bei Bildänderung, Firmware-Update, Neustart). Jede Entität wird nur angekündigt, wenn der Treiber den passenden Setter liefert.
   - Vollständige Dependency Injection über den injizierten `events.Bus` (keine Singletons).
 
 - **`pkg/events/`**:

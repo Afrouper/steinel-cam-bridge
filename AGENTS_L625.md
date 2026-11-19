@@ -171,7 +171,17 @@ Alle übergeordneten Steuerbefehle werden über den bidirektionalen SCTP DataCha
   ```
   *Schaltet den integrierten Sirenenton manuell ein (`play: true`) oder aus (`play: false`).*
 - **Geräteinformationen abfragen (`get_device_info`)**:
-  Liefert Firmware-Version (`FW_version`), KI- und MCU-Version, Hersteller (`vendor`) und Modellname, WLAN (`wifi.RSSI` in Prozent sowie den Netzwerknamen, der nie geloggt werden darf) und SD-Karte (`SD.volume_free` / `SD.volume_total`, `SD.status`). Die SD-Werte tragen keine Einheit; 122000 bei einer 128-GB-Karte zeigt, dass die Kamera in Mebibyte zählt. Die Bridge fragt einmal pro Minute ab.
+  Liefert Firmware-Version (`FW_version`), KI- und MCU-Version, Hersteller (`vendor`) und Modellname, WLAN (`wifi.RSSI` in Prozent sowie den Netzwerknamen, der nie geloggt werden darf), SD-Karte (`SD.volume_free` / `SD.volume_total`, `SD.status`; die SD-Werte tragen keine Einheit, 122000 bei einer 128-GB-Karte zeigt, dass die Kamera in Mebibyte zählt), `time.OSD`, `volume`, `detect`, `record`, `video` sowie die Update-Angaben `update_avaiable`, `FW_remote_version`, `mcu_update_avaiable`, `MCU_remote_version`. Die Bridge fragt einmal pro Minute ab.
+- **Zeitstempel-Einblendung (`get_time_setting` / `set_time_setting` mit `action: "OSD"`)**:
+  `OSD`: `0` = aus, `1` = oben links, `2` = unten links, `3` = oben rechts, `4` = unten rechts (am Bild geprüft, Firmware 0.1.2.31; größere Werte verhalten sich wie `4`). `format` wird gespeichert, ändert die Einblendung aber nicht.
+- **Lautsprecher-Lautstärke (`get_volume_setting` / `set_volume_setting`)**: `volume` `0`–`100`.
+- **Erkennungsmodus (`get_detect_setting` / `set_detect_setting` mit `action: "mode"`)**:
+  Auslieferung `"ai"`. Mit `"off"` erkennt die Kamera nichts mehr und schreibt keine Ereignis-Aufnahmen auf die SD-Karte. Die Firmware speichert jeden Text ungeprüft und meldet immer `success`, deshalb reicht die Bridge nur `ai` und `off` durch.
+- **Erkennungsdetails (`get_detect_data` / `set_detect_data`)**:
+  `draw_frame` (`0`/`1`) schaltet die ins Video gezeichneten Erkennungsrahmen (rot = Person, grün = Bewegungsbereich), `ai_person` die Empfindlichkeit der Personenerkennung (App: `2` / `5` / `7`).
+- **SD-Aufnahmemodus (`get_record_setting` / `set_record_setting`)**:
+  `mode`: `4` = keine Aufnahme, `2` = Bewegung durch Kamera, `3` = Kamera oder Bewegungsmelder; `record_time` ist immer `30`.
+- **Weitere Abfragen**: `get_video_setting` (Hauptstrom H.265 2K, `sub1` H.264 1080p als Strom der Bridge, `sub2` MJPEG 360p), `get_notification_setting`, `get_schedule_setting`.
 - **Kamera-Reboot auslösen (`reboot`)**:
   Startet den Kamera-SoC kontrolliert neu.
 - **Push-Benachrichtigungen der Kamera**:
@@ -213,7 +223,7 @@ Hex:  [5A] [0F] [0F] [HW] [SW] [MD] [ LUX ] [PIR][TX] [PS] [CT] [HL] [ HLT ] [LL
 | **5** | `10..11` | `Mode` | uint8 | Betriebsmodus: `0` = Aus, `1` = Dauerlicht AN, `2` = Sensor Auto |
 | **6–7** | `12..15` | `Lux` | uint16 | Dämmerungsschwellen-Rohwert im 10er-Raster ($\text{Rohwert} = 250 - 10 \times \text{Stufe}$, wobei Stufe $0 = 2\text{ lx}$, Stufe $25 = 2000\text{ lx} / \text{Tagbetrieb}$; zentral verwaltet via `pkg/mcu/lux.go`) |
 | **8** | `16..17` | `PIRActive` | bool | PIR-Sensor aktiv (`0` = inaktiv, `1` = aktiv) |
-| **9** | `18..19` | `tuxingVal` | Bitmaske | Bewegungserkennung: Bit 0 = PIR-Sensor, Bit 1 = Kamera-Bilderkennung |
+| **9** | `18..19` | `tuxingVal` | Bitmaske | Einstellungen, keine Bewegungsereignisse: Bit 0 = „Pixel Change Detection“ (Licht reagiert auf Bildänderungen), Bit 1 = „Image Photosensitive Detection“ (Dämmerung aus dem Kamerabild) |
 | **10** | `20..21` | `PIRSensitivity` | uint8 | PIR-Erfassungsbereich / Empfindlichkeit ($0\ \%$ bis $100\ \%$) |
 | **11** | `22..23` | `ColorTemp` | uint8 | Farbtemperatur der Leuchte |
 | **12** | `24..25` | `Highlight` | uint8 | Hauptlicht-Helligkeit bei Bewegung ($10\ \%$ bis $100\ \%$) |
@@ -239,6 +249,7 @@ Alle Steuerbefehle beginnen mit Header `0x5A`, gefolgt von der Befehlslänge, de
 | **Grundlicht dimmen** | `5A 02 0A <PCT>` | `5A020A147A` | Setzt Grundlicht auf z. B. 20 % (`0x14`) |
 | **Grundlicht-Dauer** | `5A 03 0B <VAL16>` | `5A030B...` | Setzt Einschaltdauer des Grundlichts |
 | **PIR-Sensitivität** | `5A 02 06 <PCT>` | `5A020650B2` | Setzt PIR-Empfindlichkeit auf z. B. 80 % (`0x50`) |
+| **Licht bei Bildänderung** | `5A 02 02 <0/1>` | `5A0202015F` | Schaltet „Pixel Change Detection“ ein (`01`) oder aus (`00`) |
 | **Dämmerungsschwelle** | `5A 03 04 <RAW16>` | `5A030400DC33` | Setzt Dämmerungsschwelle auf z. B. 7 Lux (Rohwert 220 = `0x00DC`) |
 
 ---
