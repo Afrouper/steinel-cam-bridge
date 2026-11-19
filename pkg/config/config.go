@@ -73,7 +73,9 @@ type Config struct {
 	IsBeta                       bool
 	AppVersion                   string
 	// InstantStart serves new RTSP viewers the current group of pictures so
-	// they show a picture without waiting for the next keyframe.
+	// they show a picture without waiting for the next keyframe. Off by
+	// default: the viewer receives up to one GOP (2 s) at once and has to work
+	// through it, which delayed smooth playback on a Wi-Fi tablet.
 	InstantStart bool
 	// HoldLastFrameSeconds repeats the last keyframe for this many seconds
 	// while the camera is away (0 = off), so clients keep their session.
@@ -116,7 +118,7 @@ func NewDefaultConfig() *Config {
 		CacheDir:                     cacheDir,
 		IsBeta:                       false,
 		AppVersion:                   "dev",
-		InstantStart:                 true,
+		InstantStart:                 false,
 		HoldLastFrameSeconds:         300,
 	}
 }
