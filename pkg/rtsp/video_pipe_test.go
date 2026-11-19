@@ -154,11 +154,10 @@ func TestVideoPipeContinuityAcrossCameraRestart(t *testing.T) {
 	now := time.Now()
 
 	cam := newFakeCamera(t, testSPS720, 60000, 4_000_000_000)
-	var out []*rtp.Packet
-	out = append(out, feed(p, cam.keyframe(), now)...)
+	require.Len(t, feed(p, cam.keyframe(), now), 4)
 	for i := 0; i < 20; i++ {
 		now = now.Add(66 * time.Millisecond)
-		out = append(out, feed(p, cam.pframe(), now)...)
+		require.Len(t, feed(p, cam.pframe(), now), 1)
 	}
 	lastSeq, lastTS := p.lastOutSeq, p.lastOutTS
 
