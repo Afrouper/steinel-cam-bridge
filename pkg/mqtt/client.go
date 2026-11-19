@@ -40,6 +40,10 @@ type Callbacks struct {
 	SetSiren          func(on bool) error
 	SetResolution     func(res string) error
 	ReconnectSession  func() error
+
+	// CameraInfo announces the diagnostic sensors for cameras that report
+	// Wi-Fi signal, SD card usage and firmware version (L 625).
+	CameraInfo bool
 }
 
 // CameraDevice represents an individual camera's metadata, control hooks, and event bus for MQTT.

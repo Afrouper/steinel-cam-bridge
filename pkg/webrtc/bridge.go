@@ -322,6 +322,9 @@ func (b *Bridge) Run(ctx context.Context) error {
 
 		// Start periodic MCU polling (every 2s)
 		go b.runMCUPollingLoop(sessCtx)
+
+		// Read Wi-Fi signal, SD card usage and firmware version
+		go b.runCameraInfoLoop(sessCtx)
 	})
 
 	// 4. Send initial OFFER

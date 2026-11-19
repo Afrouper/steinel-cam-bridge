@@ -171,7 +171,7 @@ Alle übergeordneten Steuerbefehle werden über den bidirektionalen SCTP DataCha
   ```
   *Schaltet den integrierten Sirenenton manuell ein (`play: true`) oder aus (`play: false`).*
 - **Geräteinformationen abfragen (`get_device_info`)**:
-  Liefert Firmware-Version (`FW_version`), Modellname und Hardware-Revision.
+  Liefert Firmware-Version (`FW_version`), KI- und MCU-Version, Hersteller (`vendor`) und Modellname, WLAN (`wifi.RSSI` in Prozent sowie den Netzwerknamen, der nie geloggt werden darf) und SD-Karte (`SD.volume_free` / `SD.volume_total`, `SD.status`). Die SD-Werte tragen keine Einheit; 122000 bei einer 128-GB-Karte zeigt, dass die Kamera in Mebibyte zählt. Die Bridge fragt einmal pro Minute ab.
 - **Kamera-Reboot auslösen (`reboot`)**:
   Startet den Kamera-SoC kontrolliert neu.
 - **Push-Benachrichtigungen der Kamera**:

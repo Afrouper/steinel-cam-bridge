@@ -123,6 +123,7 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
     - `media.go`: H.264 Video-Ingest, Audio-Ingest & AAC-Transcoder, 6s Silence-Watchdog & PLI-Burst/Intervallschleife.
     - `backchannel.go`: Zwei-Wege-Audio (Kamera-Lautsprecher) mit 160-Byte G.711u Frame-Chunking und SSRC/Timestamp-Management.
     - `mcu_dispatch.go`: DataChannel Message Handler, JSON-RPC Commands, Hex-MCU-Befehle, 30s Status-Polling und 10s PIR/Motion-Reset Timer.
+  - `camera_info.go`: Fragt `get_device_info` beim Session-Start und danach einmal pro Minute ab und übernimmt WLAN-Signal, SD-Karten-Belegung und Firmware-Version in den Gerätestatus. Die Antwort enthält den WLAN-Namen und darf nie geloggt werden.
   - `sdcard.go`: Verwaltet das Auslesen der internen SD-Karte (`get_event_list`, `get_event_video`) mit striktem Single-Flight Mutex (`eventListQueryMu`) zur Verhinderung von Response-Channel-Kollisionen bei parallelen Abfragen, Entkopplung von SD-Timeouts und Live-Video-Streaming (verhindert Session-Abbrüche bei gesundem Videofluss), Client-Abbruchüberwachung und 15s Watchdog.
 
 - **`pkg/xiongmai/`**:
@@ -172,6 +173,7 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
     - `discovery.go`: Home Assistant Auto-Discovery für alle Entitäten pro Kamera unter Verwendung der technisch eindeutigen ID (`deviceID`) für Topics und konfigurierbaren Display-Namen (`name` -> `Steinel <Name>`).
     - `state.go`: Status- und Telemetrie-Publizierung pro Kamera (`steinel/<deviceID>/...`) sowie Aufnahme-Events (`PublishRecordingEvent`).
     - `command.go`: Sicheres Parsen und Dispatching eingehender MQTT-Kommandos an die Callbacks der jeweils adressierten Kamera.
+  - `camera_info.go`: Diagnose-Sensoren für Werte, die die Kamera selbst meldet (WLAN-Signal, SD-Karte frei / belegt / Größe und Status, Firmware). Sie werden nur angekündigt, wenn der Treiber `Callbacks.CameraInfo` setzt; höhere Schichten enthalten dafür keine Modellweichen.
   - Vollständige Dependency Injection über den injizierten `events.Bus` (keine Singletons).
 
 - **`pkg/events/`**:

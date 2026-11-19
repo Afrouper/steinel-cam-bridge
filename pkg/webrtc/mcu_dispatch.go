@@ -198,10 +198,7 @@ func (b *Bridge) handleDataChannelMessage(data []byte) {
 			// Check for get_device_info
 			if strVal, ok := root["resp"].(string); ok && strVal == "get_device_info" {
 				if infoMap, ok := root["info"].(map[string]interface{}); ok {
-					fw, _ := infoMap["FW_version"].(string)
-					status := b.eventBus.GetStatus()
-					status.FirmwareVer = fw
-					b.eventBus.UpdateStatus(status)
+					b.onDeviceInfo(infoMap)
 				}
 				return
 			}
