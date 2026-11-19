@@ -312,7 +312,9 @@ Die Konfiguration erfolgt nach den Grundsätzen einer [12-Factor App](https://12
 | Umgebungsvariable | CLI-Flag | Standard | Beschreibung |
 |---|---|---|---|
 | `RESOLUTION` | `-res` | `1080p` | Videoauflösung: `1080p`, `720p`, `360p` |
-| `AUDIO_CODEC` | `-audio-codec` | `aac` | Audio-Codec des RTSP/ONVIF Streams: `aac` (nativ transkodiert, empfohlen) oder `pcmu` (Raw Passthrough) |
+| `AUDIO_CODEC` | `-audio-codec` | `aac` | Audio-Codec des RTSP/ONVIF Streams: `aac` (nativ transkodiert, empfohlen), `pcmu` (Raw Passthrough) oder `none` (reiner Videostream ohne Mikrofon und Gegensprechen) |
+| `HOLD_LAST_FRAME_SECONDS` | – | `300` | L 625: Liefert die Kamera kein Video, wird das letzte Keyframe so viele Sekunden lang einmal pro Sekunde wiederholt, damit RTSP-Clients verbunden bleiben. `0` schaltet das ab |
+| `INSTANT_START` | – | `false` | Neue RTSP-Clients erhalten sofort die laufende GOP statt auf das nächste Keyframe zu warten. Standard aus: Der Client bekommt bis zu 2 s Video auf einmal, was auf WLAN-Tablets den flüssigen Start verzögert hat |
 | `RTSP_PORT` | `-port` | `8554` | Port des integrierten RTSP-Servers |
 | `RTSP_PATH` | `-path` | `steinel` | Stream-Pfad des RTSP-Servers (`rtsp://<host>:<port>/<path>`) |
 | `ONVIF_PORT` | `-onvif` | `8000` | Port des integrierten ONVIF HTTP- und SD-Karten REST API-Servers |
@@ -421,7 +423,7 @@ log_level: "info"
 | `camera_mac` | String | Nein | Optionale MAC-Adresse. Wird standardmäßig deterministisch abgeleitet (`00:0C:43:00:01:02`, `00:0C:43:00:01:03`, ...) |
 | `rtsp_path` | String | Nein | Eigener RTSP-Pfad (Standard: normalisierter Name, z. B. `steinel-einfahrt`) |
 | `resolution` | String | Nein | Standardauflösung: `1080p`, `720p`, `360p` |
-| `audio_codec` | String | Nein | Audioformat: `aac` (Standard, transkodiert) oder `pcmu` |
+| `audio_codec` | String | Nein | Audioformat: `aac` (Standard, transkodiert), `pcmu` oder `none` (kein Ton) |
 | `nabto_driver` | String | Nein | Nabto-Engine für L 625: `cgo` (Standard) oder `pure` |
 | `reset_pairing` | Bool | Nein | Erzwingt erneutes Pairing der L 625 beim Start |
 

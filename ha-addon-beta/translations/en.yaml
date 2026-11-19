@@ -37,7 +37,13 @@ configuration:
     description: "Target camera resolution (1080p, 720p, or 360p)."
   audio_codec:
     name: "Audio Codec"
-    description: "RTSP/ONVIF audio codec: 'aac' (transcoded, recommended) or 'pcmu' (raw passthrough)."
+    description: "RTSP/ONVIF audio codec: 'aac' (transcoded, recommended), 'pcmu' (raw passthrough) or 'none' (no audio, no talk-back, video only)."
+  instant_start:
+    name: "Instant start for new viewers"
+    description: "Sends every new RTSP viewer the current keyframe and the frames after it right away instead of waiting up to 2 seconds for the camera's next keyframe. Off by default: the viewer receives up to 2 seconds of video at once; on a Wi-Fi tablet this delayed smooth playback. Useful for recorders and wired clients."
+  hold_last_frame_seconds:
+    name: "Hold last frame during outages (seconds)"
+    description: "While the camera delivers no video (connection drop) the last keyframe is repeated for this many seconds so Home Assistant and recorders stay connected and resume without reconnecting. After that the stream goes silent so a real outage is noticed. 0 disables it. L 625 only."
   rtsp_port:
     name: "RTSP Port"
     description: "Port for the integrated RTSP server (default: 8554)."

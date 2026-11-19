@@ -53,7 +53,9 @@ Die Bridge stellt alle Kameras über denselben RTSP-Port (`:8554/steinel-haustue
 | `bridge_pass` | Passwort | `""` | Optional: Passwort für den Zugriffsschutz der Bridge (RTSP Digest/Basic, ONVIF HTTP Digest / WS-Security, REST) |
 | `qr_code` | String | `""` | QR-Code Payload zum automatischen Pairing der L 625 CAM SC |
 | `resolution` | Liste | `1080p` | Standardauflösung (`1080p`, `720p`, `360p`) |
-| `audio_codec` | Liste | `aac` | Audio-Codec des RTSP-Streams: `aac` (nativ transkodiert) oder `pcmu` |
+| `audio_codec` | Liste | `aac` | Audio-Codec des RTSP-Streams: `aac` (nativ transkodiert), `pcmu` oder `none` (reiner Videostream) |
+| `hold_last_frame_seconds` | Zahl | `300` | L 625: Wiederholt bei ausbleibendem Video das letzte Keyframe so viele Sekunden lang, damit Clients verbunden bleiben (`0` = aus) |
+| `instant_start` | Schalter | `false` | Neue RTSP-Clients erhalten sofort die laufende GOP statt auf das nächste Keyframe zu warten |
 | `rtsp_port` | Port | `8554` | RTSP Server Port |
 | `onvif_port` | Port | `8000` | ONVIF HTTP & SD-Karten REST API Service Port |
 | `sdcard_sync_interval` | Ganzzahl | `120` | Intervall in Sekunden für die Hintergrundabfrage neuer SD-Karten-Aufnahmen (0–300 s, 0 = deaktiviert) |

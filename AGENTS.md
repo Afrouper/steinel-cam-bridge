@@ -73,7 +73,7 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
   - `config.go`: Zentrales, validiertes Konfigurationsobjekt (`Config`) mit nativer Multi-Kamera-Unterstützung (`Cameras []CameraConfig`) und 100 % Abwärtskompatibilität (synthetisiert bei Ein-Kamera-Setups automatisch eine kanonische Kamera).
   - Strenge Präzedenz:
     1. CLI-Flags (`-ip`, `-mac`, `-name`, `-type`, `-user`, `-pass`, `-bridge-user`, `-bridge-pass`, `-cache-recordings`, `-cache-dir`, `-qr`, `-key`, `-port`, `-path`, `-res`, `-audio-codec`, `-onvif`, `-reset-pairing`, `-mqtt-broker`, `-sync-interval`, `-sdcard-rate-limit`, `-log-level`, `-config`, etc.)
-    2. Umgebungsvariablen (`CAMERA_IP`, `CAMERA_MAC`, `CAMERA_TYPE`, `CAMERA_USER`, `CAMERA_PASSWORD`, `BRIDGE_USER`, `BRIDGE_PASS`, `CACHE_RECORDINGS`, `CACHE_DIR`, `QR_CODE`, `KEY_PATH`, `RESOLUTION`, `AUDIO_CODEC`, `RTSP_PORT`, `ONVIF_PORT`, `MQTT_BROKER`, `SDCARD_SYNC_INTERVAL`, `SDCARD_DOWNLOAD_RATE_LIMIT_KBPS`, `USE_CGO_NABTO`, `LOG_LEVEL`, `LOG_FORMAT`, etc.)
+    2. Umgebungsvariablen (`CAMERA_IP`, `CAMERA_MAC`, `CAMERA_TYPE`, `CAMERA_USER`, `CAMERA_PASSWORD`, `BRIDGE_USER`, `BRIDGE_PASS`, `CACHE_RECORDINGS`, `CACHE_DIR`, `QR_CODE`, `KEY_PATH`, `RESOLUTION`, `AUDIO_CODEC`, `RTSP_PORT`, `ONVIF_PORT`, `MQTT_BROKER`, `SDCARD_SYNC_INTERVAL`, `SDCARD_DOWNLOAD_RATE_LIMIT_KBPS`, `INSTANT_START`, `HOLD_LAST_FRAME_SECONDS`, `USE_CGO_NABTO`, `LOG_LEVEL`, `LOG_FORMAT`, etc.)
     3. Home Assistant Add-on Konfigurationsdatei (`/data/options.json` inkl. `cameras: [...]`, `camera_mac`, `sdcard_download_rate_limit_kbps` & Home Assistant Supervisor MQTT Auto-Discovery API via `X-Supervisor-Token`)
     4. Sichere Standardwerte (z. B. `cache_recordings: 5` für die letzten 5 Aufnahmen im lokalen Speicher, `sdcard_download_rate_limit_kbps: 400` für 400 KB/s sanftes Hintergrund-Rate-Limiting bei Livestreams, `DefaultCameraMAC: 00:0C:43:00:01:02` für 100 % abwärtskompatible Home Assistant ONVIF Unique IDs; automatisierte deterministische MAC-Ableitung für Multi-Cam-Instanzen via `DeriveMAC`).
   - `probe.go`: Führt bei `camera_type: "auto"` einen schnellen Non-Blocking TCP-Probe auf Port `34567` durch, um pro Kamera automatisch zwischen `L 620 CAM` (Xiongmai Sofia) und `L 625 CAM SC` (Nabto Edge) zu unterscheiden.
@@ -127,6 +127,7 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
   - `camera_settings.go`: Übernimmt aus derselben Antwort Zeitstempel-Einblendung, Lautstärke und Erkennungsmodus und setzt Zeitstempel-Position (`set_time_setting`, `action: "OSD"`), Lautsprecher-Lautstärke (`set_volume_setting`) und Erkennungsmodus (`set_detect_setting`, `action: "mode"`).
   - `camera_detection.go`: Liest `get_detect_data` und `get_record_setting` (einmal pro Minute) und setzt Erkennungsrahmen (`draw_frame`), Personen-Empfindlichkeit (`ai_person`), SD-Aufnahmemodus (`set_record_setting`) sowie die MCU-Einstellung „Licht bei Bildänderung“ (`5A 02 02`).
   - `camera_maintenance.go`: Firmware-Update von Kamera und Leuchten-MCU. Ausgelöst wird nur, wenn die Kamera selbst ein Update meldet (`update_avaiable` bzw. `mcu_update_avaiable` in `get_device_info`).
+  - `resolution_guard.go`: Prüft je Session, ob die Kamera die angeforderte Auflösung wirklich liefert (Bildgröße aus dem SPS des RTSP-Streams), fordert sie bei Abweichung erneut an und meldet über den Event-Bus den Istwert statt des Wunschwerts.
   - `sdcard.go`: Verwaltet das Auslesen der internen SD-Karte (`get_event_list`, `get_event_video`) mit striktem Single-Flight Mutex (`eventListQueryMu`) zur Verhinderung von Response-Channel-Kollisionen bei parallelen Abfragen, Entkopplung von SD-Timeouts und Live-Video-Streaming (verhindert Session-Abbrüche bei gesundem Videofluss), Client-Abbruchüberwachung und 15s Watchdog.
 
 - **`pkg/xiongmai/`**:
@@ -158,6 +159,11 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
   - `server.go`: RTSP-Server auf Basis von `github.com/bluenviron/gortsplib/v4`. Multi-Stream-Routing über einen gemeinsamen Port (`:8554`) mit dynamischer Stream-Registrierung (`RegisterStream`), Profil T Audio Backchannel mit Single-Talker-Lock (exklusive Session-Belegung des Mikrofons pro Stream-Pfad), akkurates `ActiveClients()`-Tracking (Inkrement ausschließlich bei `PLAY`, dekrementiert nur bei registrierten Spielern) sowie integrierte Digest (MD5/SHA256) & Basic Authentifizierung mit bidirektionaler Session-Connection-Vererbung gegen Reconnect-Abbrüche (`wrong response on SETUP`).
   - `stream.go`: Kapselt H.264 Video- und AAC/PCMU Audio-Tracks, RTP-Encoder und Session-Client-Tracking pro Stream-Pfad. Definiert das gemeinsame Interface `MediaStream`, welches sowohl von einzelnen Streams (`*Stream`) als auch vom Server (`*Server`) implementiert wird.
   - `interceptor.go`: Dedizierter UDP-RTP Socket auf Port `8554/udp` sowie TCP-Interleaved Listener (`interceptingConn`) mit vorallokiertem 4-KB Lesepuffer für Zero-Allocation Socket-Reads (**0 Allokationen/Read**).
+  - `video_pipe.go`: Video-Pipeline zwischen Kamera-Ingest und RTSP-Clients (`videoPipe`). Schreibt SSRC, Sequenznummern und Zeitstempel so um, dass der ausgehende Stream über Kamera-Session-Wechsel hinweg durchgehend bleibt (Keyframe-Gate nach jedem Wechsel, 5 s Timeout), hält die laufende GOP für neue Clients vor (`INSTANT_START`, Standard aus; Auslieferung in `OnPlay` über `ServerSession.WritePacketRTP`) und wiederholt bei ausbleibendem Video das letzte Keyframe einmal pro Sekunde (`HOLD_LAST_FRAME_SECONDS`, nur L 625; die L 620 pausiert ihren Stream absichtlich). Übernimmt SPS/PPS aus dem Stream in die SDP. `audio_codec: none` erzeugt einen reinen Videostream ohne Audio- und Backchannel-Media.
+
+- **`pkg/h264x/`**:
+  - `h264x.go`: Untersucht H.264-RTP-Payloads nach RFC 6184 ohne Dekodierung (Single NAL, STAP-A, FU-A): erkennt Keyframe-Beginn, liefert SPS/PPS und die Bildgröße aus dem SPS (`ParseSize`, `ResolutionLabel`).
+  - `guard.go`: `ResolutionGuard` vergleicht die tatsächlich gelieferte mit der angeforderten Auflösung und entscheidet, wann die Anforderung wiederholt wird (10 s, 30 s, 60 s, dann dreimal alle 5 min).
 
 - **`pkg/onvif/`**:
   - `auth.go`: RFC 2617 HTTP Digest Authentifizierung (zustandsloses HMAC-SHA256 Nonce-Management, MD5 Digest Berechnung mit `qop="auth"` & Legacy-Unterstützung), WS-Security UsernameToken (`PasswordDigest` via SHA-1 Nonce/Timestamp Hash sowie `PasswordText`), HTTP Basic Auth und Timing-Attack-sichere Validierung via `subtle.ConstantTimeCompare`.
@@ -207,6 +213,7 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
 - **`tools/`**:
   - `mock-camera`: Mock-Kamera zur Protokollanalyse des Xiongmai Sofia Protokolls (L 620).
   - `test-pure-nabto`: Standalone-Diagnosetool zur schnellen Direktprüfung der Pure-Go Nabto-Verbindung gegen Kameras im LAN.
+  - `stream-sim`: Spielt eine Annex-B-H.264-Datei wie den Livestream der L 625 durch die RTSP-Schicht (feste Bildrate, kein Audio) und simuliert Kamera-Ausfälle mit neuer RTP-Nummerierung, um Instant Start, Stream-Kontinuität und Hold-Frame mit echten Playern (ffprobe, ffmpeg, VLC) ohne Leuchte zu prüfen.
 
 ---
 
