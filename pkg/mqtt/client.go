@@ -44,6 +44,19 @@ type Callbacks struct {
 	// CameraInfo announces the diagnostic sensors for cameras that report
 	// Wi-Fi signal, SD card usage and firmware version (L 625).
 	CameraInfo bool
+
+	// Camera-side settings (L 625). Each setter announces its control entity
+	// when set.
+	SetTimestampPosition func(position int) error
+	SetSpeakerVolume     func(percent int) error
+	SetDetectMode        func(mode string) error
+
+	SetPixelChangeDetection func(on bool) error
+	SetDrawFrame            func(on bool) error
+	SetAIPersonSensitivity  func(level int) error
+	SetRecordMode           func(mode int) error
+	InstallUpdate           func(target string) error
+	RebootCamera            func() error
 }
 
 // CameraDevice represents an individual camera's metadata, control hooks, and event bus for MQTT.
@@ -83,6 +96,47 @@ type Client struct {
 
 	camerasMu sync.RWMutex
 	cameras   map[string]*CameraDevice
+
+	// lowlightLast remembers the last non-zero base light brightness per
+	// device topic, so the base light switch can restore it.
+	lowlightMu   sync.Mutex
+	lowlightLast map[string]int
+	osdLast      map[string]int
+}
+
+// defaultLowlightPercent is used by the base light switch when no brightness
+// has been seen yet (the lamp's minimum).
+const defaultLowlightPercent = 10
+
+// rememberLowlight stores a non-zero base light brightness for the switch.
+func (c *Client) rememberLowlight(baseTopic string, percent int) {
+	if percent <= 0 {
+		return
+	}
+	c.lowlightMu.Lock()
+	defer c.lowlightMu.Unlock()
+	if c.lowlightLast == nil {
+		c.lowlightLast = make(map[string]int)
+	}
+	c.lowlightLast[baseTopic] = percent
+}
+
+// lastLowlight returns the brightness the base light switch turns on with.
+func (c *Client) lastLowlight(baseTopic string) int {
+	c.lowlightMu.Lock()
+	defer c.lowlightMu.Unlock()
+	if v := c.lowlightLast[baseTopic]; v > 0 {
+		return v
+	}
+	return defaultLowlightPercent
+}
+
+// lowlightSwitchState maps a base light brightness to the switch payload.
+func lowlightSwitchState(percent int) string {
+	if percent > 0 {
+		return "ON"
+	}
+	return "OFF"
 }
 
 // NewClient initializes a new MQTT client instance.

@@ -41,6 +41,13 @@ func (c *Client) handleCommand(_ paho.Client, msg paho.Message) {
 	}
 	c.camerasMu.RUnlock()
 
+	if c.handleCameraSettingsCommand(topic, payload, baseTopic, cb) {
+		return
+	}
+	if c.handleCameraControlsCommand(topic, payload, baseTopic, cb) {
+		return
+	}
+
 	switch {
 	case strings.HasSuffix(topic, "/highlight/set"), strings.HasSuffix(topic, "/light/brightness/set"):
 		if val, err := strconv.Atoi(payload); err == nil {
@@ -128,8 +135,23 @@ func (c *Client) handleCommand(_ paho.Client, msg paho.Message) {
 			if cb.SetLowlight != nil {
 				_ = cb.SetLowlight(val)
 			}
+			c.rememberLowlight(baseTopic, val)
 			c.publishOptimistic(baseTopic, "lowlight/state", strconv.Itoa(val))
+			c.publishOptimistic(baseTopic, "lowlight_switch/state", lowlightSwitchState(val))
 		}
+
+	case strings.HasSuffix(topic, "/lowlight_switch/set"):
+		// Base light on/off like the toggle in the STEINEL CAM app:
+		// off = 0 %, on = the brightness that was set last.
+		val := 0
+		if strings.EqualFold(payload, "ON") || payload == "1" || strings.EqualFold(payload, "true") {
+			val = c.lastLowlight(baseTopic)
+		}
+		if cb.SetLowlight != nil {
+			_ = cb.SetLowlight(val)
+		}
+		c.publishOptimistic(baseTopic, "lowlight/state", strconv.Itoa(val))
+		c.publishOptimistic(baseTopic, "lowlight_switch/state", lowlightSwitchState(val))
 
 	case strings.HasSuffix(topic, "/lowlight_duration/set"), strings.HasSuffix(topic, "/lowlight_time/set"):
 		if val, err := strconv.Atoi(payload); err == nil {

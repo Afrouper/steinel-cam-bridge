@@ -249,6 +249,16 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 				// The L 625 reports Wi-Fi signal, SD card usage and firmware
 				// version via get_device_info.
 				callbacks.CameraInfo = true
+				// Its camera-side settings can be read and changed as well.
+				callbacks.SetTimestampPosition = camBridgeMgr.SetTimestampPosition
+				callbacks.SetSpeakerVolume = camBridgeMgr.SetSpeakerVolume
+				callbacks.SetDetectMode = camBridgeMgr.SetDetectMode
+				callbacks.SetPixelChangeDetection = camBridgeMgr.SetPixelChangeDetection
+				callbacks.SetDrawFrame = camBridgeMgr.SetDrawFrame
+				callbacks.SetAIPersonSensitivity = camBridgeMgr.SetAIPersonSensitivity
+				callbacks.SetRecordMode = camBridgeMgr.SetRecordMode
+				callbacks.InstallUpdate = camBridgeMgr.InstallUpdate
+				callbacks.RebootCamera = camBridgeMgr.Reboot
 			}
 			mqttClient.RegisterCamera(mqtt.CameraDevice{
 				Path:      cam.Path,

@@ -188,6 +188,8 @@ func (c *Client) publishDeviceStatus(dev *CameraDevice, st events.DeviceStatus) 
 	}
 	pub("duration/state", strconv.Itoa(st.HighlightTime))
 	pub("lowlight/state", strconv.Itoa(st.Lowlight))
+	pub("lowlight_switch/state", lowlightSwitchState(st.Lowlight))
+	c.rememberLowlight(dev.baseTopic, st.Lowlight)
 
 	lowlightHours := LowlightTimeToHours(st.LowlightTime)
 	pub("lowlight_duration/state", strconv.Itoa(lowlightHours))
@@ -215,6 +217,10 @@ func (c *Client) publishDeviceStatus(dev *CameraDevice, st events.DeviceStatus) 
 	if dev.Callbacks.CameraInfo {
 		c.publishCameraInfoState(st, pub)
 	}
+
+	// 6. Camera-side settings and controls
+	c.publishCameraSettingsState(dev.baseTopic, st, pub)
+	c.publishCameraControlsState(st, pub)
 }
 
 // LowlightTimeToHours converts model-dependent LowlightTime into hours (0-12) for Home Assistant.

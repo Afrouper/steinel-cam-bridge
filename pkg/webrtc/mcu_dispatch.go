@@ -195,12 +195,26 @@ func (b *Bridge) handleDataChannelMessage(data []byte) {
 				}
 			}
 
-			// Check for get_device_info
-			if strVal, ok := root["resp"].(string); ok && strVal == "get_device_info" {
-				if infoMap, ok := root["info"].(map[string]interface{}); ok {
-					b.onDeviceInfo(infoMap)
+			// Replies that carry camera settings
+			if strVal, ok := root["resp"].(string); ok {
+				infoMap, hasInfo := root["info"].(map[string]interface{})
+				switch strVal {
+				case "get_device_info":
+					if hasInfo {
+						b.onDeviceInfo(infoMap)
+					}
+					return
+				case "get_detect_data":
+					if hasInfo {
+						b.onDetectData(infoMap)
+					}
+					return
+				case "get_record_setting":
+					if hasInfo {
+						b.onRecordSetting(infoMap)
+					}
+					return
 				}
-				return
 			}
 
 			// Replies to our own commands (e.g. "alarm_voice_ctl" after switching the
@@ -219,7 +233,7 @@ func (b *Bridge) handleDataChannelMessage(data []byte) {
 				strings.Contains(lowerStr, "event") ||
 				strings.Contains(lowerStr, "doorbell") {
 				logger.Info("DataChannel", "🚨 Motion / Event notification received from camera: %s", str)
-				b.eventBus.SetMotion(true)
+				b.signalMotion()
 			} else {
 				logger.Debug("DataChannel", "📩 Received JSON message: %s", str)
 			}
@@ -248,30 +262,35 @@ func (b *Bridge) onMCUStatus(cfg *mcu.ConfigInfo) {
 	status.Lowlight = cfg.Lowlight
 	status.LowlightTime = cfg.LowlightTime
 	status.ColorTemp = cfg.ColorTemp
+	status.PixelChangeDetection = boolToState(cfg.PixelChangeDetection)
 	status.Resolution = b.resolution
 	b.eventBus.UpdateStatus(status)
 
-	// Motion Detection Handling (Hardware PIR + Optical Camera Detection)
-	if cfg.MotionDetected || cfg.PhotosensitiveDetection {
-		motionType := "PIR Sensor"
-		if cfg.MotionDetected && cfg.PhotosensitiveDetection {
-			motionType = "PIR + Kamera-Bilderkennung"
-		} else if cfg.PhotosensitiveDetection {
-			motionType = "Kamera-Bilderkennung"
-		}
-		logger.Info("MCU", "🚨 Bewegung erkannt (%s)! (Lux: %d, Mode: %d)", motionType, cfg.Lux, cfg.Mode)
-		b.eventBus.SetMotion(true)
+	// Bits 0/1 of the "tuxing" nibble are settings ("Pixel Change Detection",
+	// "Image Photosensitive Detection"), not motion. Reading them as motion made
+	// the bridge report endless motion as soon as the setting was switched on.
+	// Motion is reported by the camera's push messages, see signalMotion.
+}
 
-		b.mu.Lock()
-		if b.motionResetTimer != nil {
-			b.motionResetTimer.Stop()
-		}
-		b.motionResetTimer = time.AfterFunc(10*time.Second, func() {
-			logger.Info("MCU", "⚪ Motion cleared (10s timeout)")
-			b.eventBus.SetMotion(false)
-		})
-		b.mu.Unlock()
+// motionResetDelay is how long a motion push keeps the motion state on.
+// A variable so tests can shorten it.
+var motionResetDelay = 10 * time.Second
+
+// signalMotion reports motion and clears it again after motionResetDelay,
+// unless another push arrives in the meantime. The camera only tells us that
+// something happened, never that it is over, and nothing else resets the state.
+func (b *Bridge) signalMotion() {
+	b.eventBus.SetMotion(true)
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.motionResetTimer != nil {
+		b.motionResetTimer.Stop()
 	}
+	b.motionResetTimer = time.AfterFunc(motionResetDelay, func() {
+		logger.Info("DataChannel", "⚪ Motion cleared (%s timeout)", motionResetDelay)
+		b.eventBus.SetMotion(false)
+	})
 }
 
 func (b *Bridge) runMCUPollingLoop(ctx context.Context) {

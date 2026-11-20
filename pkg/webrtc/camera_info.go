@@ -10,20 +10,23 @@ import (
 
 const cameraInfoInterval = 60 * time.Second
 
-// runCameraInfoLoop asks the camera SoC for its device info right after the
-// session is up and then once a minute. The reply carries the Wi-Fi signal,
-// the SD card usage and the firmware version.
+// runCameraInfoLoop asks the camera SoC for its device info and its detection
+// and recording settings right after the session is up and then once a
+// minute. The replies carry the Wi-Fi signal, SD card usage, firmware version
+// and update offer, and the camera-side settings.
 func (b *Bridge) runCameraInfoLoop(ctx context.Context) {
 	ticker := time.NewTicker(cameraInfoInterval)
 	defer ticker.Stop()
 
 	b.requestCameraInfo()
+	b.requestDetectionSettings()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			b.requestCameraInfo()
+			b.requestDetectionSettings()
 		}
 	}
 }
@@ -64,6 +67,7 @@ func applyDeviceInfo(st *events.DeviceStatus, info map[string]interface{}) {
 			st.SDStatus = s
 		}
 	}
+	applyDeviceSettings(st, info)
 }
 
 // jsonInt reads a JSON number (decoded as float64) as int.
