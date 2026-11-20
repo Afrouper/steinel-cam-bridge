@@ -211,8 +211,10 @@ func (c *Client) publishDeviceStatus(dev *CameraDevice, st events.DeviceStatus) 
 		pub("resolution/state", st.Resolution)
 	}
 
-	// 5. Camera diagnostics
-	c.publishCameraInfoState(st, pub)
+	// 5. Camera diagnostics, only for cameras that announce the sensors
+	if dev.Callbacks.CameraInfo {
+		c.publishCameraInfoState(st, pub)
+	}
 }
 
 // LowlightTimeToHours converts model-dependent LowlightTime into hours (0-12) for Home Assistant.

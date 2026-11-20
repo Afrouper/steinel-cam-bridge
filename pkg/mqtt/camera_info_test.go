@@ -13,7 +13,7 @@ func TestCameraInfoState(t *testing.T) {
 	c := NewClient(Config{TopicPrefix: "steinel", DiscoveryPrefix: "homeassistant", DeviceID: "de-test"}, Callbacks{}, nil)
 	c.client = mockCl
 	state := func(sub string) string { return mockCl.published["steinel/de-test/"+sub] }
-	dev := &CameraDevice{baseTopic: "steinel/de-test"}
+	dev := &CameraDevice{baseTopic: "steinel/de-test", Callbacks: Callbacks{CameraInfo: true}}
 
 	// Nothing known yet: nothing is published.
 	c.publishDeviceStatus(dev, events.DeviceStatus{})
@@ -32,6 +32,24 @@ func TestCameraInfoState(t *testing.T) {
 	assert.Equal(t, "127.9", state("sd_total/state"))
 	assert.Equal(t, "normal", state("sd_status/state"))
 	assert.Equal(t, "0.1.2.31", state("firmware/state"))
+}
+
+// A camera without the diagnostic sensors (the L 620 driver sets a firmware
+// name, but announces no sensor for it) must not get retained state topics
+// that no entity reads.
+func TestCameraInfoStateNotAnnounced(t *testing.T) {
+	mockCl := &mockPahoClient{published: make(map[string]string)}
+	c := NewClient(Config{TopicPrefix: "steinel", DiscoveryPrefix: "homeassistant", DeviceID: "de-test"}, Callbacks{}, nil)
+	c.client = mockCl
+	dev := &CameraDevice{baseTopic: "steinel/de-test"}
+
+	c.publishDeviceStatus(dev, events.DeviceStatus{
+		WifiSignal: 57, SDFreeMB: 120480, SDTotalMB: 122000, SDStatus: "normal", FirmwareVer: "Xiongmai-Sofia",
+	})
+	for _, sub := range []string{"wifi_signal/state", "sd_free/state", "sd_used/state", "sd_total/state", "sd_status/state", "firmware/state"} {
+		_, ok := mockCl.published["steinel/de-test/"+sub]
+		assert.False(t, ok, sub)
+	}
 }
 
 func TestCameraInfoDiscovery(t *testing.T) {
