@@ -206,6 +206,13 @@ func (b *Bridge) handleDataChannelMessage(data []byte) {
 				return
 			}
 
+			// Replies to our own commands (e.g. "alarm_voice_ctl" after switching the
+			// siren) are acknowledgements, not camera events.
+			if respName, ok := root["resp"].(string); ok && respName != "" {
+				logger.Debug("DataChannel", "📩 Command '%s' acknowledged by camera: %s", respName, string(data))
+				return
+			}
+
 			// Check and log for any Motion, PIR, Alarm or Event notifications from camera
 			str := string(data)
 			lowerStr := strings.ToLower(str)
