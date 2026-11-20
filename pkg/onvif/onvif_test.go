@@ -902,3 +902,45 @@ func TestEventHandler_ConcurrentPullMessagesAndRenew(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// With audio_codec "none" the stream has no audio track, so the media profiles
+// must not announce audio source, encoder or output either.
+func TestMediaHandler_AudioNoneRemovesAudioBlocks(t *testing.T) {
+	audioTags := []string{"AudioSourceConfiguration", "AudioEncoderConfiguration", "AudioOutputConfiguration"}
+	reqAll := `<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body><trt:GetProfiles xmlns:trt="http://www.onvif.org/ver10/media/wsdl"/></s:Body></s:Envelope>`
+	reqOne := `<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body><ns0:GetProfile xmlns:ns0="http://www.onvif.org/ver10/media/wsdl"><ns0:ProfileToken>%s</ns0:ProfileToken></ns0:GetProfile></s:Body></s:Envelope>`
+
+	responses := func(codec string) []string {
+		mh := NewMediaHandler(8554, "steinel", codec, 8000, nil, nil)
+		mh.SetChannels([]CameraChannel{{Index: 1, Name: "Einfahrt", Path: "steinel", AudioCodec: codec}})
+		var out []string
+		all, err := mh.Handle("GetProfiles", reqAll, "192.168.1.50:8000")
+		require.NoError(t, err)
+		out = append(out, all)
+		for _, token := range []string{"Profile_Main", "Profile_Sub"} {
+			one, err := mh.Handle("GetProfile", fmt.Sprintf(reqOne, token), "192.168.1.50:8000")
+			require.NoError(t, err)
+			out = append(out, one)
+		}
+		return out
+	}
+
+	// With audio the blocks are there (otherwise the check below proves nothing).
+	for _, resp := range responses("aac") {
+		for _, tag := range audioTags {
+			assert.Contains(t, resp, "<tt:"+tag, "aac")
+		}
+	}
+
+	for _, codec := range []string{"none", "None", "off"} {
+		for _, resp := range responses(codec) {
+			for _, tag := range audioTags {
+				assert.NotContains(t, resp, tag, "audio_codec %q", codec)
+			}
+			// The video part stays complete and the XML closes properly.
+			assert.Contains(t, resp, "<tt:VideoSourceConfiguration", "audio_codec %q", codec)
+			assert.Contains(t, resp, "<tt:VideoEncoderConfiguration", "audio_codec %q", codec)
+			assert.Equal(t, strings.Count(resp, "<tt:VideoEncoderConfiguration"), strings.Count(resp, "</tt:VideoEncoderConfiguration>"))
+		}
+	}
+}
