@@ -7,12 +7,13 @@ require (
 	github.com/bluenviron/mediacommon v1.13.1
 	github.com/eclipse/paho.mqtt.golang v1.5.1
 	github.com/google/uuid v1.6.0
-	github.com/pion/dtls/v3 v3.1.15
+	github.com/pion/dtls/v3 v3.1.16
 	github.com/pion/rtcp v1.2.20
 	github.com/pion/rtp v1.10.6
 	github.com/pion/webrtc/v4 v4.2.26
 	github.com/stretchr/testify v1.12.1
 	github.com/zaf/g711 v1.4.0
+	golang.org/x/time v0.14.0
 )
 
 require (
@@ -35,5 +36,4 @@ require (
 	golang.org/x/net v0.50.0 // indirect
 	golang.org/x/sync v0.17.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect
-	golang.org/x/time v0.14.0 // indirect
 )
