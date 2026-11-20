@@ -766,3 +766,21 @@ func TestSofiaStream_ConcurrentStopAndReadLoop(t *testing.T) {
 	wg.Wait()
 	assert.False(t, s.IsRunning())
 }
+
+// codecStream is a media stream that reports a fixed audio codec and accepts AAC frames.
+type codecStream struct {
+	*mockMediaStream
+	codec string
+}
+
+func (c *codecStream) GetAudioCodec() string                   { return c.codec }
+func (c *codecStream) WriteAACFrame(_ []byte, _ time.Duration) {}
+
+// The AAC transcoder is only needed when the stream really publishes AAC. With
+// "pcmu" the audio is passed through, with "none" there is no audio track.
+func TestSofiaStream_TranscoderOnlyForAAC(t *testing.T) {
+	for codec, want := range map[string]bool{"aac": true, "pcmu": false, "none": false} {
+		s := NewSofiaStream("127.0.0.1", 34567, nil, &codecStream{mockMediaStream: &mockMediaStream{}, codec: codec})
+		assert.Equal(t, want, s.audioTranscoder != nil, "audio_codec %s", codec)
+	}
+}
