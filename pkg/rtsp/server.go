@@ -60,6 +60,9 @@ func NewServer(port int, pathName string, audioCodec string, authUser string, au
 	if audioCodec == "" {
 		audioCodec = "aac"
 	}
+	if IsAudioDisabled(audioCodec) {
+		audioCodec = AudioCodecNone
+	}
 
 	var nonce string
 	if authUser != "" {
@@ -599,4 +602,13 @@ func (s *Server) SetH264Parameters(sps, pps []byte) {
 	if s.primaryStream != nil {
 		s.primaryStream.SetH264Parameters(sps, pps)
 	}
+}
+
+// VideoSize returns the picture size found in the primary stream's H.264 data
+// and the time it was first seen (zero values while unknown).
+func (s *Server) VideoSize() (width int, height int, since time.Time) {
+	if s.primaryStream != nil {
+		return s.primaryStream.VideoSize()
+	}
+	return 0, 0, time.Time{}
 }

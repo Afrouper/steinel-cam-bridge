@@ -27,6 +27,8 @@ options:
   bridge_pass: ""
   resolution: "1080p"
   audio_codec: "aac"
+  instant_start: false
+  hold_last_frame_seconds: 300
   rtsp_port: 8554
   onvif_port: 8000
   sdcard_sync_interval: 120
@@ -46,7 +48,7 @@ schema:
       camera_user: "str?"
       rtsp_path: "str?"
       resolution: "list(1080p|720p|360p)?"
-      audio_codec: "list(aac|pcmu)?"
+      audio_codec: "list(aac|pcmu|none)?"
       reset_pairing: "bool?"
       nabto_driver: "list(cgo|pure)?"
       sdcard_download_rate_limit_kbps: "int(0,5000)?"
@@ -61,7 +63,9 @@ schema:
   bridge_user: "str?"
   bridge_pass: "password?"
   resolution: "list(1080p|720p|360p)"
-  audio_codec: "list(aac|pcmu)"
+  audio_codec: "list(aac|pcmu|none)"
+  instant_start: "bool?"
+  hold_last_frame_seconds: "int(0,3600)?"
   rtsp_port: "port"
   onvif_port: "port"
   sdcard_sync_interval: "int(0,300)?"

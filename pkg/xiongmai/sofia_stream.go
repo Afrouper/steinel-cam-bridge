@@ -80,7 +80,7 @@ func NewSofiaStream(cameraIP string, port int, client *Client, rtspServer VideoW
 		audioCodec = ac.GetAudioCodec()
 	}
 	var transcoder *audio.Transcoder
-	if audioCodec != "pcmu" {
+	if audioCodec == "aac" {
 		if aacWriter, ok := rtspServer.(interface {
 			WriteAACFrame(au []byte, pts time.Duration)
 		}); ok {

@@ -154,6 +154,13 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 				return nil, fmt.Errorf("failed to register RTSP stream '%s': %w", cam.Path, err)
 			}
 		}
+		// Holding the last picture only makes sense for the always-on L 625
+		// stream; the L 620 pauses its stream on purpose when nobody watches.
+		holdLastFrame := time.Duration(0)
+		if !isL620 {
+			holdLastFrame = time.Duration(cfg.HoldLastFrameSeconds) * time.Second
+		}
+		camStream.SetVideoOptions(cfg.InstantStart, holdLastFrame)
 		camStream.SetOnPlayHandler(camBridgeMgr.RequestKeyframe)
 		camStream.SetAudioBackchannelHandler(camBridgeMgr.WriteAudioBackchannel)
 

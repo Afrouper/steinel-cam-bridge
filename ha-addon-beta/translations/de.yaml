@@ -37,7 +37,13 @@ configuration:
     description: "Auflösung des Videostreams (1080p, 720p oder 360p)."
   audio_codec:
     name: "Audio-Codec"
-    description: "Audio-Format des RTSP/ONVIF-Streams: 'aac' (transkodiert, empfohlen) oder 'pcmu' (Rohdaten)."
+    description: "Audio-Format des RTSP/ONVIF-Streams: 'aac' (transkodiert, empfohlen), 'pcmu' (Rohdaten) oder 'none' (kein Ton, kein Gegensprechen, reiner Videostream)."
+  instant_start:
+    name: "Sofortbild für neue Zuschauer"
+    description: "Schickt jedem neuen RTSP-Zuschauer sofort das aktuelle Schlüsselbild samt Folgebildern, statt bis zu 2 Sekunden auf das nächste Schlüsselbild der Kamera zu warten. Standard aus: Der Zuschauer bekommt bis zu 2 Sekunden Video auf einen Schlag; auf einem Tablet im WLAN wurde das Bild dadurch später flüssig. Sinnvoll für Rekorder und Abnehmer am Kabel."
+  hold_last_frame_seconds:
+    name: "Standbild bei Aussetzern (Sekunden)"
+    description: "Liefert die Kamera kein Bild (Verbindungsabriss), wird das letzte Schlüsselbild so viele Sekunden lang weitergesendet, damit Home Assistant und Rekorder verbunden bleiben und ohne Neuaufbau weiterlaufen. Danach bleibt der Strom still, damit ein echter Ausfall auffällt. 0 schaltet das Standbild ab. Nur L 625."
   rtsp_port:
     name: "RTSP-Port"
     description: "Netzwerkport des integrierten RTSP-Servers (Standard: 8554)."

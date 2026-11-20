@@ -17,6 +17,15 @@ import (
 func (b *Bridge) SetResolution(resolution string) error {
 	b.mu.Lock()
 	b.resolution = resolution
+	b.resGuard.Requested(resolution, time.Now())
+	b.mu.Unlock()
+
+	return b.sendResolutionRequest(resolution)
+}
+
+// sendResolutionRequest sends the quality request without touching the requested state.
+func (b *Bridge) sendResolutionRequest(resolution string) error {
+	b.mu.Lock()
 	dc := b.dc
 	b.mu.Unlock()
 
@@ -263,7 +272,7 @@ func (b *Bridge) onMCUStatus(cfg *mcu.ConfigInfo) {
 	status.LowlightTime = cfg.LowlightTime
 	status.ColorTemp = cfg.ColorTemp
 	status.PixelChangeDetection = boolToState(cfg.PixelChangeDetection)
-	status.Resolution = b.resolution
+	status.Resolution = b.reportedResolution()
 	b.eventBus.UpdateStatus(status)
 
 	// Bits 0/1 of the "tuxing" nibble are settings ("Pixel Change Detection",

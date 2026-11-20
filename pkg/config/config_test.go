@@ -453,3 +453,47 @@ func TestConfig_ForceRTSPIngest(t *testing.T) {
 	cfgCLI := Resolve("", fs)
 	assert.True(t, cfgCLI.ForceRTSPIngest)
 }
+
+// TestVideoOptions_FileAndEnv covers instant_start and hold_last_frame_seconds:
+// defaults, options.json and the environment variables on top.
+func TestVideoOptions_FileAndEnv(t *testing.T) {
+	optsFile := filepath.Join(t.TempDir(), "options.json")
+	write := func(content string) {
+		require.NoError(t, os.WriteFile(optsFile, []byte(content), 0644))
+	}
+
+	// Defaults: instant start off, hold the last picture for five minutes.
+	write(`{"camera_ip": "192.168.1.10"}`)
+	cfg := Resolve(optsFile, nil)
+	assert.False(t, cfg.InstantStart)
+	assert.Equal(t, 300, cfg.HoldLastFrameSeconds)
+
+	// options.json; 0 switches holding off.
+	write(`{"camera_ip": "192.168.1.10", "instant_start": true, "hold_last_frame_seconds": 0}`)
+	cfg = Resolve(optsFile, nil)
+	assert.True(t, cfg.InstantStart)
+	assert.Equal(t, 0, cfg.HoldLastFrameSeconds)
+
+	// A negative value in the file is ignored.
+	write(`{"camera_ip": "192.168.1.10", "hold_last_frame_seconds": -5}`)
+	assert.Equal(t, 300, Resolve(optsFile, nil).HoldLastFrameSeconds)
+
+	// Environment variables win over the file.
+	write(`{"camera_ip": "192.168.1.10", "instant_start": true, "hold_last_frame_seconds": 120}`)
+	t.Setenv("INSTANT_START", "false")
+	t.Setenv("HOLD_LAST_FRAME_SECONDS", "45")
+	cfg = Resolve(optsFile, nil)
+	assert.False(t, cfg.InstantStart)
+	assert.Equal(t, 45, cfg.HoldLastFrameSeconds)
+
+	for _, on := range []string{"true", "TRUE", "1"} {
+		t.Setenv("INSTANT_START", on)
+		assert.True(t, Resolve(optsFile, nil).InstantStart, "INSTANT_START=%s", on)
+	}
+
+	// Values that are no usable number leave the file's value alone.
+	for _, bad := range []string{"abc", "-3"} {
+		t.Setenv("HOLD_LAST_FRAME_SECONDS", bad)
+		assert.Equal(t, 120, Resolve(optsFile, nil).HoldLastFrameSeconds, "HOLD_LAST_FRAME_SECONDS=%s", bad)
+	}
+}
