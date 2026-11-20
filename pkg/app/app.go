@@ -233,25 +233,31 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 				camDID = cam.Nabto.DeviceID
 				camPID = cam.Nabto.ProductID
 			}
+			callbacks := mqtt.Callbacks{
+				SetLampMode:       camBridgeMgr.SetLampState,
+				SetHighlight:      camBridgeMgr.SetHighlight,
+				SetHighlightTime:  camBridgeMgr.SetHighlightTime,
+				SetLowlight:       camBridgeMgr.SetLowlight,
+				SetLowlightTime:   camBridgeMgr.SetLowlightTime,
+				SetPIRSensitivity: camBridgeMgr.SetPIRSensitivity,
+				SetLuxThreshold:   camBridgeMgr.SetLuxThreshold,
+				SetSiren:          camBridgeMgr.SetSiren,
+				SetResolution:     camBridgeMgr.SetResolution,
+				ReconnectSession:  camBridgeMgr.ReconnectSession,
+			}
+			if !isL620 {
+				// The L 625 reports Wi-Fi signal, SD card usage and firmware
+				// version via get_device_info.
+				callbacks.CameraInfo = true
+			}
 			mqttClient.RegisterCamera(mqtt.CameraDevice{
 				Path:      cam.Path,
 				Name:      cam.Name,
 				DeviceID:  camDID,
 				ProductID: camPID,
 				Model:     modelName,
-				Callbacks: mqtt.Callbacks{
-					SetLampMode:       camBridgeMgr.SetLampState,
-					SetHighlight:      camBridgeMgr.SetHighlight,
-					SetHighlightTime:  camBridgeMgr.SetHighlightTime,
-					SetLowlight:       camBridgeMgr.SetLowlight,
-					SetLowlightTime:   camBridgeMgr.SetLowlightTime,
-					SetPIRSensitivity: camBridgeMgr.SetPIRSensitivity,
-					SetLuxThreshold:   camBridgeMgr.SetLuxThreshold,
-					SetSiren:          camBridgeMgr.SetSiren,
-					SetResolution:     camBridgeMgr.SetResolution,
-					ReconnectSession:  camBridgeMgr.ReconnectSession,
-				},
-				EventBus: camBus,
+				Callbacks: callbacks,
+				EventBus:  camBus,
 			})
 		}
 

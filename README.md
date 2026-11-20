@@ -89,6 +89,7 @@ an der Hardware.
     - **Videoauflösung (`select.resolution`)**: Live-Umschaltung der Kameraauflösung (`1080p`, `720p`, `360p`).
   - **🩺 Diagnose & Aktionen**:
     - **PIR-Status (`binary_sensor.pir_status`)**: Zeigt den Betriebszustand des PIR-Sensors an (`running`).
+    - **Kamera-Diagnose (nur L 625)**: WLAN-Signal (`sensor.wifi_signal`, %), SD-Karte frei / belegt / Größe (`sensor.sd_free`, `sensor.sd_used`, `sensor.sd_total`, GB), SD-Karte Status (`sensor.sd_status`), Firmware (`sensor.firmware`).
     - **Kamera-Session neu aufbauen (`button.reconnect`)**: Manueller Reconnect und Neuinitialisierung der Kamera-Verbindung.
 
 - **💡 Hinweise zu Hardware-Grenzen & Bewegungserkennung**:

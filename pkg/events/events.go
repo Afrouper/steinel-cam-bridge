@@ -35,6 +35,12 @@ type DeviceStatus struct {
 	FirmwareVer    string    `json:"firmware_ver"`
 	Resolution     string    `json:"resolution"`
 	LastSeen       time.Time `json:"last_seen"`
+
+	// Camera diagnostics (L 625, from get_device_info).
+	WifiSignal int    `json:"wifi_signal"` // 0 - 100 %, 0 = unknown
+	SDFreeMB   int    `json:"sd_free_mb"`  // free space on the SD card as reported (MiB)
+	SDTotalMB  int    `json:"sd_total_mb"` // card size as reported (MiB); 0 = unknown / no card
+	SDStatus   string `json:"sd_status"`   // e.g. "normal"
 }
 
 type Listener func(evt EventType, data interface{})
