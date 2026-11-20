@@ -17,7 +17,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bluenviron/gortsplib/v4/pkg/format/rtph264"
 	"github.com/pion/rtp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -324,13 +323,10 @@ func TestSofiaStreamMediaMarkersDemuxing(t *testing.T) {
 	mockStream := &mockMediaStream{}
 	sofiaStream := NewSofiaStream("127.0.0.1", 34567, nil, mockStream)
 
-	// Initialize RTP H.264 encoder
-	enc := &rtph264.Encoder{
-		PayloadType:       96,
-		PacketizationMode: 1,
-	}
-	require.NoError(t, enc.Init())
-	sofiaStream.encoder = enc
+	// Initialize H.264 video packetizer
+	pktz, err := newVideoPacketizer(videoCodecH264)
+	require.NoError(t, err)
+	sofiaStream.packetizer = pktz
 
 	// 1. Feed partial I-Frame record: 16 bytes header + SPS/PPS + partial IDR
 	spsNalu := []byte{0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0x00, 0x1f, 0x96, 0x35, 0x40}
@@ -780,7 +776,138 @@ func (c *codecStream) WriteAACFrame(_ []byte, _ time.Duration) {}
 // "pcmu" the audio is passed through, with "none" there is no audio track.
 func TestSofiaStream_TranscoderOnlyForAAC(t *testing.T) {
 	for codec, want := range map[string]bool{"aac": true, "pcmu": false, "none": false} {
-		s := NewSofiaStream("127.0.0.1", 34567, nil, &codecStream{mockMediaStream: &mockMediaStream{}, codec: codec})
+		ms := &mockMediaStream{}
+		s := NewSofiaStream("127.0.0.1", 34567, nil, &codecStream{mockMediaStream: ms, codec: codec})
 		assert.Equal(t, want, s.audioTranscoder != nil, "audio_codec %s", codec)
+		if codec == "none" {
+			s.tsMu.Lock()
+			s.dispatchAudioLocked([]byte{0x55, 0xAA, 0x55, 0xAA})
+			s.tsMu.Unlock()
+			assert.Empty(t, ms.getAudioPackets(), "audio_codec none must not dispatch PCMU packets")
+		}
 	}
+}
+
+func TestSofiaStream_HEVCDetectionAndKeyframeGate(t *testing.T) {
+	writer := &mockVideoParamsWriter{codec: videoCodecH264}
+	s := NewSofiaStream("127.0.0.1", 34567, nil, writer)
+	pktz, err := newVideoPacketizer(videoCodecH264)
+	require.NoError(t, err)
+	s.packetizer = pktz
+
+	// 1. P-frames before the first keyframe must be dropped
+	pFrameData := []byte{0x00, 0x00, 0x00, 0x01, 0x02, 0x01, 0xd0, 0x01, 0x02}
+	var pFrameRecord []byte
+	pFrameRecord = append(pFrameRecord, MarkerPFrame...)
+	pFrameRecord = append(pFrameRecord, make([]byte, 4)...)
+	binary.LittleEndian.PutUint32(pFrameRecord[4:8], uint32(len(pFrameData)))
+	pFrameRecord = append(pFrameRecord, pFrameData...)
+
+	s.handleMediaPayload(pFrameRecord)
+	assert.Empty(t, writer.getPackets(), "P-frame before first keyframe must be dropped")
+	assert.Equal(t, uint64(1), s.droppedBeforeKey)
+
+	// 2. Idle JSON response on media socket must be skipped
+	s.handleMediaPayload([]byte(`{"Name":"OPMonitor","Ret":100}` + "\x00"))
+	assert.Empty(t, s.streamBuf)
+
+	// 3. HEVC I-frame split into two chunks where the second chunk starts with 0x7B ('{')
+	vps := []byte{0x00, 0x00, 0x00, 0x01, 0x40, 0x01, 0x0c, 0x01, 0xff, 0xff, 0x01, 0x60, 0x00, 0x00, 0x03, 0x00, 0x00, 0x03, 0x00, 0x00, 0x03, 0x00, 0x00, 0x03, 0x00, 0x5d, 0xac, 0x09}
+	sps := []byte{0x00, 0x00, 0x00, 0x01, 0x42, 0x01, 0x01, 0x01, 0x60, 0x00, 0x00, 0x03, 0x00, 0x00, 0x03, 0x00, 0x00, 0x03, 0x00, 0x00, 0x03, 0x00, 0x5d, 0xa0, 0x02, 0x80, 0x80, 0x2d, 0x16, 0x59, 0x59, 0xa4, 0x93, 0x2b, 0xc0, 0x5a, 0x80, 0x80, 0x80, 0x82}
+	pps := []byte{0x00, 0x00, 0x00, 0x01, 0x44, 0x01, 0xc1, 0x72, 0xb4, 0x62, 0x40}
+	idrPart1 := []byte{0x00, 0x00, 0x00, 0x01, 0x26, 0x01, 0xaf, 0x08}
+	idrPart2 := []byte{'{', 0x11, 0x22, '}'} // binary continuation starting with '{' and ending with '}'
+
+	var iFrameData []byte
+	iFrameData = append(iFrameData, vps...)
+	iFrameData = append(iFrameData, sps...)
+	iFrameData = append(iFrameData, pps...)
+	iFrameData = append(iFrameData, idrPart1...)
+	iFrameData = append(iFrameData, idrPart2...)
+
+	var iFrameChunk1 []byte
+	iFrameChunk1 = append(iFrameChunk1, MarkerIFrame...)
+	iFrameChunk1 = append(iFrameChunk1, sofiaCodecH265, 6, 240, 135, 0, 0, 0, 0, 0, 0, 0, 0) // 16-byte record header
+	binary.LittleEndian.PutUint32(iFrameChunk1[12:16], uint32(len(iFrameData)))
+	iFrameChunk1 = append(iFrameChunk1, iFrameData[:len(iFrameData)-len(idrPart2)]...)
+
+	s.handleMediaPayload(iFrameChunk1)
+	assert.Empty(t, writer.getPackets(), "partial HEVC I-frame must wait for continuation")
+
+	// Feed continuation starting with '{' (0x7B): must NOT be dropped as JSON!
+	s.handleMediaPayload(idrPart2)
+
+	pkts := writer.getPackets()
+	require.NotEmpty(t, pkts, "completed HEVC I-frame must be packetized and dispatched")
+	assert.Equal(t, videoCodecH265, writer.codec, "RTSP stream must be switched to H.265")
+	assert.Equal(t, vps[4:], writer.vps)
+	assert.Equal(t, sps[4:], writer.sps)
+	assert.Equal(t, pps[4:], writer.pps)
+
+	// 4. Subsequent P-frame must now be dispatched
+	prevCount := len(pkts)
+	s.handleMediaPayload(pFrameRecord)
+	assert.Greater(t, len(writer.getPackets()), prevCount, "P-frame after keyframe must be dispatched")
+}
+
+func TestResyncMediaHeader(t *testing.T) {
+	validHdr := Header{
+		Magic:      HeaderMagic,
+		Channel:    0,
+		SessionID:  0x7b,
+		Sequence:   5,
+		MsgID:      MsgMonitorData,
+		DataLength: 128,
+	}
+	garbage := []byte{0x12, 0x34, 0x56, 0xFF, 0x99, 0x88, 0x77}
+	stream := append(garbage, validHdr.Encode()...)
+
+	rd := strings.NewReader(string(stream[HeaderLength:]))
+	hdrBuf := append([]byte(nil), stream[:HeaderLength]...)
+
+	hdr, err := resyncMediaHeader(rd, hdrBuf)
+	require.NoError(t, err)
+	require.NotNil(t, hdr)
+	assert.Equal(t, MsgMonitorData, hdr.MsgID)
+	assert.Equal(t, uint32(128), hdr.DataLength)
+}
+
+type mockAACStream struct {
+	mockMediaStream
+	aacFrames int
+}
+
+func (m *mockAACStream) GetAudioCodec() string { return "aac" }
+
+func (m *mockAACStream) WriteAACFrame(_ []byte, _ time.Duration) {
+	m.mu.Lock()
+	m.aacFrames++
+	m.mu.Unlock()
+}
+
+func TestSofiaStream_AudioSurvivesOnDemandStop(t *testing.T) {
+	writer := &mockAACStream{}
+	s := NewSofiaStream("127.0.0.1", 34567, nil, writer)
+	require.NotNil(t, s.audioTranscoder)
+
+	// Simulate an on-demand Stop() cycle
+	s.running.Store(true)
+	require.NoError(t, s.Stop())
+
+	// Feed enough 8 kHz PCMA audio chunks after Stop() to produce at least one 1024-sample AAC frame
+	audioPayload := make([]byte, 640)
+	var audioRecord []byte
+	audioRecord = append(audioRecord, MarkerAudio...)
+	audioRecord = append(audioRecord, make([]byte, 4)...)
+	binary.LittleEndian.PutUint16(audioRecord[6:8], uint16(len(audioPayload)))
+	audioRecord = append(audioRecord, audioPayload...)
+
+	for i := 0; i < 4; i++ {
+		s.handleMediaPayload(audioRecord)
+	}
+
+	writer.mu.Lock()
+	frames := writer.aacFrames
+	writer.mu.Unlock()
+	assert.Greater(t, frames, 0, "AAC audio transcoder must remain functional across on-demand Stop() cycles")
 }

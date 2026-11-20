@@ -1,6 +1,7 @@
 package rtsp
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 	"sync"
@@ -26,7 +27,10 @@ type MediaStream interface {
 	SetAudioBackchannelHandler(handler AudioBackchannelHandler)
 	SetOnPlayHandler(handler OnPlayHandler)
 	ActiveClients() int64
+	VideoCodec() string
+	SetVideoCodec(codec string) bool
 	SetH264Parameters(sps, pps []byte)
+	SetH265Parameters(vps, sps, pps []byte)
 }
 
 var _ MediaStream = (*Stream)(nil)
@@ -38,6 +42,9 @@ type Stream struct {
 	serverStream            *gortsplib.ServerStream
 	session                 *description.Session
 	videoFormat             *format.H264
+	h265Format              *format.H265
+	videoCodec              string // "h264" (default) or "h265"
+	gortspServer            *gortsplib.Server
 	audioCodec              string
 	audioFormat             format.Format
 	aacRTPEncoder           *rtpmpeg4audio.Encoder
@@ -89,6 +96,7 @@ func NewStream(pathName string, audioCodec string) (*Stream, error) {
 			pathName:    pathName,
 			session:     &description.Session{Medias: []*description.Media{vMedia}},
 			videoFormat: vFormat,
+			videoCodec:  VideoCodecH264,
 			audioCodec:  AudioCodecNone,
 			videoMedia:  vMedia,
 			video:       newVideoPipe(),
@@ -148,6 +156,7 @@ func NewStream(pathName string, audioCodec string) (*Stream, error) {
 		pathName:          pathName,
 		session:           meds,
 		videoFormat:       vFormat,
+		videoCodec:        VideoCodecH264,
 		audioCodec:        audioCodec,
 		audioFormat:       aFormat,
 		aacRTPEncoder:     aacEncoder,
@@ -233,13 +242,15 @@ func (st *Stream) runHoldLoop(stop <-chan struct{}) {
 		case now := <-ticker.C:
 			st.mu.RLock()
 			sStream := st.serverStream
+			vMedia := st.videoMedia
+			vCodec := st.videoCodec
 			st.mu.RUnlock()
-			if sStream == nil {
+			if sStream == nil || vCodec != VideoCodecH264 {
 				continue
 			}
 			st.video.mu.Lock()
 			for _, pkt := range st.video.holdFrame(now) {
-				_ = sStream.WritePacketRTP(st.videoMedia, pkt)
+				_ = sStream.WritePacketRTP(vMedia, pkt)
 			}
 			st.video.mu.Unlock()
 		}
@@ -250,6 +261,9 @@ func (st *Stream) runHoldLoop(stop <-chan struct{}) {
 func (st *Stream) initServerStream(srv *gortsplib.Server) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
+	if srv != nil {
+		st.gortspServer = srv
+	}
 	if st.serverStream == nil && srv != nil {
 		st.serverStream = gortsplib.NewServerStream(srv, st.session)
 		st.video.mu.Lock()
@@ -266,6 +280,101 @@ func (st *Stream) initServerStream(srv *gortsplib.Server) {
 		st.video.mu.Unlock()
 		st.holdStop = make(chan struct{})
 		go st.runHoldLoop(st.holdStop)
+	}
+}
+
+// Supported RTSP video codecs.
+const (
+	VideoCodecH264 = "h264"
+	VideoCodecH265 = "h265"
+)
+
+// VideoCodec returns the video codec currently announced in the SDP ("h264" or "h265").
+func (st *Stream) VideoCodec() string {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	return st.videoCodec
+}
+
+// SetVideoCodec switches the announced video track between H.264 and H.265.
+//
+// Some Steinel L 620 / Xiongmai firmwares deliver H.265 on the native Sofia stream even though
+// Simplify.Encode reports H.264. Announcing H.264 in the SDP for an HEVC bitstream makes every
+// decoder fail ("data partitioning is not implemented", "missing picture in access unit").
+//
+// Because the SDP of a gortsplib.ServerStream is immutable, a codec change replaces the
+// ServerStream. Clients connected to the old stream are disconnected and reconnect with the
+// new SDP (Frigate / go2rtc / Scrypted do this automatically). Returns true if the codec changed.
+func (st *Stream) SetVideoCodec(codec string) bool {
+	codec = strings.ToLower(strings.TrimSpace(codec))
+	if codec != VideoCodecH265 {
+		codec = VideoCodecH264
+	}
+
+	st.mu.Lock()
+	if st.videoCodec == codec {
+		st.mu.Unlock()
+		return false
+	}
+
+	var vFormat format.Format
+	if codec == VideoCodecH265 {
+		st.videoFormat = nil
+		st.h265Format = &format.H265{PayloadTyp: 96}
+		vFormat = st.h265Format
+	} else {
+		st.h265Format = nil
+		st.videoFormat = &format.H264{PayloadTyp: 96, PacketizationMode: 1}
+		vFormat = st.videoFormat
+	}
+	vMedia := &description.Media{
+		Type:    description.MediaTypeVideo,
+		Formats: []format.Format{vFormat},
+	}
+	medias := []*description.Media{vMedia}
+	if st.audioMedia != nil {
+		medias = append(medias, st.audioMedia)
+	}
+	if st.backchannelMedia != nil {
+		medias = append(medias, st.backchannelMedia)
+	}
+
+	oldStream := st.serverStream
+	st.videoCodec = codec
+	st.videoMedia = vMedia
+	st.session = &description.Session{Medias: medias}
+	st.serverStream = nil
+	if st.gortspServer != nil {
+		st.serverStream = gortsplib.NewServerStream(st.gortspServer, st.session)
+	}
+	st.mu.Unlock()
+
+	st.video.mu.Lock()
+	st.video.dropGOP()
+	st.video.haveSrc = false
+	st.video.holdActive = false
+	st.video.holdTimedOut = false
+	st.video.mu.Unlock()
+
+	if oldStream != nil {
+		// Disconnects clients that negotiated the old codec; they reconnect with the new SDP.
+		oldStream.Close()
+	}
+	logger.Info("RTSP", "🔁 Video track of stream '%s' switched to %s (connected clients must reconnect)", st.pathName, strings.ToUpper(codec))
+	return true
+}
+
+// SetH265Parameters updates the VPS, SPS and PPS of the H.265 video track (sprop-vps/sps/pps in the SDP).
+// Slices are defensively cloned because gortsplib.SafeSetParams retains caller slices without copying.
+func (st *Stream) SetH265Parameters(vps, sps, pps []byte) {
+	if len(vps) == 0 || len(sps) == 0 || len(pps) == 0 {
+		return
+	}
+	st.mu.RLock()
+	f := st.h265Format
+	st.mu.RUnlock()
+	if f != nil {
+		f.SafeSetParams(bytes.Clone(vps), bytes.Clone(sps), bytes.Clone(pps))
 	}
 }
 
@@ -318,13 +427,23 @@ func (st *Stream) ActiveClients() int64 {
 	return cnt
 }
 
-// WriteVideoPacket forwards an H.264 RTP packet to all clients connected to this stream.
+// WriteVideoPacket forwards a video RTP packet (H.264 or H.265) to all clients connected to this stream.
 func (st *Stream) WriteVideoPacket(pkt *rtp.Packet) {
 	st.mu.RLock()
 	sStream := st.serverStream
+	vMedia := st.videoMedia
+	vFormat := st.videoFormat
+	vCodec := st.videoCodec
 	st.mu.RUnlock()
 
 	if sStream == nil {
+		return
+	}
+
+	// The H.264 continuity pipe inspects RFC 6184 headers; bypass it for H.265 tracks.
+	if vCodec == VideoCodecH265 {
+		pkt.PayloadType = 96
+		_ = sStream.WritePacketRTP(vMedia, pkt)
 		return
 	}
 
@@ -334,12 +453,12 @@ func (st *Stream) WriteVideoPacket(pkt *rtp.Packet) {
 	if out == nil {
 		return
 	}
-	if sps, pps, ok := st.video.takeParams(); ok {
+	if sps, pps, ok := st.video.takeParams(); ok && vFormat != nil {
 		// Advertise the parameter sets in the SDP so clients can set up their
 		// decoder before the first keyframe arrives.
-		st.videoFormat.SafeSetParams(sps, pps)
+		vFormat.SafeSetParams(sps, pps)
 	}
-	_ = sStream.WritePacketRTP(st.videoMedia, out)
+	_ = sStream.WritePacketRTP(vMedia, out)
 }
 
 // sendJoinBurst queues the current group of pictures for a session that is
@@ -350,9 +469,17 @@ func (st *Stream) sendJoinBurst(sess *gortsplib.ServerSession) {
 	if tr := sess.SetuppedTransport(); tr == nil || *tr == gortsplib.TransportUDPMulticast {
 		return
 	}
+	st.mu.RLock()
+	vMedia := st.videoMedia
+	vCodec := st.videoCodec
+	st.mu.RUnlock()
+	if vCodec != VideoCodecH264 || vMedia == nil {
+		return
+	}
+
 	hasVideo := false
 	for _, m := range sess.SetuppedMedias() {
-		if m == st.videoMedia {
+		if m == vMedia {
 			hasVideo = true
 			break
 		}
@@ -368,7 +495,7 @@ func (st *Stream) sendJoinBurst(sess *gortsplib.ServerSession) {
 		return
 	}
 	for _, pkt := range burst {
-		_ = sess.WritePacketRTP(st.videoMedia, pkt)
+		_ = sess.WritePacketRTP(vMedia, pkt)
 	}
 	logger.Debug("RTSP", "⚡ Instant start: sent %d cached packets to new client on '%s'", len(burst), st.pathName)
 	// The session only receives live packets once OnPlay has returned. Keep the
@@ -418,9 +545,16 @@ func (st *Stream) WriteAudioPacket(pkt *rtp.Packet) {
 
 // SetH264Parameters dynamically updates the SPS and PPS parameter sets for the H.264 video track.
 // Subsequent RTSP DESCRIBE requests return sprop-parameter-sets and profile-level-id in the SDP.
+// Slices are defensively cloned because gortsplib.SafeSetParams retains caller slices without copying.
 func (st *Stream) SetH264Parameters(sps, pps []byte) {
-	if st.videoFormat != nil && len(sps) > 0 && len(pps) > 0 {
-		st.videoFormat.SafeSetParams(sps, pps)
+	if len(sps) == 0 || len(pps) == 0 {
+		return
+	}
+	st.mu.RLock()
+	f := st.videoFormat
+	st.mu.RUnlock()
+	if f != nil {
+		f.SafeSetParams(bytes.Clone(sps), bytes.Clone(pps))
 	}
 }
 

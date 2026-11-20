@@ -1,6 +1,7 @@
 package xiongmai
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/binary"
@@ -16,17 +17,16 @@ import (
 
 	"github.com/Afrouper/steinel-cam-bridge/pkg/audio"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/logger"
-	"github.com/bluenviron/gortsplib/v4/pkg/format/rtph264"
 	"github.com/bluenviron/mediacommon/pkg/codecs/h264"
 	"github.com/pion/rtp"
 )
 
-// VideoWriter represents an RTSP stream or server that accepts H.264 RTP video packets.
+// VideoWriter represents an RTSP stream or server that accepts H.264/H.265 RTP video packets.
 type VideoWriter interface {
 	WriteVideoPacket(pkt *rtp.Packet)
 }
 
-// SofiaStream handles streaming H.264 video natively from the camera's Xiongmai Sofia NetIP
+// SofiaStream handles streaming H.264/H.265 video natively from the camera's Xiongmai Sofia NetIP
 // port (TCP 34567) using OPMonitor (MsgID 1410 / 1412), completely bypassing RTSP port 554.
 type SofiaStream struct {
 	cameraIP        string
@@ -35,7 +35,6 @@ type SofiaStream struct {
 	client          *Client
 	rtspServer      VideoWriter
 	mediaConn       net.Conn
-	encoder         *rtph264.Encoder
 	streamStartTime time.Time
 	lastPacketTime  atomic.Int64
 	running         atomic.Bool
@@ -50,12 +49,23 @@ type SofiaStream struct {
 	lastFrameTime time.Time
 	streamBuf     []byte
 
-	// Audio pipeline
+	// Video packetization state (guarded by tsMu)
+	packetizer         videoPacketizer
+	activeStreamType   string // snapshot of streamType for the active session
+	detectedCodec      string // last detected codec ("h264" or "h265"), preserved across on-demand restarts
+	hasLoggedCodec     bool   // whether initial codec detection has been logged
+	gotKeyframe        bool   // P-frames are dropped until the first I-frame of a session
+	isCodecUnsupported bool   // camera codec cannot be announced by the RTSP writer: drop video
+	droppedBeforeKey   uint64 // P-frames dropped while waiting for the first keyframe
+	payloadCount       uint64
+
+	// Audio pipeline (guarded by tsMu during dispatchAudioLocked)
 	audioTranscoder *audio.Transcoder
 	audioCodec      string
 	audioSeq        uint16
 	audioSSRC       uint32
 	audioTimestamp  uint32
+	lastAACPTS      time.Duration
 }
 
 // NewSofiaStream creates a new Sofia native video streamer for Steinel L 620 / Xiongmai cameras.
@@ -79,27 +89,38 @@ func NewSofiaStream(cameraIP string, port int, client *Client, rtspServer VideoW
 	if ac, ok := rtspServer.(interface{ GetAudioCodec() string }); ok {
 		audioCodec = ac.GetAudioCodec()
 	}
-	var transcoder *audio.Transcoder
+	s := &SofiaStream{
+		cameraIP:   cameraIP,
+		port:       port,
+		streamType: st,
+		client:     client,
+		rtspServer: rtspServer,
+		fps:        fps,
+		audioCodec: audioCodec,
+	}
 	if audioCodec == "aac" {
 		if aacWriter, ok := rtspServer.(interface {
 			WriteAACFrame(au []byte, pts time.Duration)
 		}); ok {
-			transcoder = audio.NewTranscoder(func(au []byte, pts time.Duration) {
-				aacWriter.WriteAACFrame(au, pts)
+			const aacFrameDur = time.Duration(audio.AACFrameSamples) * time.Second / time.Duration(audio.AACSampleRate)
+			// The callback runs synchronously inside dispatchAudioLocked with s.tsMu held.
+			s.audioTranscoder = audio.NewTranscoder(func(au []byte, _ time.Duration) {
+				now := time.Now()
+				if s.streamStartTime.IsZero() {
+					s.streamStartTime = now
+				}
+				wallPTS := now.Sub(s.streamStartTime)
+				if s.lastAACPTS == 0 || wallPTS-s.lastAACPTS > time.Second {
+					s.lastAACPTS = wallPTS
+				} else {
+					s.lastAACPTS += aacFrameDur
+				}
+				aacWriter.WriteAACFrame(au, s.lastAACPTS)
 			})
 		}
 	}
 
-	return &SofiaStream{
-		cameraIP:        cameraIP,
-		port:            port,
-		streamType:      st,
-		client:          client,
-		rtspServer:      rtspServer,
-		fps:             fps,
-		audioCodec:      audioCodec,
-		audioTranscoder: transcoder,
-	}
+	return s
 }
 
 // SetFPS sets the camera framerate (used for monotonic RTP timestamp spacing).
@@ -109,6 +130,16 @@ func (s *SofiaStream) SetFPS(fps int) {
 	if fps > 0 {
 		s.fps = fps
 	}
+}
+
+// AwaitNextKeyframe gates video packet forwarding until the next I-frame arrives.
+// Called when the first RTSP viewer connects to an already-running Sofia stream so the
+// client's decoder starts cleanly on an IDR keyframe instead of mid-GOP P-frames.
+func (s *SofiaStream) AwaitNextKeyframe() {
+	s.tsMu.Lock()
+	s.gotKeyframe = false
+	s.droppedBeforeKey = 0
+	s.tsMu.Unlock()
 }
 
 // FPS returns the configured framerate.
@@ -280,26 +311,40 @@ func (s *SofiaStream) Start(ctx context.Context) error {
 	}
 	logger.Debug("Xiongmai Stream", "✅ OPMonitor Start acknowledged, video stream triggered")
 
-	// Step 3: Initialize RTP H.264 Encoder
-	enc := &rtph264.Encoder{
-		PayloadType:       96,
-		PacketizationMode: 1,
+	// Step 3: Initialize the video packetizer on first start and reuse it across on-demand
+	// restarts so RTP sequence numbers and SSRCs remain continuous.
+	s.tsMu.Lock()
+	pktz := s.packetizer
+	initialCodec := s.detectedCodec
+	s.tsMu.Unlock()
+	if initialCodec == "" {
+		initialCodec = videoCodecH264
 	}
-	if err := enc.Init(); err != nil {
-		_ = conn.Close()
-		return fmt.Errorf("failed to initialize RTP H.264 encoder: %w", err)
+	if pktz == nil {
+		var err error
+		pktz, err = newVideoPacketizer(initialCodec)
+		if err != nil {
+			_ = conn.Close()
+			return fmt.Errorf("failed to initialize video packetizer: %w", err)
+		}
 	}
-	s.encoder = enc
 
 	s.mediaConn = conn
 	s.stopChan = make(chan struct{})
 	s.tsMu.Lock()
-	s.streamStartTime = time.Now()
-	s.currentTS = 0
-	s.lastFrameTime = time.Time{}
+	if s.streamStartTime.IsZero() {
+		s.streamStartTime = time.Now()
+	}
 	s.streamBuf = nil
-	s.audioSSRC = uint32(time.Now().UnixNano())
-	s.audioSeq = 0
+	s.packetizer = pktz
+	s.activeStreamType = stType
+	s.gotKeyframe = false
+	s.isCodecUnsupported = false
+	s.droppedBeforeKey = 0
+	s.payloadCount = 0
+	if s.audioSSRC == 0 {
+		s.audioSSRC = uint32(time.Now().UnixNano())
+	}
 	s.audioTimestamp = 0
 	fps := s.fps
 	s.tsMu.Unlock()
@@ -312,13 +357,61 @@ func (s *SofiaStream) Start(ctx context.Context) error {
 	return nil
 }
 
+// maxSofiaMediaPayload is the sanity limit for a single DVRIP packet on the media socket.
+const maxSofiaMediaPayload = 1024 * 1024
+
+// maxSofiaResyncBytes bounds the number of bytes scanned while resynchronizing DVRIP framing.
+const maxSofiaResyncBytes = 512 * 1024
+
+// sofiaDiagPayloads is the number of initial MsgID 1412 payloads hex-dumped at debug level.
+const sofiaDiagPayloads = 3
+
+// decodeMediaHeader decodes a DVRIP header received on the media socket and validates its payload length.
+func decodeMediaHeader(buf []byte) (*Header, error) {
+	hdr, err := DecodeHeader(buf)
+	if err != nil {
+		return nil, err
+	}
+	if hdr.DataLength > maxSofiaMediaPayload {
+		return nil, fmt.Errorf("implausible payload length %d", hdr.DataLength)
+	}
+	return hdr, nil
+}
+
+// resyncMediaHeader slides byte-by-byte over the media stream until a plausible DVRIP header is found.
+func resyncMediaHeader(rd io.ByteReader, hdrBuf []byte) (*Header, error) {
+	for i := 0; i < maxSofiaResyncBytes; i++ {
+		copy(hdrBuf, hdrBuf[1:])
+		b, err := rd.ReadByte()
+		if err != nil {
+			return nil, err
+		}
+		hdrBuf[len(hdrBuf)-1] = b
+		if hdrBuf[0] != HeaderMagic {
+			continue
+		}
+		hdr, err := decodeMediaHeader(hdrBuf)
+		if err != nil {
+			continue
+		}
+		isValidEnvelope := hdr.Channel <= 1 && hdr.Reserved[0] == 0 && hdr.Reserved[1] == 0 && hdr.DataLength > 0
+		isMonitorMsg := hdr.MsgID == MsgMonitorData || hdr.MsgID == MsgMonitorStartResp || hdr.MsgID == MsgMonitorClaimResp
+		if isValidEnvelope && isMonitorMsg {
+			return hdr, nil
+		}
+	}
+	return nil, fmt.Errorf("no valid dvrip header found within %d bytes", maxSofiaResyncBytes)
+}
+
 // readLoop continuously reads binary Sofia packets from the media socket,
-// reassembles H.264 video frames, and forwards them to the RTSP server.
+// reassembles H.264/H.265 video frames, and forwards them to the RTSP server.
 func (s *SofiaStream) readLoop(ctx context.Context, conn net.Conn) {
 	defer s.wg.Done()
 
 	var firstPacketOnce sync.Once
+	rd := bufio.NewReaderSize(conn, 64*1024)
 	hdrBuf := make([]byte, HeaderLength)
+	var payloadBuf []byte
 
 	for {
 		select {
@@ -331,27 +424,36 @@ func (s *SofiaStream) readLoop(ctx context.Context, conn net.Conn) {
 
 		// Read 20-byte Sofia header
 		_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-		if _, err := io.ReadFull(conn, hdrBuf); err != nil {
+		if _, err := io.ReadFull(rd, hdrBuf); err != nil {
 			if s.running.Load() {
 				logger.Warn("Xiongmai Stream", "⚠️ Sofia media socket read header error: %v", err)
 			}
 			return
 		}
 
-		hdr, err := DecodeHeader(hdrBuf)
+		hdr, err := decodeMediaHeader(hdrBuf)
 		if err != nil {
-			logger.Trace("Xiongmai Stream", "⚠️ Malformed Sofia header on media socket: %v", err)
-			continue
+			logger.Debug("Xiongmai Stream", "⚠️ Lost DVRIP framing on media socket (%v), resynchronizing: %s", err, logger.FormatBinary(hdrBuf))
+			_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+			hdr, err = resyncMediaHeader(rd, hdrBuf)
+			if err != nil {
+				if s.running.Load() {
+					logger.Warn("Xiongmai Stream", "⚠️ Sofia media socket resynchronization failed: %v", err)
+				}
+				return
+			}
+			s.tsMu.Lock()
+			s.streamBuf = s.streamBuf[:0]
+			s.gotKeyframe = false
+			s.tsMu.Unlock()
 		}
 
-		if hdr.DataLength > 1024*1024 { // 1 MB sanity limit
-			logger.Warn("Xiongmai Stream", "⚠️ Oversized Sofia media payload (%d bytes), resetting stream", hdr.DataLength)
-			return
+		if cap(payloadBuf) < int(hdr.DataLength) {
+			payloadBuf = make([]byte, hdr.DataLength)
 		}
-
-		payload := make([]byte, hdr.DataLength)
+		payload := payloadBuf[:hdr.DataLength]
 		_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-		if _, err := io.ReadFull(conn, payload); err != nil {
+		if _, err := io.ReadFull(rd, payload); err != nil {
 			if s.running.Load() {
 				logger.Warn("Xiongmai Stream", "⚠️ Sofia media socket read payload error: %v", err)
 			}
@@ -373,13 +475,23 @@ func (s *SofiaStream) handleMediaPayload(payload []byte) {
 	if len(payload) == 0 {
 		return
 	}
-	// Skip JSON control responses that might be interleaved on the media socket
-	if payload[0] == '{' {
-		return
-	}
 
 	s.tsMu.Lock()
 	defer s.tsMu.Unlock()
+
+	// Skip JSON control responses that might be interleaved on the media socket when idle,
+	// without ever dropping binary continuation chunks that happen to start with 0x7B ('{').
+	if len(s.streamBuf) == 0 && payload[0] == '{' {
+		trimmed := bytes.TrimRight(payload, "\x00\r\n ")
+		if len(trimmed) >= 2 && trimmed[len(trimmed)-1] == '}' {
+			return
+		}
+	}
+
+	s.payloadCount++
+	if s.payloadCount <= sofiaDiagPayloads {
+		logger.Debug("Xiongmai Stream", "🔬 MsgID 1412 payload #%d (raw): %s", s.payloadCount, logger.FormatBinary(payload, 64))
+	}
 
 	s.streamBuf = append(s.streamBuf, payload...)
 	s.processStreamBufferLocked()
@@ -498,8 +610,7 @@ func (s *SofiaStream) processStreamBufferLocked() {
 
 		switch pType {
 		case 0xFC, 0xFE, 0xFD:
-			h264Data := record[headerLen:]
-			s.dispatchFrameLocked(h264Data)
+			s.dispatchVideoRecordLocked(pType, record[:headerLen], record[headerLen:])
 		case 0xFA:
 			audioData := record[headerLen:]
 			s.dispatchAudioLocked(audioData)
@@ -518,10 +629,97 @@ func (s *SofiaStream) processStreamBufferLocked() {
 	}
 }
 
-// dispatchFrameLocked unmarshals Annex-B H.264 NAL units, encodes them into standard RTP packets,
-// assigns strictly monotonic presentation timestamps, and forwards them to the RTSP server.
-func (s *SofiaStream) dispatchFrameLocked(data []byte) {
-	if len(data) == 0 || s.rtspServer == nil || s.encoder == nil {
+// dispatchVideoRecordLocked routes a complete Sofia video record (I- or P-frame) through the
+// active codec packetizer. Codec detection runs on every I-frame so an H.265 stream is switched
+// automatically even if Simplify.Encode reported H.264.
+func (s *SofiaStream) dispatchVideoRecordLocked(pType byte, hdr []byte, payload []byte) {
+	if pType == 0xFC || pType == 0xFE {
+		s.ensureVideoCodecLocked(hdr, payload)
+		if !s.gotKeyframe && s.droppedBeforeKey > 0 {
+			logger.Debug("Xiongmai Stream", "⏭️ Dropped %d P-frame(s) before the first keyframe", s.droppedBeforeKey)
+		}
+		s.gotKeyframe = true
+	} else if !s.gotKeyframe {
+		// Decoders cannot start on a P-frame: wait for the first I-frame of the session.
+		s.droppedBeforeKey++
+		return
+	}
+
+	if s.isCodecUnsupported {
+		return
+	}
+	s.dispatchVideoFrameLocked(payload)
+}
+
+// ensureVideoCodecLocked selects or switches the active videoPacketizer based on an I-frame.
+func (s *SofiaStream) ensureVideoCodecLocked(hdr []byte, payload []byte) {
+	var codecByte, fpsByte, widthBlocks, heightBlocks byte
+	if len(hdr) >= 8 {
+		codecByte = hdr[4]
+		fpsByte = hdr[5]
+		widthBlocks = hdr[6]
+		heightBlocks = hdr[7]
+	}
+
+	detected := detectSofiaVideoCodec(codecByte, payload)
+	if detected == "" {
+		if s.packetizer != nil {
+			return
+		}
+		detected = videoCodecH264
+	}
+
+	codecChanged := s.packetizer == nil || s.packetizer.codec() != detected
+	if !s.hasLoggedCodec || codecChanged {
+		nalHdr := firstAnnexBNALU(payload)
+		if len(nalHdr) > 2 {
+			nalHdr = nalHdr[:2]
+		}
+		logger.Info("Xiongmai Stream", "🎞️ Sofia video codec detected: %s (Xiongmai record header: %s, first NAL header: %s, %dx%d @ %d fps)",
+			strings.ToUpper(detected), logger.FormatBinary(hdr), logger.FormatBinary(nalHdr),
+			int(widthBlocks)*8, int(heightBlocks)*8, fpsByte)
+
+		if detected == videoCodecH265 && s.client != nil {
+			stType := s.activeStreamType
+			if stType == "" {
+				stType = "Main"
+			}
+			if comp := s.client.GetVideoCompression(stType); comp != "" && !strings.Contains(strings.ToUpper(comp), "265") {
+				logger.Warn("Xiongmai Stream", "⚠️ Camera reports Compression=%s for stream '%s' (Simplify.Encode), but the native Sofia stream actually carries H.265/HEVC. Announcing H.265 via RTSP.", comp, stType)
+			}
+		}
+	}
+
+	s.detectedCodec = detected
+	s.hasLoggedCodec = true
+
+	if !codecChanged {
+		return
+	}
+
+	pktz, err := newVideoPacketizer(detected)
+	if err != nil {
+		logger.Error("Xiongmai Stream", "❌ Failed to initialize %s packetizer: %v", strings.ToUpper(detected), err)
+		s.isCodecUnsupported = true
+		return
+	}
+
+	if sw, ok := s.rtspServer.(videoCodecSwitcher); ok {
+		sw.SetVideoCodec(detected)
+	} else if detected != videoCodecH264 {
+		logger.Error("Xiongmai Stream", "❌ Camera delivers %s but the RTSP output only supports H.264; dropping video.", strings.ToUpper(detected))
+		s.isCodecUnsupported = true
+		return
+	}
+
+	s.packetizer = pktz
+	s.isCodecUnsupported = false
+}
+
+// dispatchVideoFrameLocked unmarshals an Annex-B frame, packetizes it via the active codec
+// packetizer, assigns a strictly monotonic 90 kHz timestamp, and forwards it to the RTSP server.
+func (s *SofiaStream) dispatchVideoFrameLocked(data []byte) {
+	if len(data) == 0 || s.rtspServer == nil || s.packetizer == nil {
 		return
 	}
 
@@ -532,46 +730,23 @@ func (s *SofiaStream) dispatchFrameLocked(data []byte) {
 		}
 	}
 
+	// Annex-B start-code framing is identical for H.264 and H.265.
 	nalus, err := h264.AnnexBUnmarshal(data)
 	if err != nil || len(nalus) == 0 {
 		logger.Trace("Xiongmai Stream", "⚠️ Failed to unmarshal Annex-B NALUs (%d bytes): %v", len(data), err)
 		return
 	}
 
-	// Extract in-band SPS and PPS to update RTSP SDP sprop-parameter-sets
-	var sps, pps []byte
-	for _, nalu := range nalus {
-		if len(nalu) > 0 {
-			switch h264.NALUType(nalu[0] & 0x1F) {
-			case h264.NALUTypeSPS:
-				if sps == nil {
-					sps = nalu
-				}
-			case h264.NALUTypePPS:
-				if pps == nil {
-					pps = nalu
-				}
-			}
-		}
-	}
-	if len(sps) > 0 && len(pps) > 0 {
-		if pw, ok := s.rtspServer.(interface {
-			SetH264Parameters(sps, pps []byte)
-		}); ok {
-			pw.SetH264Parameters(sps, pps)
-		}
-	}
-
-	pkts, err := s.encoder.Encode(nalus)
+	pkts, err := s.packetizer.packetize(nalus, s.rtspServer)
 	if err != nil || len(pkts) == 0 {
-		logger.Trace("Xiongmai Stream", "⚠️ Failed to RTP-encode NALUs: %v", err)
+		if err != nil {
+			logger.Trace("Xiongmai Stream", "⚠️ Failed to RTP-encode %s NALUs: %v", strings.ToUpper(s.packetizer.codec()), err)
+		}
 		return
 	}
 
 	ts := s.generateTimestampLocked()
-	now := time.Now()
-	s.lastPacketTime.Store(now.UnixNano())
-
+	s.lastPacketTime.Store(time.Now().UnixNano())
 	for _, pkt := range pkts {
 		pkt.Timestamp = ts
 		s.rtspServer.WriteVideoPacket(pkt)
@@ -580,7 +755,7 @@ func (s *SofiaStream) dispatchFrameLocked(data []byte) {
 
 // dispatchAudioLocked processes camera microphone audio (8 kHz G.711 A-law) and forwards it to the RTSP server.
 func (s *SofiaStream) dispatchAudioLocked(audioData []byte) {
-	if len(audioData) == 0 || len(audioData) > 4096 || s.rtspServer == nil {
+	if len(audioData) == 0 || len(audioData) > 4096 || s.rtspServer == nil || s.audioCodec == "none" {
 		return
 	}
 	if s.audioTranscoder != nil {
@@ -687,16 +862,10 @@ func (s *SofiaStream) Stop() error {
 
 	s.wg.Wait()
 
-	if s.audioTranscoder != nil {
-		s.audioTranscoder.Close()
-	}
-
+	// Clear the reassembly buffer for the closed media socket while keeping the audio
+	// transcoder, packetizer, and RTP clock anchor intact for subsequent on-demand sessions.
 	s.tsMu.Lock()
 	s.streamBuf = nil
-	s.currentTS = 0
-	s.lastFrameTime = time.Time{}
-	s.audioTimestamp = 0
-	s.streamStartTime = time.Time{}
 	s.tsMu.Unlock()
 
 	logger.Info("Xiongmai Stream", "⏹️ Sofia native video streaming stopped")

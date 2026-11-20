@@ -181,11 +181,12 @@ Die L 620 MCU unterstützt genau 3 diskrete Stufen (`XMDetectSettingPresenter.ja
 Die L 620 Firmware besitzt auf ihrem internen RTSP-Server (Port 554) bekannte Speicherbegrenzungen und Pufferüberläufe. Die Bridge nutzt daher das native Xiongmai Sofia/NetIP Medienprotokoll als **bevorzugten Primärpfad**:
 1. **Media Socket Connect**: Baut eine sekundäre TCP-Verbindung zu Port `34567` auf.
 2. **Claim Handshake (`MsgMonitorClaimReq` 1413)**: Sendet `OPMonitor Claim` mit `StreamType: "Main"` (1080p) oder `"Extra1"` (360p).
-3. **Monitor Start (`MsgMonitorReq` 1410)**: Startet den H.264 Datenstrom auf dem Socket.
-4. **Frame-Demuxing (`MsgMonitorData` 1412)**:
+3. **Monitor Start (`MsgMonitorReq` 1410)**: Startet den Video-Datenstrom auf dem Socket.
+4. **Frame-Demuxing & Automatische H.264/H.265 Codec-Erkennung (`MsgMonitorData` 1412)**:
    - Die Kamera überträgt rohe Video-Chunks mit Sofia-Headern.
-   - I-Frames beginnen mit Magic `00 00 01 FC`, P-Frames mit `00 00 01 FD`.
-   - Die Bridge extrahiert die NAL-Units und paketiert sie konform nach **RFC 6184** mittels `rtph264.Encoder` direkt in den RTSP-Server.
+   - I-Frames beginnen mit Magic `00 00 01 FC` (16-Byte Record-Header), P-Frames mit `00 00 01 FD` (8-Byte Record-Header).
+   - Da bestimmte Firmware-Versionen (z. B. Steinel XLED CAM 1) auf dem nativen Sofia-Kanal H.265/HEVC liefern, obwohl `Simplify.Encode` `Compression: "H.264"` meldet, erkennt `SofiaStream` (`pkg/xiongmai/sofia_video.go`) auf jedem I-Frame anhand der Annex-B NAL-Header (sowie dem Xiongmai-Codec-Byte als Fallback) automatisch zwischen **H.264** und **H.265**.
+   - Die Bridge extrahiert die NAL-Units, aktualisiert die SDP-Parameter (`sprop-parameter-sets` bzw. `sprop-vps`/`sprop-sps`/`sprop-pps` mit defensivem `bytes.Clone`) und paketiert sie konform nach **RFC 6184** (`rtph264.Encoder`) bzw. **RFC 7798** (`rtph265.Encoder`) über das `videoPacketizer`-Interface direkt in den RTSP-Server.
 
 ### 2. Ressourcenschonendes On-Demand Streaming
 Der Xiongmai SoC erhitzt sich bei dauerhaftem 24/7-Videostreaming stark, was zu WLAN-Abbrüchen führen kann.
