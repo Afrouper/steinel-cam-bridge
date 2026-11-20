@@ -233,7 +233,7 @@ func (b *Bridge) handleDataChannelMessage(data []byte) {
 				strings.Contains(lowerStr, "event") ||
 				strings.Contains(lowerStr, "doorbell") {
 				logger.Info("DataChannel", "🚨 Motion / Event notification received from camera: %s", str)
-				b.eventBus.SetMotion(true)
+				b.signalMotion()
 			} else {
 				logger.Debug("DataChannel", "📩 Received JSON message: %s", str)
 			}
@@ -269,6 +269,28 @@ func (b *Bridge) onMCUStatus(cfg *mcu.ConfigInfo) {
 	// Bits 0/1 of the "tuxing" nibble are settings ("Pixel Change Detection",
 	// "Image Photosensitive Detection"), not motion. Reading them as motion made
 	// the bridge report endless motion as soon as the setting was switched on.
+	// Motion is reported by the camera's push messages, see signalMotion.
+}
+
+// motionResetDelay is how long a motion push keeps the motion state on.
+// A variable so tests can shorten it.
+var motionResetDelay = 10 * time.Second
+
+// signalMotion reports motion and clears it again after motionResetDelay,
+// unless another push arrives in the meantime. The camera only tells us that
+// something happened, never that it is over, and nothing else resets the state.
+func (b *Bridge) signalMotion() {
+	b.eventBus.SetMotion(true)
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.motionResetTimer != nil {
+		b.motionResetTimer.Stop()
+	}
+	b.motionResetTimer = time.AfterFunc(motionResetDelay, func() {
+		logger.Info("DataChannel", "⚪ Motion cleared (%s timeout)", motionResetDelay)
+		b.eventBus.SetMotion(false)
+	})
 }
 
 func (b *Bridge) runMCUPollingLoop(ctx context.Context) {
