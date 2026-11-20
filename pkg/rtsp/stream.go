@@ -194,6 +194,7 @@ type VideoStats struct {
 	Height      int    `json:"height"`
 	Live        bool   `json:"live"`
 	Holding     bool   `json:"holding_last_frame"`
+	HoldExpired bool   `json:"hold_expired"`
 	HoldFrames  uint64 `json:"hold_frames"`
 	JoinBursts  uint64 `json:"instant_starts"`
 	Restarts    uint64 `json:"source_restarts"`
@@ -211,6 +212,7 @@ func (st *Stream) VideoStats() VideoStats {
 		Height:      v.height,
 		Live:        !v.lastLiveAt.IsZero() && time.Since(v.lastLiveAt) < liveWindow,
 		Holding:     v.holdActive,
+		HoldExpired: v.holdTimedOut,
 		HoldFrames:  v.holdFrames,
 		JoinBursts:  v.joinBursts,
 		Restarts:    v.restarts,
@@ -257,6 +259,9 @@ func (st *Stream) initServerStream(srv *gortsplib.Server) {
 			} else {
 				logger.Info("RTSP", "▶️ Live video resumed on '%s'", st.pathName)
 			}
+		}
+		st.video.onHoldTimeout = func() {
+			logger.Warn("RTSP", "⏹️ Still no video from camera on '%s': no longer repeating the last picture", st.pathName)
 		}
 		st.video.mu.Unlock()
 		st.holdStop = make(chan struct{})
@@ -367,7 +372,8 @@ func (st *Stream) sendJoinBurst(sess *gortsplib.ServerSession) {
 	}
 	logger.Debug("RTSP", "⚡ Instant start: sent %d cached packets to new client on '%s'", len(burst), st.pathName)
 	// The session only receives live packets once OnPlay has returned. Keep the
-	// video path blocked for that moment so no packet falls into the gap.
+	// video path blocked for that moment so no packet falls into the gap. This
+	// is on purpose and independent of the burst, which is a copy.
 	go func() {
 		time.Sleep(joinBurstSettleWindow)
 		st.video.mu.Unlock()

@@ -68,6 +68,7 @@ type videoPipe struct {
 	keyUnitIDR   bool
 	holdStarted  time.Time
 	holdActive   bool
+	holdTimedOut bool // holdMax is over, wait for live video before holding again
 	holdFrames   uint64
 	joinBursts   uint64
 	restarts     uint64
@@ -78,6 +79,8 @@ type videoPipe struct {
 	sizeSince    time.Time
 	lastLiveAt   time.Time
 	onHoldChange func(active bool)
+	// onHoldTimeout is called once when holding ends because holdMax is over.
+	onHoldTimeout func()
 }
 
 func newVideoPipe() *videoPipe {
@@ -131,8 +134,9 @@ func (p *videoPipe) ingest(pkt *rtp.Packet, now time.Time) *rtp.Packet {
 	p.lastOutTS = out.Timestamp
 	p.lastOutAt = now
 	p.lastLiveAt = now
-	if p.holdActive {
+	if p.holdActive || p.holdTimedOut {
 		p.holdActive = false
+		p.holdTimedOut = false
 		if p.onHoldChange != nil {
 			p.onHoldChange(false)
 		}
@@ -146,7 +150,7 @@ func (p *videoPipe) ingest(pkt *rtp.Packet, now time.Time) *rtp.Packet {
 const videoOutSSRC = 0x53544C31 // "STL1"
 
 func (p *videoPipe) isDiscontinuity(pkt *rtp.Packet, now time.Time) bool {
-	if !p.haveSrc || p.holdActive {
+	if !p.haveSrc || p.holdActive || p.holdTimedOut {
 		// First packet ever, or hold frames have advanced the outgoing stream.
 		return true
 	}
@@ -264,13 +268,18 @@ func (p *videoPipe) joinBurst(now time.Time) []*rtp.Packet {
 		return nil
 	}
 	p.joinBursts++
-	return p.gop
+	// A copy of the slice, so the caller does not depend on mu while it sends.
+	return append([]*rtp.Packet(nil), p.gop...)
 }
 
 // holdFrame returns a re-stamped copy of the last keyframe if the camera has
 // been silent long enough, or nil.
 func (p *videoPipe) holdFrame(now time.Time) []*rtp.Packet {
 	if p.holdMax <= 0 || !p.haveOut || !p.keyUnitDone || p.keyUnitLen == 0 {
+		return nil
+	}
+	if p.holdTimedOut {
+		// Given up on this outage; only live video starts a new hold.
 		return nil
 	}
 	if now.Sub(p.lastOutAt) < holdFrameInterval {
@@ -287,6 +296,13 @@ func (p *videoPipe) holdFrame(now time.Time) []*rtp.Packet {
 		}
 	}
 	if now.Sub(p.holdStarted) > p.holdMax {
+		// Stop holding so a real outage becomes visible to the clients. The
+		// flag keeps the next tick from starting a fresh hold period.
+		p.holdActive = false
+		p.holdTimedOut = true
+		if p.onHoldTimeout != nil {
+			p.onHoldTimeout()
+		}
 		return nil
 	}
 

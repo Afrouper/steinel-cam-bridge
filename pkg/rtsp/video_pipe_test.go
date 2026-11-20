@@ -223,9 +223,34 @@ func TestVideoPipeHoldLastFrame(t *testing.T) {
 	assert.Equal(t, []bool{true, false}, events)
 
 	// Holding stops after holdMax so a real outage becomes visible to clients.
+	timeouts := 0
+	p.onHoldTimeout = func() { timeouts++ }
 	t3 := t2.Add(2 * time.Second)
 	require.NotNil(t, p.holdFrame(t3))
-	assert.Nil(t, p.holdFrame(t3.Add(p.holdMax+time.Second)))
+	assert.True(t, p.holdActive)
+	t4 := t3.Add(p.holdMax + time.Second)
+	assert.Nil(t, p.holdFrame(t4))
+	assert.False(t, p.holdActive, "no longer holding once holdMax is over")
+	assert.True(t, p.holdTimedOut)
+	assert.Equal(t, 1, timeouts)
+
+	// The following ticks must not start a new hold period on their own.
+	for i := 1; i <= 8; i++ {
+		assert.Nil(t, p.holdFrame(t4.Add(time.Duration(i)*holdTickInterval)))
+	}
+	assert.Nil(t, p.holdFrame(t4.Add(p.holdMax+time.Minute)))
+	assert.False(t, p.holdActive)
+	assert.Equal(t, 1, timeouts)
+	assert.Equal(t, []bool{true, false, true}, events)
+
+	// Live video ends the outage; after that a new one is held again.
+	t5 := t4.Add(2 * time.Minute)
+	assert.Empty(t, feed(p, cam.pframe(), t5), "still gated until a keyframe")
+	require.Len(t, feed(p, cam.keyframe(), t5.Add(66*time.Millisecond)), 4)
+	assert.False(t, p.holdTimedOut)
+	assert.Equal(t, []bool{true, false, true, false}, events)
+	require.NotNil(t, p.holdFrame(t5.Add(2*time.Second)))
+	assert.True(t, p.holdActive)
 
 	// Disabled by default.
 	q := newVideoPipe()
@@ -378,4 +403,43 @@ func TestHoldLastFrameEndToEnd(t *testing.T) {
 		assert.False(t, int32(got[i].Timestamp-got[i-1].Timestamp) < 0, "timestamps never run backwards (packet %d)", i)
 	}
 	assert.False(t, st.VideoStats().Holding)
+}
+
+func TestVideoPipeJoinBurstIsACopy(t *testing.T) {
+	p := newVideoPipe()
+	cam := newFakeCamera(t, testSPS720, 0, 0)
+	now := time.Now()
+	feed(p, cam.keyframe(), now)
+	feed(p, cam.pframe(), now)
+
+	burst := p.joinBurst(now)
+	require.NotEmpty(t, burst)
+	require.Len(t, p.gop, len(burst))
+	first := p.gop[0]
+
+	// Changing the returned slice must not touch the cache.
+	burst[0] = nil
+	_ = append(burst[:1], burst[2:]...)
+	assert.Same(t, first, p.gop[0])
+	for i, pkt := range p.gop {
+		assert.NotNil(t, pkt, "cached packet %d", i)
+	}
+}
+
+func TestServerVideoSizeForwardsToPrimaryStream(t *testing.T) {
+	st, err := NewStream("steinel", "none")
+	require.NoError(t, err)
+	st.video.mu.Lock()
+	st.video.width, st.video.height, st.video.sizeSince = 1920, 1080, time.Unix(1700000000, 0)
+	st.video.mu.Unlock()
+
+	w, h, since := (&Server{primaryStream: st}).VideoSize()
+	assert.Equal(t, 1920, w)
+	assert.Equal(t, 1080, h)
+	assert.Equal(t, time.Unix(1700000000, 0), since)
+
+	w, h, since = (&Server{}).VideoSize()
+	assert.Zero(t, w)
+	assert.Zero(t, h)
+	assert.True(t, since.IsZero())
 }
