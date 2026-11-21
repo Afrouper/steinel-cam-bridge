@@ -1,0 +1,11 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "agents": {
+    "explore": {
+      "model": "google/gemini-3.8-flash"
+    },
+    "general": {
+      "model": "google/gemini-3.8-flash"
+    }
+  }
+}
