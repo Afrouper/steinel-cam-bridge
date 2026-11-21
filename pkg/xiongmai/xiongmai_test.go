@@ -2215,7 +2215,10 @@ func (m *mockOnDemandRTSPServer) WriteAudioPacket(pkt *rtp.Packet)              
 func (m *mockOnDemandRTSPServer) GetAudioCodec() string                                           { return "aac" }
 func (m *mockOnDemandRTSPServer) SetAudioBackchannelHandler(handler rtsp.AudioBackchannelHandler) {}
 func (m *mockOnDemandRTSPServer) SetOnPlayHandler(handler rtsp.OnPlayHandler)                     {}
+func (m *mockOnDemandRTSPServer) VideoCodec() string                                              { return rtsp.VideoCodecH264 }
+func (m *mockOnDemandRTSPServer) SetVideoCodec(codec string) bool                                 { return false }
 func (m *mockOnDemandRTSPServer) SetH264Parameters(sps, pps []byte)                               {}
+func (m *mockOnDemandRTSPServer) SetH265Parameters(vps, sps, pps []byte)                          {}
 func (m *mockOnDemandRTSPServer) ActiveClients() int64                                            { return m.clients.Load() }
 
 var _ rtsp.MediaStream = (*mockOnDemandRTSPServer)(nil)

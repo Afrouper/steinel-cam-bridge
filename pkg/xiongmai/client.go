@@ -39,6 +39,8 @@ type Client struct {
 	telemetryBuf      string
 	videoFPS          int
 	videoResolution   string
+	videoCompression  string
+	extraCompression  string
 	extraFPS          int
 	extraResolution   string
 	onTelemetry       func(*MCUConfig)
@@ -742,6 +744,7 @@ func (c *Client) EnsureH264Encoding() error {
 	mainVideo := &items[0].MainFormat.Video
 	c.videoFPS = mainVideo.FPS
 	c.videoResolution = mainVideo.Resolution
+	c.videoCompression = mainVideo.Compression
 	logger.Info("Xiongmai", "🎥 Video encode config: Compression=%s, Resolution=%s, FPS=%d, BitRate=%d kbps, AudioEnable=%v",
 		mainVideo.Compression, mainVideo.Resolution, mainVideo.FPS, mainVideo.BitRate, items[0].MainFormat.AudioEnable)
 
@@ -749,6 +752,7 @@ func (c *Client) EnsureH264Encoding() error {
 		extraVideo := &items[0].ExtraFormat.Video
 		c.extraFPS = extraVideo.FPS
 		c.extraResolution = extraVideo.Resolution
+		c.extraCompression = extraVideo.Compression
 		logger.Info("Xiongmai", "🎥 Sub-stream encode config (ExtraFormat): Compression=%s, Resolution=%s, FPS=%d, BitRate=%d kbps",
 			extraVideo.Compression, extraVideo.Resolution, extraVideo.FPS, extraVideo.BitRate)
 	}
@@ -794,6 +798,10 @@ func (c *Client) EnsureH264Encoding() error {
 			Ret int `json:"Ret"`
 		}
 		if err := json.Unmarshal(setResp, &setResult); err == nil && (setResult.Ret == 100 || setResult.Ret == 0) {
+			c.videoCompression = items[0].MainFormat.Video.Compression
+			if c.extraCompression != "" {
+				c.extraCompression = items[0].ExtraFormat.Video.Compression
+			}
 			logger.Info("Xiongmai", "✅ Camera video compression successfully switched to H.264")
 		} else {
 			logger.Warn("Xiongmai", "⚠️ Setting Simplify.Encode to H.264 returned code %d (response: %s)", setResult.Ret, string(setResp))
@@ -815,6 +823,19 @@ func (c *Client) GetVideoFPS(streamType ...string) int {
 		}
 	}
 	return c.videoFPS
+}
+
+// GetVideoCompression returns the video compression reported by Simplify.Encode (e.g. "H.264"),
+// optionally for a specific stream type ("Main" or "Extra1").
+func (c *Client) GetVideoCompression(streamType ...string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(streamType) > 0 && (strings.EqualFold(streamType[0], "Extra1") || strings.EqualFold(streamType[0], "sub")) {
+		if c.extraCompression != "" {
+			return c.extraCompression
+		}
+	}
+	return c.videoCompression
 }
 
 // GetVideoResolution returns the video resolution reported by the camera (e.g. "720P"), optionally for a specific stream type.

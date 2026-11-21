@@ -457,3 +457,58 @@ func TestMultiStreamRegistrationAndRouting(t *testing.T) {
 	assert.True(t, bcCalled1, "Stream 1 backchannel handler should be called")
 	assert.False(t, bcCalled2, "Stream 2 backchannel handler should NOT be called")
 }
+
+func TestServerAndStream_VideoCodecSwitchAndDefensiveCloning(t *testing.T) {
+	srv, err := NewServer(8575, "codectest", "aac", "", "")
+	assert.NoError(t, err)
+	defer srv.Close()
+
+	err = srv.Start()
+	assert.NoError(t, err)
+
+	// 1. Default video codec is H.264
+	assert.Equal(t, VideoCodecH264, srv.VideoCodec())
+	assert.False(t, srv.SetVideoCodec("h264"), "Setting unchanged codec must return false")
+
+	// 2. Defensive cloning of H.264 SPS/PPS
+	sps := []byte{0x67, 0x42, 0x00, 0x1f, 0x96, 0x35, 0x40}
+	pps := []byte{0x68, 0xce, 0x3c, 0x80}
+	srv.SetH264Parameters(sps, pps)
+	sps[0] = 0x00 // mutate caller slice
+	pps[0] = 0x00
+	storedSPS, storedPPS := srv.PrimaryStream().videoFormat.SafeParams()
+	assert.Equal(t, byte(0x67), storedSPS[0], "SetH264Parameters must defensively clone SPS")
+	assert.Equal(t, byte(0x68), storedPPS[0], "SetH264Parameters must defensively clone PPS")
+
+	// 3. Switch to H.265 and verify defensive cloning of VPS/SPS/PPS
+	assert.True(t, srv.SetVideoCodec(VideoCodecH265), "Switching H.264 -> H.265 must return true")
+	assert.Equal(t, VideoCodecH265, srv.VideoCodec())
+	assert.False(t, srv.SetVideoCodec("H265"), "Setting H.265 again must return false")
+
+	vps265 := []byte{0x40, 0x01, 0x0c, 0x01}
+	sps265 := []byte{0x42, 0x01, 0x01, 0x01}
+	pps265 := []byte{0x44, 0x01, 0xc1, 0x72}
+	srv.SetH265Parameters(vps265, sps265, pps265)
+	vps265[0] = 0x00 // mutate caller slice
+	sps265[0] = 0x00
+	pps265[0] = 0x00
+	gotVPS, gotSPS, gotPPS := srv.PrimaryStream().h265Format.SafeParams()
+	assert.Equal(t, byte(0x40), gotVPS[0], "SetH265Parameters must defensively clone VPS")
+	assert.Equal(t, byte(0x42), gotSPS[0], "SetH265Parameters must defensively clone SPS")
+	assert.Equal(t, byte(0x44), gotPPS[0], "SetH265Parameters must defensively clone PPS")
+
+	// Writing an H.265 packet while videoFormat is nil must bypass the H.264 continuity pipe without panicking.
+	srv.WriteVideoPacket(&rtp.Packet{
+		Header:  rtp.Header{Version: 2, PayloadType: 96, SequenceNumber: 1, Timestamp: 90000},
+		Payload: []byte{0x26, 0x01, 0xaf, 0x08},
+	})
+
+	// 4. Switch back to H.264
+	assert.True(t, srv.SetVideoCodec(VideoCodecH264))
+	assert.Equal(t, VideoCodecH264, srv.VideoCodec())
+
+	// 5. Video-only stream ("none") initializes default video codec to H.264
+	videoOnly, err := NewStream("vidonly", AudioCodecNone)
+	assert.NoError(t, err)
+	assert.Equal(t, VideoCodecH264, videoOnly.VideoCodec())
+}
