@@ -74,4 +74,7 @@ type CameraChannel struct {
 	SetSirenFunc      func(on bool) error              `json:"-"`
 	RecordingProvider func() storage.RecordingProvider `json:"-"`
 	EventBus          *events.Bus                      `json:"-"`
+	// DebugCommandFunc passes a raw diagnostic command to this camera. It is
+	// nil while the diagnostic API is switched off.
+	DebugCommandFunc DebugCommandFunc `json:"-"`
 }

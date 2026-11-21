@@ -25,6 +25,7 @@ type Bridge struct {
 	eventBus         *events.Bus
 	resolution       string
 	resGuard         h264x.ResolutionGuard
+	debugTap         chan []byte
 	pliInterval      time.Duration
 	pc               *pion.PeerConnection
 	dc               *pion.DataChannel

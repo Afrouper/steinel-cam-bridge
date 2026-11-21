@@ -309,6 +309,10 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 		}
 		camInstances = append(camInstances, inst)
 
+		var debugCommand onvif.DebugCommandFunc
+		if cfg.DebugAPI {
+			debugCommand = camBridgeMgr.DebugCommand
+		}
 		onvifChannels = append(onvifChannels, onvif.CameraChannel{
 			Index:             i + 1,
 			Name:              cam.Name,
@@ -320,6 +324,7 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 			SetSirenFunc:      camBridgeMgr.SetSiren,
 			RecordingProvider: getRecProvider,
 			EventBus:          camBus,
+			DebugCommandFunc:  debugCommand,
 		})
 	}
 
@@ -354,6 +359,13 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 		primaryInst.eventBus,
 	)
 	onvifServer.SetChannels(onvifChannels)
+	if cfg.DebugAPI {
+		logger.Warn("Config", "🧪 Diagnostic API enabled: POST /api/debug/command passes raw commands to the camera. Switch 'debug_api' off after use.")
+		if cfg.BridgeUser == "" || cfg.BridgePass == "" {
+			logger.Warn("Config", "⚠️ Diagnostic API without access protection: bridge user and password are not set, so anyone in the network can send commands to the camera, including write commands.")
+		}
+		onvifServer.SetDebugCommandFunc(primaryInst.bridgeMgr.DebugCommand)
+	}
 	onvifServer.SetTimeFunc(func(t time.Time, tz string) error {
 		var lastErr error
 		for _, cam := range camInstances {

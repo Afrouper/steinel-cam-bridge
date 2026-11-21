@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/json"
 	"errors"
 	"sync"
 	"time"
@@ -276,4 +277,22 @@ func (m *BridgeManager) InstallUpdate(target string) error {
 		return err
 	}
 	return cs.InstallUpdate(target)
+}
+
+// debugCommander is implemented by drivers that can pass raw commands to the camera.
+type debugCommander interface {
+	DebugCommand(cmd, action string, info map[string]interface{}, timeout time.Duration) ([]json.RawMessage, error)
+}
+
+// DebugCommand forwards a raw diagnostic command to the camera driver.
+func (m *BridgeManager) DebugCommand(cmd, action string, info map[string]interface{}, timeout time.Duration) ([]json.RawMessage, error) {
+	d := m.getDriver()
+	if d == nil {
+		return nil, driver.ErrCameraOffline
+	}
+	dc, ok := d.(debugCommander)
+	if !ok {
+		return nil, errors.New("diagnostic commands are not supported by this camera model")
+	}
+	return dc.DebugCommand(cmd, action, info, timeout)
 }

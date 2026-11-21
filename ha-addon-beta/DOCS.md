@@ -57,6 +57,7 @@ Die Bridge stellt alle Kameras über denselben RTSP-Port (`:8554/steinel-haustue
 | `hold_last_frame_seconds` | Zahl | `300` | L 625: Wiederholt bei ausbleibendem Video das letzte Keyframe so viele Sekunden lang, damit Clients verbunden bleiben (`0` = aus) |
 | `instant_start` | Schalter | `false` | Neue RTSP-Clients erhalten sofort die laufende GOP statt auf das nächste Keyframe zu warten |
 | `rtsp_port` | Port | `8554` | RTSP Server Port |
+| `debug_api` | Schalter | `false` | L 625: Diagnose-Schnittstelle `POST /api/debug/command` für einzelne Kamera-Befehle (bei mehreren Kameras mit `?camera=<path>`). Nur zur Analyse einschalten; ohne Bridge-Benutzer und -Passwort ist sie im LAN offen |
 | `onvif_port` | Port | `8000` | ONVIF HTTP & SD-Karten REST API Service Port |
 | `sdcard_sync_interval` | Ganzzahl | `120` | Intervall in Sekunden für die Hintergrundabfrage neuer SD-Karten-Aufnahmen (0–300 s, 0 = deaktiviert) |
 | `sdcard_download_rate_limit_kbps` | Ganzzahl | `400` | Download-Bandbreitenbegrenzung in KB/s beim Cachen von SD-Aufnahmen (0–5000 KB/s, Standard: 400 KB/s, 0 = unbegrenzt). Schützt den Kamera-SoC und paralleles RTSP-Live-Streaming vor Überlastung |

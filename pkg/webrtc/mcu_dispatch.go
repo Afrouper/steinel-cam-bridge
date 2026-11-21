@@ -182,6 +182,8 @@ func (b *Bridge) handleDataChannelMessage(data []byte) {
 	if data[0] == '{' {
 		var root map[string]interface{}
 		if err := json.Unmarshal(data, &root); err == nil {
+			b.feedDebugTap(data)
+
 			// Check for SD Card JSON responses (get_event_list, get_snapshot, get_event_video)
 			b.mu.Lock()
 			sdm := b.sdcardManager
