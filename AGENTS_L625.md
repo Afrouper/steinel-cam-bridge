@@ -171,7 +171,7 @@ Alle übergeordneten Steuerbefehle werden über den bidirektionalen SCTP DataCha
   ```
   *Schaltet den integrierten Sirenenton manuell ein (`play: true`) oder aus (`play: false`).*
 - **Geräteinformationen abfragen (`get_device_info`)**:
-  Liefert Firmware-Version (`FW_version`), KI- und MCU-Version, Hersteller (`vendor`) und Modellname, WLAN (`wifi.RSSI` in Prozent sowie den Netzwerknamen, der nie geloggt werden darf), SD-Karte (`SD.volume_free` / `SD.volume_total`, `SD.status`; die SD-Werte tragen keine Einheit, 122000 bei einer 128-GB-Karte zeigt, dass die Kamera in Mebibyte zählt), `time.OSD`, `volume`, `detect`, `record`, `video` sowie die Update-Angaben `update_avaiable`, `FW_remote_version`, `mcu_update_avaiable`, `MCU_remote_version`. Die Bridge fragt einmal pro Minute ab.
+  Liefert Firmware-Version (`FW_version`), KI- und MCU-Version, Hersteller (`vendor`) und Modellname, WLAN (`wifi.RSSI` in Prozent sowie den Netzwerknamen), SD-Karte (`SD.volume_free` / `SD.volume_total`, `SD.status`; die SD-Werte tragen keine Einheit, 122000 bei einer 128-GB-Karte zeigt, dass die Kamera in Mebibyte zählt), `time.OSD`, `volume`, `detect`, `record`, `video` sowie die Update-Angaben `update_avaiable`, `FW_remote_version`, `mcu_update_avaiable`, `MCU_remote_version`. Die Bridge fragt einmal pro Minute ab.
 - **Zeitstempel-Einblendung (`get_time_setting` / `set_time_setting` mit `action: "OSD"`)**:
   `OSD`: `0` = aus, `1` = oben links, `2` = unten links, `3` = oben rechts, `4` = unten rechts (am Bild geprüft, Firmware 0.1.2.31; größere Werte verhalten sich wie `4`). `format` wird gespeichert, ändert die Einblendung aber nicht.
 - **Lautsprecher-Lautstärke (`get_volume_setting` / `set_volume_setting`)**: `volume` `0`–`100`.

@@ -123,7 +123,7 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
     - `media.go`: H.264 Video-Ingest, Audio-Ingest & AAC-Transcoder, 6s Silence-Watchdog & PLI-Burst/Intervallschleife.
     - `backchannel.go`: Zwei-Wege-Audio (Kamera-Lautsprecher) mit 160-Byte G.711u Frame-Chunking und SSRC/Timestamp-Management.
     - `mcu_dispatch.go`: DataChannel Message Handler, JSON-RPC Commands, Hex-MCU-Befehle, 30s Status-Polling und 10s PIR/Motion-Reset Timer. Antworten auf eigene Befehle (`resp`) gelten nicht als Bewegung.
-  - `camera_info.go`: Fragt `get_device_info` beim Session-Start und danach einmal pro Minute ab und übernimmt WLAN-Signal, SD-Karten-Belegung und Firmware-Version in den Gerätestatus. Die Antwort enthält den WLAN-Namen und darf nie geloggt werden.
+  - `camera_info.go`: Fragt `get_device_info` beim Session-Start und danach einmal pro Minute ab und übernimmt WLAN-Signal, SD-Karten-Belegung und Firmware-Version in den Gerätestatus.
   - `camera_settings.go`: Übernimmt aus derselben Antwort Zeitstempel-Einblendung, Lautstärke und Erkennungsmodus und setzt Zeitstempel-Position (`set_time_setting`, `action: "OSD"`), Lautsprecher-Lautstärke (`set_volume_setting`) und Erkennungsmodus (`set_detect_setting`, `action: "mode"`).
   - `camera_detection.go`: Liest `get_detect_data` und `get_record_setting` (einmal pro Minute) und setzt Erkennungsrahmen (`draw_frame`), Personen-Empfindlichkeit (`ai_person`), SD-Aufnahmemodus (`set_record_setting`) sowie die MCU-Einstellung „Licht bei Bildänderung“ (`5A 02 02`).
   - `camera_maintenance.go`: Firmware-Update von Kamera und Leuchten-MCU. Ausgelöst wird nur, wenn die Kamera selbst ein Update meldet (`update_avaiable` bzw. `mcu_update_avaiable` in `get_device_info`).
