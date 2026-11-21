@@ -301,6 +301,14 @@ Dieses Repository folgt strengen Software-Engineering- und Clean-Code-Standards.
   - In den Branches können Tags nach genannten Vorgaben erstellt werden - diese Erzeugen auch ein Release Build und damit ein GitHub Release
     - Tags auf Basis von Branches **müssen** für `beta` Versionen erstellt sein. 
 
+10. **Commit-Kennzeichnung (`Co-authored-by`)**:
+    - Jeder KI-Agent, der einen Git-Commit erstellt, muss sich am Ende der Commit-Message nach einer Leerzeile selbst als Co-Autor per `Co-authored-by`-Trailer eintragen, damit auf GitHub nachvollziehbar ist, welcher Agent mitgewirkt hat:
+      `Co-authored-by: <Agent-Name> <<noreply-Adresse>>`
+    - Beispiele:
+      - `Co-authored-by: OpenCode <noreply@opencode.ai>`
+      - `Co-authored-by: Claude <noreply@anthropic.com>`
+      - `Co-authored-by: Antigravity <noreply@antigravity.dev>`
+
 ---
 
 ## 5. Entwicklungs- & Build-Befehle
