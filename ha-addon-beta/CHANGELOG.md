@@ -2,6 +2,20 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.6.0-beta.1
+
+### 🚀 Highlights & Neuerungen
+
+- **RTSP-Stream-Kontinuität & Video-Optionen** (*@Grossmeister-T*, #87):
+  - Durchgehender RTSP-Stream über Kamera-Session-Wechsel hinweg inkl. Standbild bei Aussetzern (`hold_last_frame_seconds`), optionalem `instant_start` und automatischer Auflösungsprüfung (L 625).
+  - Neuer `audio_codec: none` für reine Videostreams ohne Ton- und Backchannel-Track.
+- **L 625 Kamera-Einstellungen & Wartung** (*@Grossmeister-T*, #86):
+  - Neue Entitäten für Zeitstempel (Ein/Aus & Position), Lautstärke, Kamera-Erkennung, Erkennungsrahmen, Personenerkennung, SD-Aufnahme, Licht bei Bildänderung, Firmware-Updates sowie Kamera-Neustart.
+- **L 625 Diagnose-Sensoren & Grundlicht-Schalter** (*@Grossmeister-T*, #85):
+  - Neue Diagnose-Sensoren für WLAN-Signal, SD-Karte (frei/belegt/Größe/Status) und Firmware sowie `switch.lowlight_switch` für das Grundlicht.
+- **Bewegungserkennung & Stabilität** (*@Grossmeister-T*, #84, #86):
+  - Befehlsantworten und Einstellungs-Bits werden nicht mehr als Bewegung gewertet; Bewegungspushes setzen sich nach 10 s zuverlässig zurück.
+
 ## 1.5.3
 
 ### 🛠️ Verbesserungen & Stabilität
