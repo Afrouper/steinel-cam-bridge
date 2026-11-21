@@ -16,16 +16,23 @@ import (
 // arrived or the timeout expires. It exists to explore what the camera
 // firmware supports; all returned messages have credentials removed.
 func (b *Bridge) DebugCommand(cmdName, action string, info map[string]interface{}, timeout time.Duration) ([]json.RawMessage, error) {
+	b.mu.Lock()
+	dc := b.dc
+	b.mu.Unlock()
+	if dc == nil {
+		return nil, fmt.Errorf("data channel not available")
+	}
+	return b.debugCommand(dc.Send, cmdName, action, info, timeout)
+}
+
+// debugCommand is DebugCommand with the DataChannel's send function passed
+// in, so it can be tested without a camera.
+func (b *Bridge) debugCommand(send func([]byte) error, cmdName, action string, info map[string]interface{}, timeout time.Duration) ([]json.RawMessage, error) {
 	if timeout <= 0 {
 		timeout = 4 * time.Second
 	}
 
 	b.mu.Lock()
-	dc := b.dc
-	if dc == nil {
-		b.mu.Unlock()
-		return nil, fmt.Errorf("data channel not available")
-	}
 	if b.debugTap != nil {
 		b.mu.Unlock()
 		return nil, fmt.Errorf("another debug command is still running")
@@ -52,7 +59,7 @@ func (b *Bridge) DebugCommand(cmdName, action string, info map[string]interface{
 	}
 	data, _ := json.Marshal(cmd)
 	logger.Info("DataChannel", "🧪 Debug command '%s' sent to camera", cmdName)
-	if err := dc.Send(data); err != nil {
+	if err := send(data); err != nil {
 		return nil, err
 	}
 
@@ -70,8 +77,10 @@ func (b *Bridge) DebugCommand(cmdName, action string, info map[string]interface{
 			if name == "" {
 				name, _ = root["cmd"].(string)
 			}
-			if name == "tran_ctl" || name == "tran_report" {
-				continue // periodic lamp telemetry, not an answer
+			if (name == "tran_ctl" || name == "tran_report") && name != cmdName {
+				// Periodic lamp telemetry, not an answer. A tran_ctl that was
+				// sent on purpose still gets its reply.
+				continue
 			}
 			out = append(out, json.RawMessage(redact.JSON(msg)))
 			if name == cmdName {

@@ -295,8 +295,8 @@ func (s *Server) handleAPISDCardItem(w http.ResponseWriter, r *http.Request) {
 // DebugCommandFunc sends a raw command to the camera and returns its replies.
 type DebugCommandFunc func(cmd, action string, info map[string]interface{}, timeout time.Duration) ([]json.RawMessage, error)
 
-// SetDebugCommandFunc enables the diagnostic endpoint /api/debug/command.
-// Without it the endpoint answers 404.
+// SetDebugCommandFunc enables the diagnostic endpoint /api/debug/command and
+// sets the camera it talks to by default. Without it the endpoint answers 404.
 func (s *Server) SetDebugCommandFunc(fn DebugCommandFunc) {
 	s.channelsMu.Lock()
 	defer s.channelsMu.Unlock()
@@ -307,9 +307,10 @@ var debugCommandName = regexp.MustCompile(`^[a-z][a-z0-9_]{1,63}$`)
 
 // handleAPIDebugCommand passes a single JSON command to the camera (L 625) and
 // returns what the camera answers. Only "get_..." commands are accepted unless
-// the request explicitly sets "write": true.
+// the request explicitly sets "write": true. Without ?camera=<path> the
+// command goes to the first camera.
 //
-//	POST /api/debug/command  {"cmd":"get_video_setting","action":"all","info":{},"timeout_ms":4000}
+//	POST /api/debug/command[?camera=<path>]  {"cmd":"get_video_setting","action":"all","info":{},"timeout_ms":4000}
 func (s *Server) handleAPIDebugCommand(w http.ResponseWriter, r *http.Request) {
 	s.channelsMu.RLock()
 	fn := s.debugCommand
@@ -321,6 +322,18 @@ func (s *Server) handleAPIDebugCommand(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, `{"error":"POST required"}`, http.StatusMethodNotAllowed)
 		return
+	}
+	if cam := r.URL.Query().Get("camera"); cam != "" {
+		ch := s.findChannel(cam)
+		if ch == nil {
+			http.Error(w, `{"error":"unknown camera"}`, http.StatusNotFound)
+			return
+		}
+		if ch.DebugCommandFunc == nil {
+			http.Error(w, `{"error":"diagnostic commands are not available for this camera"}`, http.StatusNotFound)
+			return
+		}
+		fn = ch.DebugCommandFunc
 	}
 
 	var req struct {

@@ -316,7 +316,7 @@ Die Konfiguration erfolgt nach den Grundsätzen einer [12-Factor App](https://12
 | `HOLD_LAST_FRAME_SECONDS` | – | `300` | L 625: Liefert die Kamera kein Video, wird das letzte Keyframe so viele Sekunden lang einmal pro Sekunde wiederholt, damit RTSP-Clients verbunden bleiben. `0` schaltet das ab |
 | `INSTANT_START` | – | `false` | Neue RTSP-Clients erhalten sofort die laufende GOP statt auf das nächste Keyframe zu warten. Standard aus: Der Client bekommt bis zu 2 s Video auf einmal, was auf WLAN-Tablets den flüssigen Start verzögert hat |
 | `RTSP_PORT` | `-port` | `8554` | Port des integrierten RTSP-Servers |
-| `DEBUG_API` | – | `false` | L 625: Schaltet `POST /api/debug/command` frei, über das einzelne JSON-Befehle direkt an die Kamera gehen. Nur zur Firmware-Analyse einschalten; ohne Bridge-Zugangsschutz ist der Endpunkt im LAN offen |
+| `DEBUG_API` | – | `false` | L 625: Schaltet `POST /api/debug/command` frei, über das einzelne JSON-Befehle direkt an die Kamera gehen (bei mehreren Kameras mit `?camera=<path>`, sonst die erste). Nur zur Firmware-Analyse einschalten; ohne Bridge-Zugangsschutz ist der Endpunkt im LAN offen, die Bridge warnt dann beim Start |
 | `RTSP_PATH` | `-path` | `steinel` | Stream-Pfad des RTSP-Servers (`rtsp://<host>:<port>/<path>`) |
 | `ONVIF_PORT` | `-onvif` | `8000` | Port des integrierten ONVIF HTTP- und SD-Karten REST API-Servers |
 
