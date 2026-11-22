@@ -315,6 +315,7 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 			Path:              cam.Path,
 			AudioCodec:        cam.AudioCodec,
 			Resolution:        cam.Resolution,
+			VideoCodecFunc:    camStream.VideoCodec,
 			ChangeResFunc:     camBridgeMgr.SetResolution,
 			SetLampFunc:       camBridgeMgr.SetLampState,
 			SetSirenFunc:      camBridgeMgr.SetSiren,

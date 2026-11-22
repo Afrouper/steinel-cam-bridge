@@ -11,8 +11,8 @@ Im Gegensatz zur **Steinel L 625 CAM SC** (Nabto Edge P2P + WebRTC DataChannel) 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                       Steinel L 620 CAM Hardware                            │
-│  ├─ Video Primär: Natives H.264 Video-Streaming (Sofia OPMonitor Port 34567)│
-│  ├─ Video Fallback: Lokaler nativer RTSP-Stream (TCP Port 554, 1080p H.264) │
+│  ├─ Video Primär: Natives H.264/H.265 Streaming (Sofia OPMonitor Port 34567)│
+│  ├─ Video Fallback: Lokaler nativer RTSP-Stream (TCP Port 554, H.264/H.265) │
 │  ├─ Talk-Backchannel: Xiongmai Talk Protokoll (MsgID 1432/1434, PCMA 8kHz)  │
 │  ├─ Steuerung & MCU: Xiongmai Sofia / NetIP Protokoll (TCP Port 34567)      │
 │  └─ Speicher: OPFileQuery (1440/1441) & OPPlayBack Download (1420/1422/1426)│
@@ -194,8 +194,9 @@ Der Xiongmai SoC erhitzt sich bei dauerhaftem 24/7-Videostreaming stark, was zu 
 - **15s Standby-Cooldown**: Trennen alle Clients die Verbindung, bleibt der Stream für 15 Sekunden gepuffert (`defaultIdleGracePeriod`). Verbindet sich in dieser Zeit kein neuer Client, wird der Medien-Socket geschlossen und die Kamera in den Ruhemodus versetzt.
 
 ### 3. Fallback-Pfad: RTSP-Ingest (Port 554)
-Schlägt die Verbindung zu Sofia Port 34567 fehl, schaltet die Bridge nahtlos auf den internen RTSP-Server der Kamera um:
+Schlägt die Verbindung zu Sofia Port 34567 fehl (oder ist `ForceRTSPIngest` aktiv), schaltet die Bridge auf den internen RTSP-Server der Kamera um:
 - **Kanonischer Pfad**: `rtsp://<ip>:554/user=admin_password=***_channel=1_stream=0.sdp`
+- **H.264/H.265-Track-Auswahl**: Bevorzugt H.264 aus dem Kamera-SDP; liefert die Kamera nur H.265 (HEVC), schaltet der Ingest den lokalen RTSP-Ausgang über `SetVideoCodec("h265")` um und übernimmt VPS/SPS/PPS aus dem SDP oder in-band aus eingehenden RTP-Paketen über `SetH265Parameters`.
 - **Zero-Packet Watchdog (5s)**: Schaltet sofort auf alternative URL-Pfade um, wenn nach `PLAY` keine RTP-Pakete eintreffen.
 - **Silence Watchdog (15s)**: Erkennt Verbindungsabbrüche und initialisiert den Stream neu.
 

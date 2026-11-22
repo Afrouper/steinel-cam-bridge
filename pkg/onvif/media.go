@@ -65,12 +65,19 @@ func (h *MediaHandler) AddChannel(ch CameraChannel) {
 	h.channels = append(h.channels, ch)
 }
 
+func cloneChannelsWithCodec(src []CameraChannel) []CameraChannel {
+	result := make([]CameraChannel, len(src))
+	copy(result, src)
+	for i := range result {
+		result[i].VideoCodec = resolveChannelVideoCodec(&result[i])
+	}
+	return result
+}
+
 func (h *MediaHandler) Channels() []CameraChannel {
 	h.channelsMu.RLock()
 	defer h.channelsMu.RUnlock()
-	result := make([]CameraChannel, len(h.channels))
-	copy(result, h.channels)
-	return result
+	return cloneChannelsWithCodec(h.channels)
 }
 
 var (
@@ -158,7 +165,7 @@ func (h *MediaHandler) Handle(action string, reqXML string, host string) (string
 		return h.getAudioOutputConfigurations(), nil
 	}
 	if strings.Contains(action, "GetVideoEncoderConfigurationOptions") || strings.Contains(reqXML, "GetVideoEncoderConfigurationOptions") {
-		return h.getVideoEncoderConfigurationOptions(), nil
+		return h.getVideoEncoderConfigurationOptions(reqXML), nil
 	}
 	if strings.Contains(action, "SetVideoEncoderConfiguration") || strings.Contains(reqXML, "SetVideoEncoderConfiguration") {
 		return h.setVideoEncoderConfiguration(reqXML), nil
@@ -206,6 +213,72 @@ func (h *MediaHandler) getChannelResolution(ch *CameraChannel, isMain bool) (wid
 	return 1920, 1080, "1080p"
 }
 
+const (
+	videoCodecH264 = "h264"
+	videoCodecH265 = "h265"
+)
+
+func normalizeVideoCodec(codec string) string {
+	switch strings.ToLower(strings.TrimSpace(codec)) {
+	case "h265", "h.265", "hevc":
+		return videoCodecH265
+	default:
+		return videoCodecH264
+	}
+}
+
+func resolveChannelVideoCodec(ch *CameraChannel) string {
+	if ch == nil {
+		return videoCodecH264
+	}
+	if ch.VideoCodecFunc != nil {
+		if codec := strings.TrimSpace(ch.VideoCodecFunc()); codec != "" {
+			return normalizeVideoCodec(codec)
+		}
+	}
+	if ch.VideoCodec != "" {
+		return normalizeVideoCodec(ch.VideoCodec)
+	}
+	return videoCodecH264
+}
+
+func (h *MediaHandler) resolveChannelForTokens(profileToken, configToken, rawXML string) *CameraChannel {
+	channels := h.Channels()
+	if len(channels) == 0 {
+		return nil
+	}
+
+	// Pass 1: exact token match avoids prefix collisions like "cam" vs "cam2".
+	for i := range channels {
+		ch := &channels[i]
+		isExactProfile := profileToken != "" &&
+			(profileToken == fmt.Sprintf("Profile_%s_Main", ch.Path) ||
+				profileToken == fmt.Sprintf("Profile_%s_Sub", ch.Path))
+		isExactConfig := configToken != "" &&
+			(configToken == fmt.Sprintf("VideoEncoderConfig_%s_Main", ch.Path) ||
+				configToken == fmt.Sprintf("VideoEncoderConfig_%s_Sub", ch.Path) ||
+				configToken == fmt.Sprintf("VideoEncoderConfig_%d", ch.Index))
+		if isExactProfile || isExactConfig {
+			return ch
+		}
+	}
+
+	// Pass 2: substring fallback on non-empty path.
+	for i := range channels {
+		ch := &channels[i]
+		if ch.Path == "" {
+			continue
+		}
+		if (profileToken != "" && strings.Contains(profileToken, ch.Path)) ||
+			(configToken != "" && strings.Contains(configToken, ch.Path)) ||
+			(profileToken == "" && configToken == "" && rawXML != "" && strings.Contains(rawXML, ch.Path)) {
+			return ch
+		}
+	}
+
+	return &channels[0]
+}
+
 func (h *MediaHandler) formatProfileXML(token, name string, ch *CameraChannel, isMain bool, audioCodec string) string {
 	audioEncoding := "AAC"
 	sampleRate := 16
@@ -225,6 +298,20 @@ func (h *MediaHandler) formatProfileXML(token, name string, ch *CameraChannel, i
 	}
 	if strings.Contains(name, "1080p") && resName != "1080p" {
 		name = strings.Replace(name, "1080p", resName, 1)
+	}
+
+	videoCodec := resolveChannelVideoCodec(ch)
+	videoEncoding := "H264"
+	codecParamsBlock := fmt.Sprintf(`
+      <tt:H264>
+        <tt:GovLength>%d</tt:GovLength>
+        <tt:H264Profile>%s</tt:H264Profile>
+      </tt:H264>`, fps*3, h264Profile)
+	if videoCodec == videoCodecH265 {
+		videoEncoding = "H265"
+		// ONVIF Media v10 VideoEncoderConfiguration has no <tt:H265> sequence element;
+		// omitting the optional <tt:H264> block keeps <tt:Multicast> and <tt:SessionTimeout> schema-valid.
+		codecParamsBlock = ""
 	}
 
 	chIndex := 1
@@ -255,7 +342,7 @@ func (h *MediaHandler) formatProfileXML(token, name string, ch *CameraChannel, i
     <tt:VideoEncoderConfiguration token="%s">
       <tt:Name>%s</tt:Name>
       <tt:UseCount>1</tt:UseCount>
-      <tt:Encoding>H264</tt:Encoding>
+      <tt:Encoding>%s</tt:Encoding>
       <tt:Resolution>
         <tt:Width>%d</tt:Width>
         <tt:Height>%d</tt:Height>
@@ -265,11 +352,7 @@ func (h *MediaHandler) formatProfileXML(token, name string, ch *CameraChannel, i
         <tt:FrameRateLimit>%d</tt:FrameRateLimit>
         <tt:EncodingInterval>1</tt:EncodingInterval>
         <tt:BitrateLimit>%d</tt:BitrateLimit>
-      </tt:RateControl>
-      <tt:H264>
-        <tt:GovLength>%d</tt:GovLength>
-        <tt:H264Profile>%s</tt:H264Profile>
-      </tt:H264>
+      </tt:RateControl>%s
       <tt:Multicast>
         <tt:Address><tt:Type>IPv4</tt:Type><tt:IPv4Address>0.0.0.0</tt:IPv4Address></tt:Address>
         <tt:Port>0</tt:Port>
@@ -297,9 +380,9 @@ func (h *MediaHandler) formatProfileXML(token, name string, ch *CameraChannel, i
 		token, name,
 		chIndex, chIndex, chIndex, width, height,
 		chIndex, chIndex, chIndex,
-		encToken, encToken,
+		encToken, encToken, videoEncoding,
 		width, height, quality, fps, bitrate,
-		fps*3, h264Profile,
+		codecParamsBlock,
 		chIndex, chIndex, audioEncoding, sampleRate,
 		chIndex, chIndex, chIndex)
 
@@ -391,24 +474,8 @@ func (h *MediaHandler) getProfile(reqXML string) string {
 </trt:GetProfileResponse>`, NS_TRT, NS_TT, pXML)
 	}
 
-	var targetCh *CameraChannel
 	isMain := !strings.Contains(reqToken, "Sub")
-
-	for i := range channels {
-		ch := &channels[i]
-		if reqToken != "" && (reqToken == fmt.Sprintf("Profile_%s_Main", ch.Path) ||
-			reqToken == fmt.Sprintf("Profile_%s_Sub", ch.Path) ||
-			strings.Contains(reqToken, ch.Path)) {
-			targetCh = ch
-			break
-		} else if strings.Contains(reqXML, ch.Path) {
-			targetCh = ch
-			break
-		}
-	}
-	if targetCh == nil && len(channels) > 0 {
-		targetCh = &channels[0]
-	}
+	targetCh := h.resolveChannelForTokens(reqToken, "", reqXML)
 
 	token := fmt.Sprintf("Profile_%s_Main", targetCh.Path)
 	name := fmt.Sprintf("%s MainStream 1080p", targetCh.Name)
@@ -425,27 +492,11 @@ func (h *MediaHandler) getProfile(reqXML string) string {
 
 func (h *MediaHandler) getStreamUri(host string, reqXML string) string {
 	ip := extractHostIP(host)
-	channels := h.Channels()
-
 	reqToken := extractXMLTag(reqXML, "ProfileToken")
 
 	selectedPath := h.rtspPath
-	if len(channels) > 0 {
-		selectedPath = channels[0].Path
-	}
-
-	for _, ch := range channels {
-		if reqToken != "" {
-			if reqToken == fmt.Sprintf("Profile_%s_Main", ch.Path) ||
-				reqToken == fmt.Sprintf("Profile_%s_Sub", ch.Path) ||
-				strings.Contains(reqToken, ch.Path) {
-				selectedPath = ch.Path
-				break
-			}
-		} else if strings.Contains(reqXML, ch.Path) {
-			selectedPath = ch.Path
-			break
-		}
+	if ch := h.resolveChannelForTokens(reqToken, "", reqXML); ch != nil {
+		selectedPath = ch.Path
 	}
 
 	rtspURL := fmt.Sprintf("rtsp://%s:%d/%s", ip, h.rtspPort, selectedPath)
@@ -463,26 +514,11 @@ func (h *MediaHandler) getStreamUri(host string, reqXML string) string {
 
 func (h *MediaHandler) getSnapshotUri(host string, reqXML string) string {
 	ip := extractHostIP(host)
-	channels := h.Channels()
-
 	reqToken := extractXMLTag(reqXML, "ProfileToken")
-	selectedPath := h.rtspPath
-	if len(channels) > 0 {
-		selectedPath = channels[0].Path
-	}
 
-	for _, ch := range channels {
-		if reqToken != "" {
-			if reqToken == fmt.Sprintf("Profile_%s_Main", ch.Path) ||
-				reqToken == fmt.Sprintf("Profile_%s_Sub", ch.Path) ||
-				strings.Contains(reqToken, ch.Path) {
-				selectedPath = ch.Path
-				break
-			}
-		} else if strings.Contains(reqXML, ch.Path) {
-			selectedPath = ch.Path
-			break
-		}
+	selectedPath := h.rtspPath
+	if ch := h.resolveChannelForTokens(reqToken, "", reqXML); ch != nil {
+		selectedPath = ch.Path
 	}
 
 	snapshotURL := fmt.Sprintf("http://%s:%d/api/sdcard/events/latest/snapshot.jpg?camera=%s", ip, h.onvifPort, selectedPath)
@@ -498,22 +534,33 @@ func (h *MediaHandler) getSnapshotUri(host string, reqXML string) string {
 </trt:GetSnapshotUriResponse>`, NS_TRT, NS_TT, snapshotURL)
 }
 
-func (h *MediaHandler) getVideoEncoderConfigurationOptions() string {
+func (h *MediaHandler) getVideoEncoderConfigurationOptions(reqXML string) string {
+	profileToken := extractXMLTag(reqXML, "ProfileToken")
+	configToken := extractXMLTag(reqXML, "ConfigurationToken")
+	targetCh := h.resolveChannelForTokens(profileToken, configToken, reqXML)
+
+	codecTag := "H264"
+	profilesXML := `<tt:H264ProfilesSupported>High</tt:H264ProfilesSupported>
+      <tt:H264ProfilesSupported>Main</tt:H264ProfilesSupported>
+      <tt:H264ProfilesSupported>Baseline</tt:H264ProfilesSupported>`
+	if resolveChannelVideoCodec(targetCh) == videoCodecH265 {
+		codecTag = "H265"
+		profilesXML = `<tt:H265ProfilesSupported>Main</tt:H265ProfilesSupported>`
+	}
+
 	return fmt.Sprintf(`<trt:GetVideoEncoderConfigurationOptionsResponse xmlns:trt="%s" xmlns:tt="%s">
   <trt:Options>
     <tt:QualityRange><tt:Min>1</tt:Min><tt:Max>5</tt:Max></tt:QualityRange>
-    <tt:H264>
+    <tt:%s>
       <tt:ResolutionsAvailable><tt:Width>1920</tt:Width><tt:Height>1080</tt:Height></tt:ResolutionsAvailable>
       <tt:ResolutionsAvailable><tt:Width>1280</tt:Width><tt:Height>720</tt:Height></tt:ResolutionsAvailable>
       <tt:ResolutionsAvailable><tt:Width>640</tt:Width><tt:Height>360</tt:Height></tt:ResolutionsAvailable>
       <tt:GovLengthRange><tt:Min>15</tt:Min><tt:Max>60</tt:Max></tt:GovLengthRange>
       <tt:FrameRateRange><tt:Min>1</tt:Min><tt:Max>15</tt:Max></tt:FrameRateRange>
-      <tt:H264ProfilesSupported>High</tt:H264ProfilesSupported>
-      <tt:H264ProfilesSupported>Main</tt:H264ProfilesSupported>
-      <tt:H264ProfilesSupported>Baseline</tt:H264ProfilesSupported>
-    </tt:H264>
+      %s
+    </tt:%s>
   </trt:Options>
-</trt:GetVideoEncoderConfigurationOptionsResponse>`, NS_TRT, NS_TT)
+</trt:GetVideoEncoderConfigurationOptionsResponse>`, NS_TRT, NS_TT, codecTag, profilesXML, codecTag)
 }
 
 func (h *MediaHandler) setVideoEncoderConfiguration(reqXML string) string {
@@ -527,18 +574,7 @@ func (h *MediaHandler) setVideoEncoderConfiguration(reqXML string) string {
 	token := extractXMLAttr(reqXML, "Configuration", "token")
 	logger.Info("ONVIF", "🔄 Received SetVideoEncoderConfiguration -> applying %s (token: %s)", targetRes, token)
 
-	channels := h.Channels()
-	var targetCh *CameraChannel
-	for i := range channels {
-		ch := &channels[i]
-		if token != "" && (strings.Contains(token, ch.Path) || token == fmt.Sprintf("VideoEncoderConfig_%d", ch.Index)) {
-			targetCh = ch
-			break
-		}
-	}
-	if targetCh == nil && len(channels) > 0 {
-		targetCh = &channels[0]
-	}
+	targetCh := h.resolveChannelForTokens("", token, reqXML)
 
 	if targetCh != nil {
 		if targetCh.ChangeResFunc != nil {

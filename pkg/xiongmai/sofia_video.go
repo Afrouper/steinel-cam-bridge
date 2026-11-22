@@ -118,6 +118,25 @@ func (p *h264Packetizer) packetize(nalus [][]byte, writer VideoWriter) ([]*rtp.P
 	return p.enc.Encode(filtered)
 }
 
+// HEVC (RFC 7798) NAL unit types used across Sofia and RTSP video handling.
+const (
+	hevcNALUVPS               byte = 32
+	hevcNALUSPS               byte = 33
+	hevcNALUPPS               byte = 34
+	hevcNALUAggregationPacket byte = 48
+)
+
+// hevcNALUType extracts the 6-bit NAL unit type from the first byte of a 2-byte HEVC NAL header.
+func hevcNALUType(hdr byte) byte {
+	return (hdr >> 1) & 0x3F
+}
+
+// needsHEVCAggregationTemporalIDFix reports whether payload is an RFC 7798 Aggregation Packet
+// (NALU type 48) whose header violates Section 1.1.4/4.4.2 by carrying nuh_temporal_id_plus1 == 0.
+func needsHEVCAggregationTemporalIDFix(payload []byte) bool {
+	return len(payload) >= 2 && hevcNALUType(payload[0]) == hevcNALUAggregationPacket && payload[1]&0x07 == 0
+}
+
 type h265Packetizer struct {
 	enc *rtph265.Encoder
 }
@@ -134,19 +153,19 @@ func (p *h265Packetizer) packetize(nalus [][]byte, writer VideoWriter) ([]*rtp.P
 		if !hasValidHeader {
 			continue
 		}
-		hevcType := (nalu[0] >> 1) & 0x3F
+		hevcType := hevcNALUType(nalu[0])
 		switch {
-		case hevcType == 32:
+		case hevcType == hevcNALUVPS:
 			if vps == nil {
 				vps = nalu
 			}
 			filtered = append(filtered, nalu)
-		case hevcType == 33:
+		case hevcType == hevcNALUSPS:
 			if sps == nil {
 				sps = nalu
 			}
 			filtered = append(filtered, nalu)
-		case hevcType == 34:
+		case hevcType == hevcNALUPPS:
 			if pps == nil {
 				pps = nalu
 			}
@@ -175,8 +194,7 @@ func (p *h265Packetizer) packetize(nalus [][]byte, writer VideoWriter) ([]*rtp.P
 		// RFC 7798 Section 1.1.4 and Section 4.4.2 require nuh_temporal_id_plus1 (low 3 bits of byte 1)
 		// of an Aggregation Packet header (NALU type 48) to be at least 1. Ensure the header carries a
 		// valid temporal ID even when the underlying RTP encoder leaves those bits cleared.
-		isAggregationPacket := len(pkt.Payload) >= 2 && (pkt.Payload[0]>>1)&0x3F == 48
-		if isAggregationPacket && pkt.Payload[1]&0x07 == 0 {
+		if needsHEVCAggregationTemporalIDFix(pkt.Payload) {
 			pkt.Payload[1] |= 0x01
 		}
 	}
@@ -219,6 +237,18 @@ func scanAnnexBNALUs(data []byte, maxNALUs int, fn func(nal []byte) bool) {
 	}
 }
 
+// isHEVCLayerZeroHeader reports whether a 2-byte NAL header belongs to HEVC layer 0
+// (nuh_layer_id == 0 across bit 0 of byte 0 and the upper 5 bits of byte 1) with a
+// valid non-zero nuh_temporal_id_plus1 (lower 3 bits of byte 1, RFC 7798 Section 1.1.4).
+func isHEVCLayerZeroHeader(nal []byte) bool {
+	if len(nal) < 2 {
+		return false
+	}
+	layerIDZero := nal[0]&0x01 == 0 && (nal[1]&0xF8) == 0
+	temporalIDValid := (nal[1] & 0x07) != 0
+	return layerIDZero && temporalIDValid
+}
+
 // detectSofiaVideoCodec determines the codec of a Sofia I-frame. Annex-B NAL headers in the
 // access unit are authoritative (HEVC VPS/SPS/PPS/IRAP vs. H.264 SPS/PPS/IDR), skipping any
 // leading AUD/SEI units; the Xiongmai header codec byte is used as fallback.
@@ -233,10 +263,9 @@ func detectSofiaVideoCodec(codecByte byte, payload []byte) string {
 		if len(nal) < 2 || nal[0]&0x80 != 0 {
 			return false
 		}
-		hevcType := (nal[0] >> 1) & 0x3F
-		isHEVCLayerZero := nal[0]&0x01 == 0 && nal[1] == 0x01
-		isHEVCParam := hevcType >= 32 && hevcType <= 34
-		if isHEVCLayerZero && isHEVCParam {
+		hevcType := hevcNALUType(nal[0])
+		isHEVCParam := hevcType >= hevcNALUVPS && hevcType <= hevcNALUPPS
+		if isHEVCLayerZeroHeader(nal) && isHEVCParam {
 			detected = videoCodecH265
 			return true
 		}
@@ -256,10 +285,9 @@ func detectSofiaVideoCodec(codecByte byte, payload []byte) string {
 		if len(nal) < 2 || nal[0]&0x80 != 0 {
 			return false
 		}
-		hevcType := (nal[0] >> 1) & 0x3F
-		isHEVCLayerZero := nal[0]&0x01 == 0 && nal[1] == 0x01
+		hevcType := hevcNALUType(nal[0])
 		isHEVCIRAP := hevcType >= 16 && hevcType <= 21
-		if isHEVCLayerZero && isHEVCIRAP {
+		if isHEVCLayerZeroHeader(nal) && isHEVCIRAP {
 			detected = videoCodecH265
 			return true
 		}

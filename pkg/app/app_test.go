@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Afrouper/steinel-cam-bridge/pkg/config"
+	"github.com/Afrouper/steinel-cam-bridge/pkg/rtsp"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/storage"
 )
 
@@ -235,4 +236,62 @@ func TestBridgeManager_Reboot(t *testing.T) {
 	bm := NewBridgeManager()
 	// Offline / no driver: returns nil cleanly
 	assert.NoError(t, bm.Reboot())
+}
+
+func TestAppONVIFReflectsStreamVideoCodec(t *testing.T) {
+	is := assert.New(t)
+	must := require.New(t)
+
+	tmpDir := t.TempDir()
+	cfg := config.NewDefaultConfig()
+	cfg.NabtoConfig.CameraIP = "127.0.0.1"
+	cfg.NabtoConfig.KeyPath = filepath.Join(tmpDir, "client.key")
+	cfg.CameraType = "l620"
+	cfg.RTSPPort = 8588
+	cfg.ONVIFPort = 8038
+	cfg.CacheDir = filepath.Join(tmpDir, "recordings")
+
+	application, err := New(cfg, "test-codec-sync")
+	must.NoError(err)
+	must.Len(application.cameras, 1)
+
+	handler := application.onvifServer.HTTPHandler()
+	must.NotNil(handler)
+
+	postMedia := func(body string) string {
+		req := httptest.NewRequest(http.MethodPost, "/onvif/media_service", strings.NewReader(body))
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		must.Equal(http.StatusOK, rec.Code)
+		return rec.Body.String()
+	}
+
+	profilesReq := `<?xml version="1.0" encoding="utf-8"?><s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body><GetProfiles xmlns="http://www.onvif.org/ver10/media/wsdl"/></s:Body></s:Envelope>`
+	optionsReq := `<?xml version="1.0" encoding="utf-8"?><s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body><GetVideoEncoderConfigurationOptions xmlns="http://www.onvif.org/ver10/media/wsdl"/></s:Body></s:Envelope>`
+
+	// Default H.264 before any stream switch
+	is.Contains(postMedia(profilesReq), "<tt:Encoding>H264</tt:Encoding>")
+	is.Contains(postMedia(optionsReq), "<tt:H264>")
+
+	// Switch the RTSP stream to H.265 -> ONVIF profiles, options, and /api/cameras reflect it live
+	must.True(application.cameras[0].stream.SetVideoCodec(rtsp.VideoCodecH265))
+
+	h265Profiles := postMedia(profilesReq)
+	is.Contains(h265Profiles, "<tt:Encoding>H265</tt:Encoding>")
+	is.NotContains(h265Profiles, "<tt:H264>")
+
+	h265Options := postMedia(optionsReq)
+	is.Contains(h265Options, "<tt:H265>")
+	is.NotContains(h265Options, "<tt:H264>")
+
+	camReq := httptest.NewRequest(http.MethodGet, "/api/cameras", nil)
+	camRec := httptest.NewRecorder()
+	handler.ServeHTTP(camRec, camReq)
+	must.Equal(http.StatusOK, camRec.Code)
+	is.Contains(camRec.Body.String(), `"video_codec":"h265"`)
+
+	// Switch back to H.264 -> ONVIF returns to H.264 cleanly
+	must.True(application.cameras[0].stream.SetVideoCodec(rtsp.VideoCodecH264))
+	is.Contains(postMedia(profilesReq), "<tt:Encoding>H264</tt:Encoding>")
+	is.Contains(postMedia(optionsReq), "<tt:H264>")
 }

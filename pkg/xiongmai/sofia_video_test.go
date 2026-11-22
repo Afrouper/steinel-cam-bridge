@@ -202,6 +202,30 @@ func TestDetectSofiaVideoCodec(t *testing.T) {
 			expected:  videoCodecH265,
 		},
 		{
+			name:      "hevc vps with temporal_id_plus1 greater than 1",
+			codecByte: sofiaCodecH264,
+			payload:   []byte{0x00, 0x00, 0x00, 0x01, 0x40, 0x02, 0x0c, 0x01},
+			expected:  videoCodecH265,
+		},
+		{
+			name:      "hevc bare irap with temporal_id_plus1 max value 7",
+			codecByte: 0x00,
+			payload:   []byte{0x00, 0x00, 0x00, 0x01, 0x26, 0x07, 0xaf, 0x08},
+			expected:  videoCodecH265,
+		},
+		{
+			name:      "hevc vps with illegal temporal_id_plus1 zero falls back to codec byte",
+			codecByte: sofiaCodecH264,
+			payload:   []byte{0x00, 0x00, 0x00, 0x01, 0x40, 0x00, 0x0c, 0x01},
+			expected:  videoCodecH264,
+		},
+		{
+			name:      "hevc vps with non-zero layer id falls back to codec byte",
+			codecByte: sofiaCodecH264,
+			payload:   []byte{0x00, 0x00, 0x00, 0x01, 0x40, 0x09, 0x0c, 0x01},
+			expected:  videoCodecH264,
+		},
+		{
 			name:      "h264 sps nal header overrides h265 codec byte",
 			codecByte: sofiaCodecH265,
 			payload:   []byte{0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0x00, 0x1f},
