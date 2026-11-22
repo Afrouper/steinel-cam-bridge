@@ -2,6 +2,24 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.6.0-beta.2
+
+### 🚀 Highlights & Neuerungen
+
+- **Xiongmai H.265 (HEVC) Live-Streaming & Standby-Stabilität** (*@szoux*, #89):
+  - **Automatische H.265-Erkennung**: Erkennt H.265 (HEVC) zuverlässig am I-Frame auf dem nativen Sofia-Stream (Port 34567) sowie im RTSP-Fallback (Port 554) für XLED CAM 1 und L 620 CAM, auch wenn die Kamera in `Simplify.Encode` H.264 meldet.
+  - **Dynamische RTSP- & ONVIF-Umschaltung**: Schaltet den angekündigten RTSP-Videotrack und die ONVIF-Profile (`H264` $\leftrightarrow$ `H265`) dynamisch um (vollständig schema-konform nach ONVIF Media v10 WSDL).
+  - **Sofia-Framing & Chunks**: Korrigiert fälschlich verworfene Fortsetzungsblöcke mit Startbyte `{`, führt DVRIP-Resynchronisation bei verlorenen Paketgrenzen durch und behebt die RFC-7798 Temporal-ID in H.265-Aggregationspaketen (`nuh_temporal_id_plus1 != 0`).
+  - **Stabiler On-Demand-Standby**: Reassembly-Puffer wird beim 15s-Standby geleert, während Audio-Transcoder, Packetizer und monotone RTP-Zeitstempel erhalten bleiben; sauberes Keyframe-Gating (`AwaitNextKeyframe`) bei neuen Zuschauern.
+  - **Parameter-Härtung**: Defensives Klonen von `VPS`/`SPS`/`PPS` via `bytes.Clone(...)` und 2-Pass exact-first Token-Matching in ONVIF für fehlerfreies Multi-Kamera-Routing.
+- **L 625 Diagnose-Schnittstelle & Rohbefehle** (*@Grossmeister-T*, #88):
+  - Neuer optionaler Diagnose-Endpunkt `POST /api/debug/command` zur gezielten Fehleranalyse über den L 625 DataChannel (`debug_api: true`).
+  - Automatische Maskierung sensibler Anmeldedaten (WLAN-Passwörter) und Sicherheitswarnung bei fehlender Authentifizierung.
+
+### 🙏 Neue Mitwirkende
+
+- Ein herzliches Willkommen und vielen Dank an **@szoux** für die umfassende H.265-Implementierung und Fehlerbehebungen im Sofia-Streaming!
+
 ## 1.6.0-beta.1
 
 ### 🚀 Highlights & Neuerungen
