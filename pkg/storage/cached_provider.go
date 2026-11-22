@@ -185,8 +185,8 @@ func (p *CachedRecordingProvider) StreamVideo(ctx context.Context, id string, w 
 		return ErrStorageNotFound
 	}
 
-	// 1. Stream from cache if available
-	if p.cache != nil {
+	// 1. Stream from cache if available (unless on-demand audio muxing was requested via context)
+	if p.cache != nil && !IncludeAudioFromContext(ctx) {
 		if videoPath, ok := p.cache.GetVideoPath(id); ok {
 			if strings.Contains(videoPath, "..") {
 				return ErrStorageNotFound

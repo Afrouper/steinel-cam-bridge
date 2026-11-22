@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Afrouper/steinel-cam-bridge/pkg/logger"
@@ -32,17 +34,44 @@ type FrameExtractor interface {
 	IsAvailable() bool
 }
 
-// VideoMuxer defines the abstraction for container muxing (e.g. H.264 elementary streams to MP4).
+type includeAudioKey struct{}
+
+// WithIncludeAudio returns a derived context configured to include or omit
+// the audio track when downloading and muxing a camera recording.
+func WithIncludeAudio(ctx context.Context, include bool) context.Context {
+	return context.WithValue(ctx, includeAudioKey{}, include)
+}
+
+// IncludeAudioFromContext reports whether ctx requests audio track muxing (default false).
+func IncludeAudioFromContext(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	v, _ := ctx.Value(includeAudioKey{}).(bool)
+	return v
+}
+
+// MuxOptions configures container muxing of an elementary Annex-B video stream
+// and an optional raw 8 kHz G.711 A-law audio stream.
+// The zero value defaults to video-only H.264 with the stream's native framerate.
+type MuxOptions struct {
+	Codec     string
+	FPS       int
+	AudioPath string
+}
+
+// VideoMuxer defines the abstraction for remuxing elementary Annex-B video streams into MP4 containers.
 type VideoMuxer interface {
-	// MuxH264ToMP4 remuxes an elementary Annex-B H.264 stream into a standard MP4 container
-	// using -c:v copy (zero re-encoding) and -movflags +faststart for immediate web/HTTP streaming.
+	// MuxToMP4 remuxes an elementary Annex-B H.264 or H.265/HEVC stream into an MP4 container without re-encoding.
+	MuxToMP4(ctx context.Context, inputPath, mp4Path string, opts MuxOptions) error
+
+	// MuxH264ToMP4 remuxes an elementary Annex-B H.264 stream into an MP4 container without re-encoding.
 	MuxH264ToMP4(ctx context.Context, h264Path, mp4Path string) error
 
 	// IsAvailable returns whether the muxer engine is available and functional.
 	IsAvailable() bool
 }
 
-// Verify interface implementations at compile time
 var (
 	_ FrameExtractor = (*FFmpegExtractor)(nil)
 	_ VideoMuxer     = (*FFmpegExtractor)(nil)
@@ -179,14 +208,19 @@ func (e *FFmpegExtractor) runExtraction(ctx context.Context, videoPath string, o
 	return nil
 }
 
-// MuxH264ToMP4 remuxes an elementary Annex-B H.264 stream into a standard MP4 container
-// using -c:v copy (zero re-encoding) and -movflags +faststart for immediate web/HTTP streaming.
+// MuxH264ToMP4 remuxes an elementary Annex-B H.264 stream into an MP4 container.
 func (e *FFmpegExtractor) MuxH264ToMP4(ctx context.Context, h264Path, mp4Path string) error {
+	return e.MuxToMP4(ctx, h264Path, mp4Path, MuxOptions{Codec: "h264"})
+}
+
+// MuxToMP4 remuxes an elementary Annex-B H.264 or H.265/HEVC stream into an MP4 container
+// using -c:v copy and -movflags +faststart. HEVC inputs are tagged with hvc1.
+func (e *FFmpegExtractor) MuxToMP4(ctx context.Context, inputPath, mp4Path string, opts MuxOptions) error {
 	if !e.IsAvailable() {
 		return ErrExtractorUnavailable
 	}
 
-	fi, err := os.Stat(h264Path)
+	fi, err := os.Stat(inputPath)
 	if err != nil || fi.Size() == 0 {
 		return ErrInvalidVideoFile
 	}
@@ -199,37 +233,74 @@ func (e *FFmpegExtractor) MuxH264ToMP4(ctx context.Context, h264Path, mp4Path st
 	muxCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(muxCtx, e.binaryPath,
-		"-y",
-		"-f", "h264",
-		"-i", h264Path,
-		"-c:v", "copy",
-		"-movflags", "+faststart",
-		mp4Path,
-	)
+	inputFormat := "h264"
+	isHEVC := false
+	switch strings.ToLower(strings.TrimSpace(opts.Codec)) {
+	case "h265", "hevc":
+		inputFormat = "hevc"
+		isHEVC = true
+	}
 
+	hasAudio := false
+	if opts.AudioPath != "" {
+		if afi, aErr := os.Stat(opts.AudioPath); aErr == nil && afi.Size() > 0 {
+			hasAudio = true
+		}
+	}
+
+	buildArgs := func(withAudio bool) []string {
+		args := []string{"-y"}
+		if opts.FPS > 0 && opts.FPS <= 120 {
+			args = append(args, "-r", strconv.Itoa(opts.FPS))
+		}
+		args = append(args, "-f", inputFormat, "-i", inputPath)
+		if withAudio {
+			args = append(args, "-f", "alaw", "-ar", "8000", "-ac", "1", "-i", opts.AudioPath)
+		}
+		args = append(args, "-c:v", "copy")
+		if isHEVC {
+			args = append(args, "-tag:v", "hvc1")
+		}
+		if withAudio {
+			args = append(args, "-c:a", "aac", "-b:a", "64k")
+		}
+		return append(args, "-movflags", "+faststart", mp4Path)
+	}
+
+	cmd := exec.CommandContext(muxCtx, e.binaryPath, buildArgs(hasAudio)...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("ffmpeg muxing failed: %w, stderr: %s", err, stderr.String())
+		if hasAudio {
+			logger.Warn("Extractor", "⚠️ Audio+video muxing failed (%v), retrying video-only remux", err)
+			stderr.Reset()
+			cmd = exec.CommandContext(muxCtx, e.binaryPath, buildArgs(false)...)
+			cmd.Stderr = &stderr
+			if retryErr := cmd.Run(); retryErr != nil {
+				return fmt.Errorf("ffmpeg muxing (%s) failed: %w, stderr: %s", inputFormat, retryErr, stderr.String())
+			}
+		} else {
+			return fmt.Errorf("ffmpeg muxing (%s) failed: %w, stderr: %s", inputFormat, err, stderr.String())
+		}
 	}
 
 	stat, err := os.Stat(mp4Path)
 	if err != nil || stat.Size() == 0 {
-		return fmt.Errorf("ffmpeg produced empty MP4 file")
+		return fmt.Errorf("ffmpeg produced empty mp4 file")
 	}
 
-	logger.Trace("Extractor", "🎬 Remuxed H.264 to MP4: %s (Size: %d bytes)", filepath.Base(mp4Path), stat.Size())
+	logger.Trace("Extractor", "🎬 Remuxed %s to MP4: %s (FPS: %d, Size: %d bytes)", inputFormat, filepath.Base(mp4Path), opts.FPS, stat.Size())
 	return nil
 }
 
 // MockExtractor is an in-memory mock implementation of FrameExtractor and VideoMuxer for unit testing.
 type MockExtractor struct {
-	Available  bool
-	ExtractErr error
-	MuxErr     error
-	DummyData  []byte
+	Available   bool
+	ExtractErr  error
+	MuxErr      error
+	DummyData   []byte
+	LastMuxOpts MuxOptions
 }
 
 // NewMockExtractor returns a ready-to-use MockExtractor generating valid minimal JPEGs.
@@ -257,6 +328,11 @@ func (m *MockExtractor) ExtractFrame(ctx context.Context, videoPath string, offs
 
 // MuxH264ToMP4 implements VideoMuxer for MockExtractor.
 func (m *MockExtractor) MuxH264ToMP4(ctx context.Context, h264Path, mp4Path string) error {
+	return m.MuxToMP4(ctx, h264Path, mp4Path, MuxOptions{Codec: "h264"})
+}
+
+// MuxToMP4 implements VideoMuxer for MockExtractor.
+func (m *MockExtractor) MuxToMP4(ctx context.Context, inputPath, mp4Path string, opts MuxOptions) error {
 	if !m.Available {
 		return ErrExtractorUnavailable
 	}
@@ -264,10 +340,12 @@ func (m *MockExtractor) MuxH264ToMP4(ctx context.Context, h264Path, mp4Path stri
 		return m.MuxErr
 	}
 
+	m.LastMuxOpts = opts
+
 	if err := os.MkdirAll(filepath.Dir(mp4Path), 0755); err != nil {
 		return err
 	}
-	data, err := os.ReadFile(h264Path)
+	data, err := os.ReadFile(inputPath)
 	if err != nil {
 		return err
 	}

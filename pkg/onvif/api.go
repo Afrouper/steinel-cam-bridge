@@ -246,23 +246,33 @@ func (s *Server) handleAPISDCardItem(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(buf.Bytes())
 
 	case "video.mp4", "download.mp4", "video", "stream.mp4":
-		// If cached on local disk, serve via http.ServeFile for instant seeking and Range request (HTTP 206) support
-		if fileProvider, ok := provider.(interface {
-			GetCachedVideoPath(id string) (string, bool)
-		}); ok {
-			if path, exists := fileProvider.GetCachedVideoPath(id); exists {
-				if strings.Contains(path, "..") {
-					http.Error(w, "Invalid file path", http.StatusBadRequest)
+		audioParam := strings.TrimSpace(r.URL.Query().Get("audio"))
+		includeAudio := audioParam == "1" || strings.EqualFold(audioParam, "true")
+
+		// If cached on local disk and on-demand audio muxing was not requested, serve via http.ServeFile for Range request (HTTP 206) support
+		if !includeAudio {
+			if fileProvider, ok := provider.(interface {
+				GetCachedVideoPath(id string) (string, bool)
+			}); ok {
+				if path, exists := fileProvider.GetCachedVideoPath(id); exists {
+					if strings.Contains(path, "..") {
+						http.Error(w, "Invalid file path", http.StatusBadRequest)
+						return
+					}
+					w.Header().Set("Content-Type", "video/mp4")
+					w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", fmt.Sprintf("event_%s.mp4", id)))
+					http.ServeFile(w, r, path)
 					return
 				}
-				w.Header().Set("Content-Type", "video/mp4")
-				w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", fmt.Sprintf("event_%s.mp4", id)))
-				http.ServeFile(w, r, path)
-				return
 			}
 		}
 
-		err := provider.StreamVideo(r.Context(), id, w, func(name string, size int64) {
+		reqCtx := r.Context()
+		if includeAudio {
+			reqCtx = storage.WithIncludeAudio(reqCtx, true)
+		}
+
+		err := provider.StreamVideo(reqCtx, id, w, func(name string, size int64) {
 			if name == "" {
 				name = fmt.Sprintf("event_%s.mp4", id)
 			}

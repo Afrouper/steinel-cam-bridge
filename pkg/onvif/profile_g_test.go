@@ -15,7 +15,8 @@ import (
 )
 
 type testRecordingProvider struct {
-	items []storage.RecordingItem
+	items            []storage.RecordingItem
+	lastIncludeAudio bool
 }
 
 func (m *testRecordingProvider) ListRecordings(ctx context.Context, start, end time.Time, page, limit int, eventType string) (*storage.RecordingListResponse, error) {
@@ -41,6 +42,7 @@ func (m *testRecordingProvider) StreamThumbnail(ctx context.Context, id string, 
 }
 
 func (m *testRecordingProvider) StreamVideo(ctx context.Context, id string, w io.Writer, onStart func(name string, size int64)) error {
+	m.lastIncludeAudio = storage.IncludeAudioFromContext(ctx)
 	if onStart != nil {
 		onStart("event_test.mp4", 1024)
 	}
@@ -134,7 +136,7 @@ func TestProfileGServicesAndREST(t *testing.T) {
 	assert.Equal(t, "image/jpeg", wThumb.Header().Get("Content-Type"))
 	assert.Equal(t, "fake-jpeg-data", wThumb.Body.String())
 
-	// 9. Test REST API: GET /api/sdcard/events/1724528700/video.mp4
+	// 9. Test REST API: GET /api/sdcard/events/1724528700/video.mp4 (default: video-only)
 	reqVid := httptest.NewRequest(http.MethodGet, "/api/sdcard/events/1724528700/video.mp4", nil)
 	wVid := httptest.NewRecorder()
 	srv.handleAPISDCardItem(wVid, reqVid)
@@ -142,6 +144,14 @@ func TestProfileGServicesAndREST(t *testing.T) {
 	assert.Equal(t, "video/mp4", wVid.Header().Get("Content-Type"))
 	assert.Contains(t, wVid.Header().Get("Content-Disposition"), "event_test.mp4")
 	assert.Equal(t, "fake-mp4-video-data", wVid.Body.String())
+	assert.False(t, mockProv.lastIncludeAudio)
+
+	// 9b. Test REST API: GET /api/sdcard/events/1724528700/video.mp4?audio=1 (on-demand audio)
+	reqVidAudio := httptest.NewRequest(http.MethodGet, "/api/sdcard/events/1724528700/video.mp4?audio=1", nil)
+	wVidAudio := httptest.NewRecorder()
+	srv.handleAPISDCardItem(wVidAudio, reqVidAudio)
+	assert.Equal(t, http.StatusOK, wVidAudio.Code)
+	assert.True(t, mockProv.lastIncludeAudio)
 
 	// 10. Test SOAP routing in handleSOAP
 	soapReq := httptest.NewRequest(http.MethodPost, "/onvif/search_service", strings.NewReader(`<FindRecordings xmlns="http://www.onvif.org/ver10/search/wsdl"/>`))
