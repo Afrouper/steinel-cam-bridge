@@ -186,13 +186,11 @@ func (s *Server) SetChannels(channels []CameraChannel) {
 	}
 }
 
-// Channels returns a copy of all registered camera channels.
+// Channels returns a copy of all registered camera channels with resolved live video codecs.
 func (s *Server) Channels() []CameraChannel {
 	s.channelsMu.RLock()
 	defer s.channelsMu.RUnlock()
-	res := make([]CameraChannel, len(s.channels))
-	copy(res, s.channels)
-	return res
+	return cloneChannelsWithCodec(s.channels)
 }
 
 // RecordingProvider returns the primary RecordingProvider resolved for ONVIF search and default REST queries.

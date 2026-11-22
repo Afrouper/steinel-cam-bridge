@@ -45,7 +45,7 @@ an der Hardware.
     (PCMU / G.711u 8000 Hz).
 
 - **📹 Verbesserter Steinel L 620 CAM Support (Natives Sofia Video-Streaming)**:
-  - **Direktes H.264-Streaming über Port 34567**: Empfang des Videostroms direkt über das native Xiongmai Sofia/NetIP-Protokoll (`OPMonitor`).
+  - **Direktes H.264/H.265-Streaming über Port 34567**: Empfängt den Videostrom direkt über das native Xiongmai Sofia/NetIP-Protokoll (`OPMonitor`). Die Bridge fordert beim Verbinden nach Möglichkeit H.264 an, erkennt aber automatisch am I-Frame (und im RTSP-Fallback am SDP), wenn eine Kamera oder Firmware trotzdem H.265 (HEVC) liefert, und schaltet RTSP-Ausgang und ONVIF-Profile passend um.
   - **Kein RTSP-Port 554 erforderlich**: Vollständig unabhängig vom internen RTSP-Port der Kamera. Funktioniert zuverlässig mit allen Firmware-Versionen (inkl. 2019er `V4.03.R12`), bei denen Port 554 werksseitig geschlossen ist.
   - **On-Demand-Streaming**: Das Video-Streaming von der Kamera startet nur bei aktiven RTSP-/ONVIF-Zuschauern und pausiert nach 15 Sekunden Leerlauf automatisch (`OPMonitor Stop`, 0 Pakete/s). Lichtsteuerung, Dämmerungssensor und PIR-Telemetrie bleiben durchgehend 24/7 aktiv.
   - **Zwei-Wege-Audio (Gegensprechen)**: Automatische Audio-Transkodierung von PCMU (µ-law) zu PCMA (A-law) für den internen Lautsprecher der L 620 sowie dynamische Audio-Aushandlung (`MsgTalkClaimV2Req`).

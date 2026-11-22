@@ -68,7 +68,9 @@ type CameraChannel struct {
 	Name              string                           `json:"name"`  // Friendly name, e.g. "Einfahrt"
 	Path              string                           `json:"path"`  // RTSP path slug, e.g. "einfahrt"
 	AudioCodec        string                           `json:"audio_codec"`
+	VideoCodec        string                           `json:"video_codec,omitempty"` // Active or static video codec ("h264" or "h265")
 	Resolution        string                           `json:"resolution"`
+	VideoCodecFunc    func() string                    `json:"-"` // Optional live video codec getter (e.g. rtsp.Stream.VideoCodec)
 	ChangeResFunc     func(res string) error           `json:"-"`
 	SetLampFunc       func(mode string) error          `json:"-"`
 	SetSirenFunc      func(on bool) error              `json:"-"`

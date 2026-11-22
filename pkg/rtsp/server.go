@@ -597,6 +597,29 @@ func (s *Server) WriteAudioPacket(pkt *rtp.Packet) {
 	}
 }
 
+// VideoCodec returns the video codec announced by the primary stream ("h264" or "h265").
+func (s *Server) VideoCodec() string {
+	if s.primaryStream != nil {
+		return s.primaryStream.VideoCodec()
+	}
+	return VideoCodecH264
+}
+
+// SetVideoCodec switches the primary stream's video track between H.264 and H.265.
+func (s *Server) SetVideoCodec(codec string) bool {
+	if s.primaryStream != nil {
+		return s.primaryStream.SetVideoCodec(codec)
+	}
+	return false
+}
+
+// SetH265Parameters updates the VPS, SPS and PPS parameter sets on the primary stream.
+func (s *Server) SetH265Parameters(vps, sps, pps []byte) {
+	if s.primaryStream != nil {
+		s.primaryStream.SetH265Parameters(vps, sps, pps)
+	}
+}
+
 // SetH264Parameters updates the SPS and PPS parameter sets on the primary stream.
 func (s *Server) SetH264Parameters(sps, pps []byte) {
 	if s.primaryStream != nil {

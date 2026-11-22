@@ -3,12 +3,14 @@ package onvif
 import (
 	"bytes"
 	"context"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -943,4 +945,185 @@ func TestMediaHandler_AudioNoneRemovesAudioBlocks(t *testing.T) {
 			assert.Equal(t, strings.Count(resp, "<tt:VideoEncoderConfiguration"), strings.Count(resp, "</tt:VideoEncoderConfiguration>"))
 		}
 	}
+}
+
+func assertValidXML(t *testing.T, payload string) {
+	t.Helper()
+	var sink any
+	require.NoError(t, xml.Unmarshal([]byte(payload), &sink), "expected well-formed XML: %s", payload)
+}
+
+func TestMediaHandler_DynamicVideoCodec(t *testing.T) {
+	t.Parallel()
+
+	reqProfiles := `<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body><trt:GetProfiles xmlns:trt="http://www.onvif.org/ver10/media/wsdl"/></s:Body></s:Envelope>`
+	reqProfileMain := `<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body><trt:GetProfile xmlns:trt="http://www.onvif.org/ver10/media/wsdl"><trt:ProfileToken>Profile_Main</trt:ProfileToken></trt:GetProfile></s:Body></s:Envelope>`
+	reqOptions := `<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body><trt:GetVideoEncoderConfigurationOptions xmlns:trt="http://www.onvif.org/ver10/media/wsdl"><trt:ProfileToken>Profile_Main</trt:ProfileToken></trt:GetVideoEncoderConfigurationOptions></s:Body></s:Envelope>`
+
+	t.Run("switches dynamically via VideoCodecFunc without reconfiguring handler", func(t *testing.T) {
+		t.Parallel()
+		is := assert.New(t)
+		must := require.New(t)
+
+		var activeCodec atomic.Value
+		activeCodec.Store("h264")
+
+		mh := NewMediaHandler(8554, "steinel", "aac", 8000, nil, nil)
+		mh.SetChannels([]CameraChannel{
+			{
+				Index:      1,
+				Name:       "Einfahrt",
+				Path:       "steinel",
+				AudioCodec: "aac",
+				VideoCodecFunc: func() string {
+					return activeCodec.Load().(string)
+				},
+			},
+		})
+
+		// Initially H.264
+		profiles, err := mh.Handle("GetProfiles", reqProfiles, "192.168.1.50:8000")
+		must.NoError(err)
+		assertValidXML(t, profiles)
+		is.Contains(profiles, "<tt:Encoding>H264</tt:Encoding>")
+		is.Contains(profiles, "<tt:H264>")
+		is.NotContains(profiles, "<tt:Encoding>H265</tt:Encoding>")
+
+		opts, err := mh.Handle("GetVideoEncoderConfigurationOptions", reqOptions, "192.168.1.50:8000")
+		must.NoError(err)
+		assertValidXML(t, opts)
+		is.Contains(opts, "<tt:H264>")
+		is.NotContains(opts, "<tt:H265>")
+
+		// Live switch to H.265
+		activeCodec.Store("h265")
+
+		profiles, err = mh.Handle("GetProfiles", reqProfiles, "192.168.1.50:8000")
+		must.NoError(err)
+		assertValidXML(t, profiles)
+		is.Contains(profiles, "<tt:Encoding>H265</tt:Encoding>")
+		is.NotContains(profiles, "<tt:Encoding>H264</tt:Encoding>")
+		is.NotContains(profiles, "<tt:H264>")
+		is.Contains(profiles, "<tt:Multicast>")
+
+		single, err := mh.Handle("GetProfile", reqProfileMain, "192.168.1.50:8000")
+		must.NoError(err)
+		assertValidXML(t, single)
+		is.Contains(single, "<tt:Encoding>H265</tt:Encoding>")
+		is.NotContains(single, "<tt:H264>")
+
+		opts, err = mh.Handle("GetVideoEncoderConfigurationOptions", reqOptions, "192.168.1.50:8000")
+		must.NoError(err)
+		assertValidXML(t, opts)
+		is.Contains(opts, "<tt:H265>")
+		is.Contains(opts, "<tt:H265ProfilesSupported>Main</tt:H265ProfilesSupported>")
+		is.NotContains(opts, "<tt:H264>")
+	})
+
+	t.Run("multi-camera channels report independent codecs including prefix-similar paths", func(t *testing.T) {
+		t.Parallel()
+		is := assert.New(t)
+		must := require.New(t)
+
+		mh := NewMediaHandler(8554, "cam", "aac", 8000, nil, nil)
+		mh.SetChannels([]CameraChannel{
+			{
+				Index:      1,
+				Name:       "Einfahrt",
+				Path:       "cam",
+				AudioCodec: "aac",
+				VideoCodecFunc: func() string {
+					return "h264"
+				},
+			},
+			{
+				Index:      2,
+				Name:       "Garten",
+				Path:       "cam2",
+				AudioCodec: "aac",
+				VideoCodecFunc: func() string {
+					return "hevc"
+				},
+			},
+		})
+
+		profiles, err := mh.Handle("GetProfiles", reqProfiles, "192.168.1.50:8000")
+		must.NoError(err)
+		assertValidXML(t, profiles)
+		is.Equal(2, strings.Count(profiles, "<tt:Encoding>H264</tt:Encoding>"))
+		is.Equal(2, strings.Count(profiles, "<tt:Encoding>H265</tt:Encoding>"))
+
+		// Verify Channels() reports resolved live VideoCodec as well.
+		chs := mh.Channels()
+		must.Len(chs, 2)
+		is.Equal("h264", chs[0].VideoCodec)
+		is.Equal("h265", chs[1].VideoCodec)
+
+		// Verify GetProfile, GetStreamUri, and GetSnapshotUri resolve Profile_cam2_Main without prefix collision with "cam".
+		profileCam2Req := `<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body><trt:GetProfile xmlns:trt="http://www.onvif.org/ver10/media/wsdl"><trt:ProfileToken>Profile_cam2_Main</trt:ProfileToken></trt:GetProfile></s:Body></s:Envelope>`
+		profileCam2, err := mh.Handle("GetProfile", profileCam2Req, "192.168.1.50:8000")
+		must.NoError(err)
+		assertValidXML(t, profileCam2)
+		is.Contains(profileCam2, `token="Profile_cam2_Main"`)
+		is.Contains(profileCam2, "Garten MainStream")
+		is.Contains(profileCam2, "<tt:Encoding>H265</tt:Encoding>")
+
+		streamURICam2Req := `<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body><trt:GetStreamUri xmlns:trt="http://www.onvif.org/ver10/media/wsdl"><trt:ProfileToken>Profile_cam2_Main</trt:ProfileToken></trt:GetStreamUri></s:Body></s:Envelope>`
+		streamURICam2, err := mh.Handle("GetStreamUri", streamURICam2Req, "192.168.1.50:8000")
+		must.NoError(err)
+		assertValidXML(t, streamURICam2)
+		is.Contains(streamURICam2, "<tt:Uri>rtsp://192.168.1.50:8554/cam2</tt:Uri>")
+
+		snapURICam2Req := `<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body><trt:GetSnapshotUri xmlns:trt="http://www.onvif.org/ver10/media/wsdl"><trt:ProfileToken>Profile_cam2_Main</trt:ProfileToken></trt:GetSnapshotUri></s:Body></s:Envelope>`
+		snapURICam2, err := mh.Handle("GetSnapshotUri", snapURICam2Req, "192.168.1.50:8000")
+		must.NoError(err)
+		assertValidXML(t, snapURICam2)
+		is.Contains(snapURICam2, "camera=cam2</tt:Uri>")
+
+		optsTests := []struct {
+			name        string
+			reqXML      string
+			wantBlock   string
+			forbidBlock string
+		}{
+			{
+				name:        "profile token cam selects h264",
+				reqXML:      `<trt:GetVideoEncoderConfigurationOptions><trt:ProfileToken>Profile_cam_Main</trt:ProfileToken></trt:GetVideoEncoderConfigurationOptions>`,
+				wantBlock:   "<tt:H264>",
+				forbidBlock: "<tt:H265>",
+			},
+			{
+				name:        "profile token cam2 selects h265 despite cam prefix",
+				reqXML:      `<trt:GetVideoEncoderConfigurationOptions><trt:ProfileToken>Profile_cam2_Main</trt:ProfileToken></trt:GetVideoEncoderConfigurationOptions>`,
+				wantBlock:   "<tt:H265>",
+				forbidBlock: "<tt:H264>",
+			},
+			{
+				name:        "config token cam2 selects h265",
+				reqXML:      `<trt:GetVideoEncoderConfigurationOptions><trt:ConfigurationToken>VideoEncoderConfig_cam2_Main</trt:ConfigurationToken></trt:GetVideoEncoderConfigurationOptions>`,
+				wantBlock:   "<tt:H265>",
+				forbidBlock: "<tt:H264>",
+			},
+			{
+				name:        "config token VideoEncoderConfig_Main falls back to primary h264",
+				reqXML:      `<trt:GetVideoEncoderConfigurationOptions><trt:ConfigurationToken>VideoEncoderConfig_Main</trt:ConfigurationToken></trt:GetVideoEncoderConfigurationOptions>`,
+				wantBlock:   "<tt:H264>",
+				forbidBlock: "<tt:H265>",
+			},
+		}
+
+		for _, tt := range optsTests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				subIs := assert.New(t)
+				subMust := require.New(t)
+
+				resp, err := mh.Handle("GetVideoEncoderConfigurationOptions", tt.reqXML, "192.168.1.50:8000")
+				subMust.NoError(err)
+				assertValidXML(t, resp)
+				subIs.Contains(resp, tt.wantBlock)
+				subIs.NotContains(resp, tt.forbidBlock)
+			})
+		}
+	})
 }

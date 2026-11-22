@@ -810,7 +810,16 @@ func (d *Driver) RequestKeyframe() {
 	ctx := d.ctx
 	d.mu.Unlock()
 
-	if !forceRTSP && d.sofiaStream != nil && !d.sofiaStream.IsRunning() && d.client != nil && d.client.IsLoggedIn() && ctx != nil {
+	if forceRTSP || d.sofiaStream == nil {
+		return
+	}
+	if d.sofiaStream.IsRunning() {
+		if d.rtspServer == nil || d.rtspServer.ActiveClients() <= 1 {
+			d.sofiaStream.AwaitNextKeyframe()
+		}
+		return
+	}
+	if d.client != nil && d.client.IsLoggedIn() && ctx != nil {
 		go func() {
 			_ = d.startSofiaStream(ctx)
 		}()
