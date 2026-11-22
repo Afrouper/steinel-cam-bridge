@@ -2,8 +2,6 @@ package driver
 
 import (
 	"context"
-	"fmt"
-	"strings"
 	"time"
 
 	"github.com/pion/rtp"
@@ -81,11 +79,9 @@ func (d *L620Driver) RequestKeyframe() {
 	d.xmDriver.RequestKeyframe()
 }
 
-// SetLampState switches the primary lamp on or off.
+// SetLampState switches the primary lamp mode ("on"/"dauerlicht", "off"/"auto"/"sensor", or "aus").
 func (d *L620Driver) SetLampState(mode string) error {
-	modeLower := strings.ToLower(mode)
-	on := modeLower == "on" || modeLower == "1" || modeLower == "dauerlicht"
-	return d.xmDriver.SetLamp(on)
+	return d.xmDriver.SetLampMode(mode)
 }
 
 // SetHighlight sets the primary light dimming level (10-100%).
@@ -105,19 +101,7 @@ func (d *L620Driver) SetLowlight(percent int) error {
 
 // SetLowlightTime sets the nightlight duration (hours 0-12, or legacy minutes/seconds).
 func (d *L620Driver) SetLowlightTime(timeVal int) error {
-	hours := timeVal
-	if timeVal > 720 { // seconds (e.g. 7200, 14400, 43200)
-		hours = (timeVal + 1800) / 3600
-	} else if timeVal > 12 { // minutes (e.g. 120, 240, 1440)
-		hours = (timeVal + 30) / 60
-	}
-	if hours <= 0 {
-		return d.xmDriver.SetNightlightDuration("off")
-	}
-	if hours >= 12 {
-		return d.xmDriver.SetNightlightDuration("all_night")
-	}
-	return d.xmDriver.SetNightlightDuration(fmt.Sprintf("%dh", hours))
+	return d.xmDriver.SetLowlightTime(timeVal)
 }
 
 // SetPIRSensitivity sets the motion detector sensitivity (mapped to 3m, 6m, 10m).
@@ -138,9 +122,34 @@ func (d *L620Driver) SetLuxThreshold(lux int) error {
 	return d.xmDriver.SetTwilight(lux)
 }
 
-// SetSiren is a no-op for L 620 CAM as the hardware has no built-in siren.
+// SetSiren enables or disables the camera's motion alarm voice/buzzer output.
 func (d *L620Driver) SetSiren(on bool) error {
-	return nil
+	return d.xmDriver.SetSiren(on)
+}
+
+// SetSpeakerVolume sets the volume of the camera's speaker (0-100).
+func (d *L620Driver) SetSpeakerVolume(percent int) error {
+	return d.xmDriver.SetSpeakerVolume(percent)
+}
+
+// SetTimestampPosition switches the timestamp overlay off (0) or moves it to a corner (1-4).
+func (d *L620Driver) SetTimestampPosition(position int) error {
+	return d.xmDriver.SetTimestampPosition(position)
+}
+
+// SetDetectMode enables ("ai") or disables ("off") camera-side motion detection.
+func (d *L620Driver) SetDetectMode(mode string) error {
+	return d.xmDriver.SetDetectMode(mode)
+}
+
+// SetRecordMode chooses what makes the camera record to its SD card (2, 3 or 4).
+func (d *L620Driver) SetRecordMode(mode int) error {
+	return d.xmDriver.SetRecordMode(mode)
+}
+
+// Reboot triggers a controlled camera reboot.
+func (d *L620Driver) Reboot() error {
+	return d.xmDriver.Reboot()
 }
 
 // SetSystemDateAndTime synchronizes the system clock on the Xiongmai L 620 camera.

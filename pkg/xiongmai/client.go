@@ -22,32 +22,38 @@ import (
 
 // Client manages the TCP control connection to a Xiongmai/Steinel L 620 CAM on port 34567.
 type Client struct {
-	addr              string
-	user              string
-	password          string
-	effectivePassword string
-	communicateKey    []byte
-	dataEncryptionAES bool
-	notEncryptMsgIDs  map[uint16]bool
-	conn              net.Conn
-	sessionID         uint32
-	sequence          uint32
-	mu                sync.Mutex
-	isLoggedIn        bool
-	serialTransActive bool
-	lastMCUConfig     *MCUConfig
-	telemetryBuf      string
-	videoFPS          int
-	videoResolution   string
-	videoCompression  string
-	extraCompression  string
-	extraFPS          int
-	extraResolution   string
-	onTelemetry       func(*MCUConfig)
-	onAlarm           func(event string, isStart bool)
-	closeChan         chan struct{}
-	closed            atomic.Bool
+	addr                string
+	user                string
+	password            string
+	effectivePassword   string
+	communicateKey      []byte
+	dataEncryptionAES   bool
+	notEncryptMsgIDs    map[uint16]bool
+	conn                net.Conn
+	sessionID           uint32
+	sequence            uint32
+	mu                  sync.Mutex
+	isLoggedIn          bool
+	serialTransActive   bool
+	lastMCUConfig       *MCUConfig
+	telemetryBuf        string
+	videoFPS            int
+	videoResolution     string
+	videoCompression    string
+	extraCompression    string
+	extraFPS            int
+	extraResolution     string
+	onTelemetry         func(*MCUConfig)
+	onAlarm             func(event string, isStart bool)
+	mcuTelemetryTimeout time.Duration
+	closeChan           chan struct{}
+	closed              atomic.Bool
 }
+
+const (
+	defaultMCUTelemetryTimeout = 600 * time.Millisecond
+	keepAliveTelemetryTimeout  = 150 * time.Millisecond
+)
 
 // defaultNotEncryptMsgIDs lists messages exempted from payload encryption
 // according to Xiongmai / JFTech NetIP specification (CProtocolNetIP).
@@ -139,11 +145,15 @@ func (c *Client) SetOnAlarm(fn func(event string, isStart bool)) {
 	c.onAlarm = fn
 }
 
-// GetLastMCUConfig returns the most recently received MCU configuration frame.
+// GetLastMCUConfig returns a defensive copy of the most recently received MCU configuration frame.
 func (c *Client) GetLastMCUConfig() *MCUConfig {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.lastMCUConfig
+	if c.lastMCUConfig == nil {
+		return nil
+	}
+	cp := *c.lastMCUConfig
+	return &cp
 }
 
 // Connect dials the camera and performs the Sofia login handshake.
@@ -158,16 +168,16 @@ func (c *Client) Connect(ctx context.Context) error {
 		return fmt.Errorf("failed to connect to camera on %s: %w", c.addr, err)
 	}
 	c.conn = conn
+	c.isLoggedIn = false
+	c.serialTransActive = false
+	c.telemetryBuf = ""
 	c.closed.Store(false)
 	c.closeChan = make(chan struct{})
 	logger.Trace("Xiongmai", "🔌 TCP socket connected to %s, starting login handshake", c.addr)
 
 	// Step 1: Login
 	if err := c.loginLocked(); err != nil {
-		if c.conn != nil {
-			_ = c.conn.Close()
-			c.conn = nil
-		}
+		c.resetConnLocked()
 		return fmt.Errorf("xiongmai login failed: %w", err)
 	}
 
@@ -895,27 +905,76 @@ func (c *Client) ensureSerialTransLocked() error {
 	return c.startSerialTransLocked()
 }
 
-// SetLightState switches the main lamp on (continuous light) or off (sensor auto) via OPTrans MCU mode.
-func (c *Client) SetLightState(on bool) error {
-	cmd := BuildSetLightModeCommand(on)
-	logger.Info("Xiongmai", "💡 Setting light state via MCU OPTrans: On=%v (cmd: %q)", on, cmd)
-	err := c.SendMCUCommand(cmd)
-	if err == nil && c.lastMCUConfig != nil {
-		if on {
-			c.lastMCUConfig.Mode = 3
-		} else {
-			c.lastMCUConfig.Mode = 1
+func (c *Client) mcuWaitTimeout() time.Duration {
+	if c.mcuTelemetryTimeout > 0 {
+		return c.mcuTelemetryTimeout
+	}
+	return defaultMCUTelemetryTimeout
+}
+
+func (c *Client) resetConnLocked() {
+	if c.conn != nil {
+		_ = c.conn.Close()
+		c.conn = nil
+	}
+	c.isLoggedIn = false
+	c.serialTransActive = false
+	c.telemetryBuf = ""
+}
+
+// SetLightMode switches the L 620 MCU operating mode via OPTrans RS232
+// ("on"/"dauerlicht" -> BMdU, "off"/"auto"/"sensor" -> BMbU, "aus" -> BMaU)
+// and retries once if the synchronized MCU telemetry still reports the prior mode.
+func (c *Client) SetLightMode(mode string) error {
+	cmd, expectedMode, err := BuildSetLampModeCommand(mode)
+	if err != nil {
+		return err
+	}
+	logger.Info("Xiongmai", "💡 Setting light mode via MCU OPTrans: mode=%q (cmd: %q)", mode, cmd)
+
+	if err := c.SendMCUCommand(cmd); err != nil {
+		return err
+	}
+
+	c.mu.Lock()
+	needsRetry := c.lastMCUConfig != nil && c.lastMCUConfig.Mode != expectedMode
+	actualMode := -1
+	if c.lastMCUConfig != nil {
+		actualMode = c.lastMCUConfig.Mode
+	}
+	c.mu.Unlock()
+
+	if needsRetry {
+		logger.Debug("Xiongmai", "🔄 MCU mode still %d after %q (expected %d), retrying once...", actualMode, cmd, expectedMode)
+		if err := c.SendMCUCommand(cmd); err != nil {
+			return err
 		}
 	}
-	return err
+
+	c.mu.Lock()
+	if c.lastMCUConfig != nil && c.lastMCUConfig.Mode != expectedMode {
+		cp := *c.lastMCUConfig
+		cp.Mode = expectedMode
+		c.lastMCUConfig = &cp
+	}
+	c.mu.Unlock()
+	return nil
+}
+
+// SetLightState switches the main lamp on (continuous light) or off (sensor auto) via OPTrans MCU mode.
+func (c *Client) SetLightState(on bool) error {
+	if on {
+		return c.SetLightMode("on")
+	}
+	return c.SetLightMode("off")
 }
 
 // QueryLightState queries the current light state from the Steinel MCU.
 func (c *Client) QueryLightState() (bool, error) {
 	cfg, err := c.QueryMCUConfig()
 	if err != nil {
-		if c.lastMCUConfig != nil {
-			return c.lastMCUConfig.IsLightOn(), nil
+		if last := c.GetLastMCUConfig(); last != nil {
+			return last.IsLightOn(), nil
 		}
 		return false, err
 	}
@@ -938,15 +997,18 @@ func (c *Client) QueryMCUConfig() (*MCUConfig, error) {
 	}
 
 	// Drain immediate telemetry push (1582) that follows 1573
-	c.drainPendingTelemetryLocked()
+	c.drainPendingTelemetryLocked(c.mcuWaitTimeout())
 
 	if c.lastMCUConfig != nil {
-		return c.lastMCUConfig, nil
+		cp := *c.lastMCUConfig
+		return &cp, nil
 	}
 	return nil, errors.New("no MCU telemetry received after query")
 }
 
 // SendMCUCommand sends a raw MCU serial port command via OPTrans RS232 (e.g. "BMdU", "BXaU").
+// When a command does not trigger an immediate MsgID 1582 telemetry response, a follow-up
+// BFbU status query is issued to keep the serial state and cached MCUConfig synchronized.
 func (c *Client) SendMCUCommand(cmd string) error {
 	logger.Trace("Xiongmai MCU", "-> MCU Command: %q", cmd)
 	c.mu.Lock()
@@ -961,8 +1023,16 @@ func (c *Client) SendMCUCommand(cmd string) error {
 		return fmt.Errorf("failed to send MCU command %q: %w", cmd, err)
 	}
 
-	// Drain immediate telemetry update (1582) that follows 1573
-	c.drainPendingTelemetryLocked()
+	waitTimeout := c.mcuWaitTimeout()
+	gotTelemetry := c.drainPendingTelemetryLocked(waitTimeout)
+
+	if !gotTelemetry && cmd != BuildQueryMCUCommand() && c.conn != nil {
+		logger.Trace("Xiongmai MCU", "-> No immediate 1582 telemetry after %q; syncing MCU state via BFbU...", cmd)
+		if _, _, qErr := c.sendRawPacketLocked(MsgTransSendData, []byte(BuildQueryMCUCommand())); qErr != nil {
+			return fmt.Errorf("follow-up MCU status sync after %q failed: %w", cmd, qErr)
+		}
+		c.drainPendingTelemetryLocked(waitTimeout)
+	}
 	return nil
 }
 
@@ -1010,7 +1080,7 @@ func (c *Client) SendKeepAlive() error {
 	_, err := c.sendPacketLocked(MsgKeepAliveReq, payload)
 	if err == nil {
 		logger.Trace("Xiongmai", "<- KeepAlive acknowledged")
-		c.drainPendingTelemetryLocked()
+		c.drainPendingTelemetryLocked(keepAliveTelemetryTimeout)
 	}
 	return err
 }
@@ -1053,9 +1123,7 @@ func (c *Client) sendRawPacketWithHeaderLocked(msgID uint16, channel byte, total
 	}
 	_ = c.conn.SetDeadline(time.Now().Add(timeout))
 	if _, err := c.conn.Write(packet); err != nil {
-		_ = c.conn.Close()
-		c.conn = nil
-		c.isLoggedIn = false
+		c.resetConnLocked()
 		return nil, nil, fmt.Errorf("write error: %w", err)
 	}
 
@@ -1063,17 +1131,13 @@ func (c *Client) sendRawPacketWithHeaderLocked(msgID uint16, channel byte, total
 	for {
 		respHdrBuf := make([]byte, HeaderLength)
 		if _, err := io.ReadFull(c.conn, respHdrBuf); err != nil {
-			_ = c.conn.Close()
-			c.conn = nil
-			c.isLoggedIn = false
+			c.resetConnLocked()
 			return nil, nil, fmt.Errorf("failed to read response header: %w", err)
 		}
 
 		respHdr, err := DecodeHeader(respHdrBuf)
 		if err != nil {
-			_ = c.conn.Close()
-			c.conn = nil
-			c.isLoggedIn = false
+			c.resetConnLocked()
 			return nil, nil, fmt.Errorf("invalid response header: %w", err)
 		}
 
@@ -1081,9 +1145,7 @@ func (c *Client) sendRawPacketWithHeaderLocked(msgID uint16, channel byte, total
 			respHdr.MsgID, respHdr.MsgID, respHdr.Sequence, respHdr.Channel, respHdr.TotalPkt, respHdr.SessionID, respHdr.DataLength)
 
 		if respHdr.DataLength > 65535 {
-			_ = c.conn.Close()
-			c.conn = nil
-			c.isLoggedIn = false
+			c.resetConnLocked()
 			return nil, nil, fmt.Errorf("response payload too large: %d bytes", respHdr.DataLength)
 		}
 
@@ -1091,9 +1153,7 @@ func (c *Client) sendRawPacketWithHeaderLocked(msgID uint16, channel byte, total
 		_ = c.conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 		respPayload := make([]byte, respHdr.DataLength)
 		if _, err := io.ReadFull(c.conn, respPayload); err != nil {
-			_ = c.conn.Close()
-			c.conn = nil
-			c.isLoggedIn = false
+			c.resetConnLocked()
 			return nil, nil, fmt.Errorf("failed to read response payload: %w", err)
 		}
 		_ = c.conn.SetDeadline(time.Time{})
@@ -1123,10 +1183,10 @@ func (c *Client) sendRawPacketWithHeaderLocked(msgID uint16, channel byte, total
 	}
 }
 
-func (c *Client) handleTelemetryPushLocked(raw string) {
+func (c *Client) handleTelemetryPushLocked(raw string) bool {
 	raw = strings.Trim(raw, "\x00\r\n ")
 	if raw == "" {
-		return
+		return false
 	}
 
 	full := c.telemetryBuf + raw
@@ -1139,21 +1199,21 @@ func (c *Client) handleTelemetryPushLocked(raw string) {
 		} else {
 			c.telemetryBuf = ""
 		}
-		return
+		return false
 	}
 
 	// Full frame received: locate starting "B"
 	c.telemetryBuf = ""
 	startIdx := strings.LastIndex(full, "B")
 	if startIdx < 0 {
-		return
+		return false
 	}
 	frame := full[startIdx:]
 
 	cfg, err := ParseMCUString(frame)
 	if err != nil {
 		logger.Debug("Xiongmai", "⚠️ Could not parse MsgID 1582 telemetry string %q: %v", frame, err)
-		return
+		return false
 	}
 	c.lastMCUConfig = cfg
 	logger.Debug("Xiongmai", "💡 Received MCU Telemetry (1582): %q -> LightOn=%v, Dim=%d%%, Lux=%d, Dist=%dm, Delay=%ds, Lowlight=%d%% (%s)",
@@ -1162,15 +1222,20 @@ func (c *Client) handleTelemetryPushLocked(raw string) {
 		cb := c.onTelemetry
 		go cb(cfg)
 	}
+	return true
 }
 
-func (c *Client) drainPendingTelemetryLocked() {
+func (c *Client) drainPendingTelemetryLocked(timeout time.Duration) bool {
 	if c.conn == nil {
-		return
+		return false
 	}
+	if timeout <= 0 {
+		timeout = defaultMCUTelemetryTimeout
+	}
+	received := false
 	// Try reading up to 2 packets in case the 1582 frame was split into 2 chunks
 	for i := 0; i < 2; i++ {
-		_ = c.conn.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
+		_ = c.conn.SetReadDeadline(time.Now().Add(timeout))
 		respHdrBuf := make([]byte, HeaderLength)
 		n, err := io.ReadFull(c.conn, respHdrBuf)
 		if err != nil || n < HeaderLength {
@@ -1182,6 +1247,7 @@ func (c *Client) drainPendingTelemetryLocked() {
 			_ = c.conn.SetDeadline(time.Time{})
 			break
 		}
+		_ = c.conn.SetReadDeadline(time.Now().Add(timeout))
 		respPayload := make([]byte, respHdr.DataLength)
 		if _, err := io.ReadFull(c.conn, respPayload); err != nil {
 			_ = c.conn.SetDeadline(time.Time{})
@@ -1190,14 +1256,15 @@ func (c *Client) drainPendingTelemetryLocked() {
 		_ = c.conn.SetDeadline(time.Time{})
 		cleanPayload := strings.TrimRight(string(respPayload), "\x00\r\n ")
 		if respHdr.MsgID == MsgTransSerialData {
-			c.handleTelemetryPushLocked(cleanPayload)
-			if c.telemetryBuf == "" && c.lastMCUConfig != nil {
+			if c.handleTelemetryPushLocked(cleanPayload) {
+				received = true
 				break
 			}
 		} else if respHdr.MsgID == MsgAlarmReq {
 			c.handleAlarmPushLocked(respHdr, respPayload)
 		}
 	}
+	return received
 }
 
 func (c *Client) handleAlarmPushLocked(hdr *Header, rawPayload []byte) {

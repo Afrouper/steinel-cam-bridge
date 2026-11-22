@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/Afrouper/steinel-cam-bridge/pkg/events"
+	"github.com/Afrouper/steinel-cam-bridge/pkg/logger"
 )
 
 // Camera-side settings of the L 625 (timestamp overlay, speaker volume,
@@ -154,7 +155,9 @@ func (c *Client) handleCameraSettingsCommand(topic, payload, baseTopic string, c
 			position = c.lastOSDPosition(baseTopic)
 		}
 		if cb.SetTimestampPosition != nil {
-			_ = cb.SetTimestampPosition(position)
+			if err := cb.SetTimestampPosition(position); err != nil {
+				logger.Warn("MQTT", "⚠️ Command %s (%s) failed: %v", topic, payload, err)
+			}
 		}
 		if position == 0 {
 			c.publishOptimistic(baseTopic, "osd_switch/state", "OFF")
@@ -170,7 +173,9 @@ func (c *Client) handleCameraSettingsCommand(topic, payload, baseTopic string, c
 		}
 		c.rememberOSDPosition(baseTopic, position)
 		if cb.SetTimestampPosition != nil {
-			_ = cb.SetTimestampPosition(position)
+			if err := cb.SetTimestampPosition(position); err != nil {
+				logger.Warn("MQTT", "⚠️ Command %s (%s) failed: %v", topic, payload, err)
+			}
 		}
 		c.publishOptimistic(baseTopic, "osd_position/state", osdPositionNames[position])
 		c.publishOptimistic(baseTopic, "osd_switch/state", "ON")
@@ -187,7 +192,9 @@ func (c *Client) handleCameraSettingsCommand(topic, payload, baseTopic string, c
 			vol = 100
 		}
 		if cb.SetSpeakerVolume != nil {
-			_ = cb.SetSpeakerVolume(vol)
+			if err := cb.SetSpeakerVolume(vol); err != nil {
+				logger.Warn("MQTT", "⚠️ Command %s (%s) failed: %v", topic, payload, err)
+			}
 		}
 		c.publishOptimistic(baseTopic, "volume/state", strconv.Itoa(vol))
 
@@ -197,7 +204,9 @@ func (c *Client) handleCameraSettingsCommand(topic, payload, baseTopic string, c
 			return true
 		}
 		if cb.SetDetectMode != nil {
-			_ = cb.SetDetectMode(mode)
+			if err := cb.SetDetectMode(mode); err != nil {
+				logger.Warn("MQTT", "⚠️ Command %s (%s) failed: %v", topic, payload, err)
+			}
 		}
 		c.publishOptimistic(baseTopic, "detect_mode/state", detectModeNames[mode])
 

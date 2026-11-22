@@ -180,101 +180,140 @@ func (m *BridgeManager) Reboot() error {
 	return nil
 }
 
-// cameraSettings is implemented by drivers whose camera exposes its own
-// settings (timestamp overlay, speaker volume, detection, recording, update).
-type cameraSettings interface {
-	SetTimestampPosition(position int) error
-	SetSpeakerVolume(percent int) error
-	SetDetectMode(mode string) error
-	SetPixelChangeDetection(on bool) error
-	SetDrawFrame(on bool) error
-	SetAIPersonSensitivity(level int) error
-	SetRecordMode(mode int) error
-	InstallUpdate(target string) error
-}
-
 var errNoCameraSettings = errors.New("camera settings are not supported by this camera model")
 
-func (m *BridgeManager) cameraSettings() (cameraSettings, error) {
-	d := m.getDriver()
-	if d == nil {
-		return nil, driver.ErrCameraOffline
-	}
-	cs, ok := d.(cameraSettings)
-	if !ok {
-		return nil, errNoCameraSettings
-	}
-	return cs, nil
+type timestampPositionSetter interface {
+	SetTimestampPosition(position int) error
+}
+
+type speakerVolumeSetter interface {
+	SetSpeakerVolume(percent int) error
+}
+
+type detectModeSetter interface {
+	SetDetectMode(mode string) error
+}
+
+type pixelChangeSetter interface {
+	SetPixelChangeDetection(on bool) error
+}
+
+type drawFrameSetter interface {
+	SetDrawFrame(on bool) error
+}
+
+type aiPersonSetter interface {
+	SetAIPersonSensitivity(level int) error
+}
+
+type recordModeSetter interface {
+	SetRecordMode(mode int) error
+}
+
+type updateInstaller interface {
+	InstallUpdate(target string) error
 }
 
 // SetTimestampPosition switches the timestamp overlay off (0) or moves it to a corner (1-4).
 func (m *BridgeManager) SetTimestampPosition(position int) error {
-	cs, err := m.cameraSettings()
-	if err != nil {
-		return err
+	d := m.getDriver()
+	if d == nil {
+		return driver.ErrCameraOffline
+	}
+	cs, ok := d.(timestampPositionSetter)
+	if !ok {
+		return errNoCameraSettings
 	}
 	return cs.SetTimestampPosition(position)
 }
 
 // SetSpeakerVolume sets the volume of the camera's speaker (0-100).
 func (m *BridgeManager) SetSpeakerVolume(percent int) error {
-	cs, err := m.cameraSettings()
-	if err != nil {
-		return err
+	d := m.getDriver()
+	if d == nil {
+		return driver.ErrCameraOffline
+	}
+	cs, ok := d.(speakerVolumeSetter)
+	if !ok {
+		return errNoCameraSettings
 	}
 	return cs.SetSpeakerVolume(percent)
 }
 
 // SetDetectMode sets the camera-side detection mode.
 func (m *BridgeManager) SetDetectMode(mode string) error {
-	cs, err := m.cameraSettings()
-	if err != nil {
-		return err
+	d := m.getDriver()
+	if d == nil {
+		return driver.ErrCameraOffline
+	}
+	cs, ok := d.(detectModeSetter)
+	if !ok {
+		return errNoCameraSettings
 	}
 	return cs.SetDetectMode(mode)
 }
 
 // SetPixelChangeDetection switches the lamp's "Pixel Change Detection" (light reacts to picture changes).
 func (m *BridgeManager) SetPixelChangeDetection(on bool) error {
-	cs, err := m.cameraSettings()
-	if err != nil {
-		return err
+	d := m.getDriver()
+	if d == nil {
+		return driver.ErrCameraOffline
+	}
+	cs, ok := d.(pixelChangeSetter)
+	if !ok {
+		return errNoCameraSettings
 	}
 	return cs.SetPixelChangeDetection(on)
 }
 
 // SetDrawFrame switches the detection boxes burnt into the picture on or off.
 func (m *BridgeManager) SetDrawFrame(on bool) error {
-	cs, err := m.cameraSettings()
-	if err != nil {
-		return err
+	d := m.getDriver()
+	if d == nil {
+		return driver.ErrCameraOffline
+	}
+	cs, ok := d.(drawFrameSetter)
+	if !ok {
+		return errNoCameraSettings
 	}
 	return cs.SetDrawFrame(on)
 }
 
 // SetAIPersonSensitivity sets the person detection sensitivity (2, 5 or 7).
 func (m *BridgeManager) SetAIPersonSensitivity(level int) error {
-	cs, err := m.cameraSettings()
-	if err != nil {
-		return err
+	d := m.getDriver()
+	if d == nil {
+		return driver.ErrCameraOffline
+	}
+	cs, ok := d.(aiPersonSetter)
+	if !ok {
+		return errNoCameraSettings
 	}
 	return cs.SetAIPersonSensitivity(level)
 }
 
 // SetRecordMode chooses what makes the camera record to its SD card (2, 3 or 4).
 func (m *BridgeManager) SetRecordMode(mode int) error {
-	cs, err := m.cameraSettings()
-	if err != nil {
-		return err
+	d := m.getDriver()
+	if d == nil {
+		return driver.ErrCameraOffline
+	}
+	cs, ok := d.(recordModeSetter)
+	if !ok {
+		return errNoCameraSettings
 	}
 	return cs.SetRecordMode(mode)
 }
 
 // InstallUpdate starts an update the camera offers ("camera" or "mcu").
 func (m *BridgeManager) InstallUpdate(target string) error {
-	cs, err := m.cameraSettings()
-	if err != nil {
-		return err
+	d := m.getDriver()
+	if d == nil {
+		return driver.ErrCameraOffline
+	}
+	cs, ok := d.(updateInstaller)
+	if !ok {
+		return errNoCameraSettings
 	}
 	return cs.InstallUpdate(target)
 }

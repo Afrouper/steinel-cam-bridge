@@ -52,7 +52,9 @@ func (c *Client) handleCommand(_ paho.Client, msg paho.Message) {
 	case strings.HasSuffix(topic, "/highlight/set"), strings.HasSuffix(topic, "/light/brightness/set"):
 		if val, err := strconv.Atoi(payload); err == nil {
 			if cb.SetHighlight != nil {
-				_ = cb.SetHighlight(val)
+				if err := cb.SetHighlight(val); err != nil {
+					logger.Warn("MQTT", "⚠️ Command %s (%s) failed: %v", topic, payload, err)
+				}
 			}
 			c.publishOptimistic(baseTopic, "highlight/state", strconv.Itoa(val))
 			c.publishOptimistic(baseTopic, "light/brightness/state", strconv.Itoa(val))
@@ -61,13 +63,17 @@ func (c *Client) handleCommand(_ paho.Client, msg paho.Message) {
 	case strings.HasSuffix(topic, "/light/set"):
 		if strings.EqualFold(payload, "ON") {
 			if cb.SetLampMode != nil {
-				_ = cb.SetLampMode("on")
+				if err := cb.SetLampMode("on"); err != nil {
+					logger.Warn("MQTT", "⚠️ Command %s (%s) failed: %v", topic, payload, err)
+				}
 			}
 			c.publishOptimistic(baseTopic, "light/state", "ON")
 			c.publishOptimistic(baseTopic, "mode/state", "Dauerlicht")
 		} else {
 			if cb.SetLampMode != nil {
-				_ = cb.SetLampMode("off")
+				if err := cb.SetLampMode("off"); err != nil {
+					logger.Warn("MQTT", "⚠️ Command %s (%s) failed: %v", topic, payload, err)
+				}
 			}
 			c.publishOptimistic(baseTopic, "light/state", "OFF")
 			c.publishOptimistic(baseTopic, "mode/state", "Sensor")
@@ -77,19 +83,25 @@ func (c *Client) handleCommand(_ paho.Client, msg paho.Message) {
 		switch strings.ToLower(payload) {
 		case "sensor", "auto", "2":
 			if cb.SetLampMode != nil {
-				_ = cb.SetLampMode("auto")
+				if err := cb.SetLampMode("auto"); err != nil {
+					logger.Warn("MQTT", "⚠️ Command %s (%s) failed: %v", topic, payload, err)
+				}
 			}
 			c.publishOptimistic(baseTopic, "mode/state", "Sensor")
 			c.publishOptimistic(baseTopic, "light/state", "OFF")
 		case "dauerlicht", "on", "1":
 			if cb.SetLampMode != nil {
-				_ = cb.SetLampMode("on")
+				if err := cb.SetLampMode("on"); err != nil {
+					logger.Warn("MQTT", "⚠️ Command %s (%s) failed: %v", topic, payload, err)
+				}
 			}
 			c.publishOptimistic(baseTopic, "mode/state", "Dauerlicht")
 			c.publishOptimistic(baseTopic, "light/state", "ON")
 		case "aus", "off", "0":
 			if cb.SetLampMode != nil {
-				_ = cb.SetLampMode("aus")
+				if err := cb.SetLampMode("aus"); err != nil {
+					logger.Warn("MQTT", "⚠️ Command %s (%s) failed: %v", topic, payload, err)
+				}
 			}
 			c.publishOptimistic(baseTopic, "mode/state", "Aus")
 			c.publishOptimistic(baseTopic, "light/state", "OFF")
@@ -98,7 +110,9 @@ func (c *Client) handleCommand(_ paho.Client, msg paho.Message) {
 	case strings.HasSuffix(topic, "/pir_sensitivity/set"):
 		if val, err := strconv.Atoi(payload); err == nil {
 			if cb.SetPIRSensitivity != nil {
-				_ = cb.SetPIRSensitivity(val)
+				if err := cb.SetPIRSensitivity(val); err != nil {
+					logger.Warn("MQTT", "⚠️ Command %s (%s) failed: %v", topic, payload, err)
+				}
 			}
 			c.publishOptimistic(baseTopic, "pir_sensitivity/state", strconv.Itoa(val))
 		}
@@ -106,7 +120,9 @@ func (c *Client) handleCommand(_ paho.Client, msg paho.Message) {
 	case strings.HasSuffix(topic, "/lux_threshold/set"), strings.HasSuffix(topic, "/lux/set"):
 		if val, err := strconv.Atoi(payload); err == nil {
 			if cb.SetLuxThreshold != nil {
-				_ = cb.SetLuxThreshold(val)
+				if err := cb.SetLuxThreshold(val); err != nil {
+					logger.Warn("MQTT", "⚠️ Command %s (%s) failed: %v", topic, payload, err)
+				}
 			}
 			c.publishOptimistic(baseTopic, "lux_threshold/state", strconv.Itoa(val))
 			c.publishOptimistic(baseTopic, "lux/state", strconv.Itoa(val))
@@ -120,7 +136,9 @@ func (c *Client) handleCommand(_ paho.Client, msg paho.Message) {
 				val = 900
 			}
 			if cb.SetHighlightTime != nil {
-				_ = cb.SetHighlightTime(val)
+				if err := cb.SetHighlightTime(val); err != nil {
+					logger.Warn("MQTT", "⚠️ Command %s (%s) failed: %v", topic, payload, err)
+				}
 			}
 			c.publishOptimistic(baseTopic, "duration/state", strconv.Itoa(val))
 		}
@@ -133,7 +151,9 @@ func (c *Client) handleCommand(_ paho.Client, msg paho.Message) {
 				val = 50
 			}
 			if cb.SetLowlight != nil {
-				_ = cb.SetLowlight(val)
+				if err := cb.SetLowlight(val); err != nil {
+					logger.Warn("MQTT", "⚠️ Command %s (%s) failed: %v", topic, payload, err)
+				}
 			}
 			c.rememberLowlight(baseTopic, val)
 			c.publishOptimistic(baseTopic, "lowlight/state", strconv.Itoa(val))
@@ -148,7 +168,9 @@ func (c *Client) handleCommand(_ paho.Client, msg paho.Message) {
 			val = c.lastLowlight(baseTopic)
 		}
 		if cb.SetLowlight != nil {
-			_ = cb.SetLowlight(val)
+			if err := cb.SetLowlight(val); err != nil {
+				logger.Warn("MQTT", "⚠️ Command %s (%s) failed: %v", topic, payload, err)
+			}
 		}
 		c.publishOptimistic(baseTopic, "lowlight/state", strconv.Itoa(val))
 		c.publishOptimistic(baseTopic, "lowlight_switch/state", lowlightSwitchState(val))
@@ -161,7 +183,9 @@ func (c *Client) handleCommand(_ paho.Client, msg paho.Message) {
 				val = 12
 			}
 			if cb.SetLowlightTime != nil {
-				_ = cb.SetLowlightTime(val)
+				if err := cb.SetLowlightTime(val); err != nil {
+					logger.Warn("MQTT", "⚠️ Command %s (%s) failed: %v", topic, payload, err)
+				}
 			}
 			c.publishOptimistic(baseTopic, "lowlight_duration/state", strconv.Itoa(val))
 			c.publishOptimistic(baseTopic, "lowlight_time/state", strconv.Itoa(val))
@@ -180,7 +204,9 @@ func (c *Client) handleCommand(_ paho.Client, msg paho.Message) {
 			on = strings.EqualFold(payload, "ON") || payload == "1" || strings.EqualFold(payload, "true")
 		}
 		if cb.SetSiren != nil {
-			_ = cb.SetSiren(on)
+			if err := cb.SetSiren(on); err != nil {
+				logger.Warn("MQTT", "⚠️ Command %s (%s) failed: %v", topic, payload, err)
+			}
 		}
 		stateStr := "OFF"
 		if on {
@@ -190,7 +216,9 @@ func (c *Client) handleCommand(_ paho.Client, msg paho.Message) {
 
 	case strings.HasSuffix(topic, "/resolution/set"):
 		if cb.SetResolution != nil {
-			if err := cb.SetResolution(payload); err == nil {
+			if err := cb.SetResolution(payload); err != nil {
+				logger.Warn("MQTT", "⚠️ Command %s (%s) failed: %v", topic, payload, err)
+			} else {
 				c.publishOptimistic(baseTopic, "resolution/state", payload)
 			}
 		}

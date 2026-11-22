@@ -12,6 +12,7 @@ import (
 	"io"
 	"net"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -2605,4 +2606,617 @@ func TestDriver_ForceRTSPIngest(t *testing.T) {
 
 	d.SetForceRTSPIngest(false)
 	assert.False(t, d.ForceRTSPIngest())
+}
+
+func TestBuildSetLampModeCommand(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		mode     string
+		wantCmd  string
+		wantCode int
+		wantErr  bool
+	}{
+		{name: "on", mode: "on", wantCmd: "BMdU", wantCode: MCUModeContinuous},
+		{name: "dauerlicht", mode: "Dauerlicht", wantCmd: "BMdU", wantCode: MCUModeContinuous},
+		{name: "numeric on", mode: "1", wantCmd: "BMdU", wantCode: MCUModeContinuous},
+		{name: "off maps to sensor", mode: "off", wantCmd: "BMbU", wantCode: MCUModeSensorAuto},
+		{name: "auto maps to sensor", mode: "auto", wantCmd: "BMbU", wantCode: MCUModeSensorAuto},
+		{name: "sensor", mode: "Sensor", wantCmd: "BMbU", wantCode: MCUModeSensorAuto},
+		{name: "numeric sensor", mode: "2", wantCmd: "BMbU", wantCode: MCUModeSensorAuto},
+		{name: "aus", mode: "aus", wantCmd: "BMaU", wantCode: MCUModeOff},
+		{name: "numeric aus", mode: "0", wantCmd: "BMaU", wantCode: MCUModeOff},
+		{name: "unknown mode returns error", mode: "invalid", wantErr: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			cmd, code, err := BuildSetLampModeCommand(tc.mode)
+			if tc.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantCmd, cmd)
+			assert.Equal(t, tc.wantCode, code)
+		})
+	}
+}
+
+func TestMCU_ModeTransitionFollowUpSyncAndRetry(t *testing.T) {
+	t.Parallel()
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer func() { _ = ln.Close() }()
+
+	var cmdsMu sync.Mutex
+	var receivedCmds []string
+
+	go func() {
+		conn, acceptErr := ln.Accept()
+		if acceptErr != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+
+		mcuMode := byte('b')
+		syncedSinceModeCmd := true
+
+		for {
+			hdrBuf := make([]byte, HeaderLength)
+			if _, readErr := io.ReadFull(conn, hdrBuf); readErr != nil {
+				return
+			}
+			hdr, decErr := DecodeHeader(hdrBuf)
+			if decErr != nil {
+				return
+			}
+			payload := make([]byte, hdr.DataLength)
+			if _, readErr := io.ReadFull(conn, payload); readErr != nil {
+				return
+			}
+			clean := strings.TrimRight(string(payload), "\x00\r\n ")
+
+			var respMsgID uint16
+			var respPayload []byte
+			switch hdr.MsgID {
+			case MsgMonitorClaimReq:
+				respMsgID = MsgMonitorClaimResp
+				respPayload = []byte(`{"Ret":100,"LoginEncryptionType":{"MD5":true,"NONE":true,"RSA":false}}`)
+			case MsgLoginReq:
+				respMsgID = MsgLoginResp
+				respPayload = []byte(`{"Ret":100,"SessionID":"0x00000042"}`)
+			case MsgTransStartReq:
+				respMsgID = MsgTransStartResp
+				respPayload = []byte(`{"Name":"OPTrans","Ret":100}`)
+			case MsgTransSendData:
+				respMsgID = MsgTransSendResp
+				respPayload = []byte(`{"Name":"OPTrans","Ret":100}`)
+				cmdsMu.Lock()
+				receivedCmds = append(receivedCmds, clean)
+				cmdsMu.Unlock()
+
+				switch clean {
+				case "BMdU":
+					mcuMode = 'd'
+					syncedSinceModeCmd = false
+				case "BMaU":
+					mcuMode = 'a'
+					syncedSinceModeCmd = false
+				case "BMbU":
+					if syncedSinceModeCmd {
+						mcuMode = 'b'
+					}
+					syncedSinceModeCmd = false
+				case "BFbU":
+					syncedSinceModeCmd = true
+				}
+			default:
+				respMsgID = hdr.MsgID + 1
+				respPayload = []byte(`{"Ret":100}`)
+			}
+
+			respTerm := append(respPayload, 0x00)
+			rHdr := Header{
+				Magic:      HeaderMagic,
+				SessionID:  0x42,
+				Sequence:   hdr.Sequence,
+				MsgID:      respMsgID,
+				DataLength: uint32(len(respTerm)),
+			}
+			_, _ = conn.Write(append(rHdr.Encode(), respTerm...))
+
+			if hdr.MsgID == MsgTransSendData && clean == "BFbU" {
+				frame := fmt.Sprintf("Bkbw%czaqazoU\x00", mcuMode)
+				tHdr := Header{
+					Magic:      HeaderMagic,
+					SessionID:  0x42,
+					Sequence:   hdr.Sequence + 1,
+					MsgID:      MsgTransSerialData,
+					DataLength: uint32(len(frame)),
+				}
+				_, _ = conn.Write(append(tHdr.Encode(), []byte(frame)...))
+			}
+		}
+	}()
+
+	port := ln.Addr().(*net.TCPAddr).Port
+	client := NewClient("127.0.0.1", port, "admin", "")
+	client.mcuTelemetryTimeout = 50 * time.Millisecond
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, client.Connect(ctx))
+	defer func() { _ = client.Close() }()
+
+	require.NoError(t, client.SetLightState(true))
+	cfg := client.GetLastMCUConfig()
+	require.NotNil(t, cfg)
+	assert.Equal(t, MCUModeContinuous, cfg.Mode)
+
+	require.NoError(t, client.SetLightState(false))
+	cfg = client.GetLastMCUConfig()
+	require.NotNil(t, cfg)
+	assert.Equal(t, MCUModeSensorAuto, cfg.Mode)
+
+	require.NoError(t, client.SetLightState(true))
+	cfg = client.GetLastMCUConfig()
+	require.NotNil(t, cfg)
+	assert.Equal(t, MCUModeContinuous, cfg.Mode)
+
+	require.NoError(t, client.SetLightMode("aus"))
+	cfg = client.GetLastMCUConfig()
+	require.NotNil(t, cfg)
+	assert.Equal(t, MCUModeOff, cfg.Mode)
+
+	require.NoError(t, client.SetLightMode("sensor"))
+	cfg = client.GetLastMCUConfig()
+	require.NotNil(t, cfg)
+	assert.Equal(t, MCUModeSensorAuto, cfg.Mode)
+
+	cmdsMu.Lock()
+	defer cmdsMu.Unlock()
+	assert.Equal(t, []string{"BMdU", "BFbU", "BMbU", "BFbU", "BMdU", "BFbU", "BMaU", "BFbU", "BMbU", "BFbU"}, receivedCmds)
+}
+
+func TestClient_SetLightModeRetriesWhenMCUIgnoresFirstCommand(t *testing.T) {
+	t.Parallel()
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer func() { _ = ln.Close() }()
+
+	var bmbCount atomic.Int32
+
+	go func() {
+		conn, acceptErr := ln.Accept()
+		if acceptErr != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+
+		mcuMode := byte('d')
+
+		for {
+			hdrBuf := make([]byte, HeaderLength)
+			if _, readErr := io.ReadFull(conn, hdrBuf); readErr != nil {
+				return
+			}
+			hdr, decErr := DecodeHeader(hdrBuf)
+			if decErr != nil {
+				return
+			}
+			payload := make([]byte, hdr.DataLength)
+			if _, readErr := io.ReadFull(conn, payload); readErr != nil {
+				return
+			}
+			clean := strings.TrimRight(string(payload), "\x00\r\n ")
+
+			var respMsgID uint16
+			var respPayload []byte
+			switch hdr.MsgID {
+			case MsgMonitorClaimReq:
+				respMsgID = MsgMonitorClaimResp
+				respPayload = []byte(`{"Ret":100,"LoginEncryptionType":{"MD5":true,"NONE":true,"RSA":false}}`)
+			case MsgLoginReq:
+				respMsgID = MsgLoginResp
+				respPayload = []byte(`{"Ret":100,"SessionID":"0x00000042"}`)
+			case MsgTransStartReq:
+				respMsgID = MsgTransStartResp
+				respPayload = []byte(`{"Name":"OPTrans","Ret":100}`)
+			case MsgTransSendData:
+				respMsgID = MsgTransSendResp
+				respPayload = []byte(`{"Name":"OPTrans","Ret":100}`)
+				if clean == "BMbU" && bmbCount.Add(1) >= 2 {
+					mcuMode = 'b'
+				}
+			default:
+				respMsgID = hdr.MsgID + 1
+				respPayload = []byte(`{"Ret":100}`)
+			}
+
+			respTerm := append(respPayload, 0x00)
+			rHdr := Header{
+				Magic:      HeaderMagic,
+				SessionID:  0x42,
+				Sequence:   hdr.Sequence,
+				MsgID:      respMsgID,
+				DataLength: uint32(len(respTerm)),
+			}
+			_, _ = conn.Write(append(rHdr.Encode(), respTerm...))
+
+			if hdr.MsgID == MsgTransSendData && clean == "BFbU" {
+				frame := fmt.Sprintf("Bkbw%czaqazoU\x00", mcuMode)
+				tHdr := Header{
+					Magic:      HeaderMagic,
+					SessionID:  0x42,
+					Sequence:   hdr.Sequence + 1,
+					MsgID:      MsgTransSerialData,
+					DataLength: uint32(len(frame)),
+				}
+				_, _ = conn.Write(append(tHdr.Encode(), []byte(frame)...))
+			}
+		}
+	}()
+
+	port := ln.Addr().(*net.TCPAddr).Port
+	client := NewClient("127.0.0.1", port, "admin", "")
+	client.mcuTelemetryTimeout = 50 * time.Millisecond
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, client.Connect(ctx))
+	defer func() { _ = client.Close() }()
+
+	require.NoError(t, client.SetLightState(false))
+	cfg := client.GetLastMCUConfig()
+	require.NotNil(t, cfg)
+	assert.Equal(t, MCUModeSensorAuto, cfg.Mode)
+	assert.Equal(t, int32(2), bmbCount.Load())
+}
+
+func TestClient_SerialTransResetOnSocketError(t *testing.T) {
+	t.Parallel()
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer func() { _ = ln.Close() }()
+
+	var transStarts atomic.Int32
+	var connNum atomic.Int32
+
+	go func() {
+		for {
+			conn, acceptErr := ln.Accept()
+			if acceptErr != nil {
+				return
+			}
+			n := connNum.Add(1)
+			go func(c net.Conn, id int32) {
+				defer func() { _ = c.Close() }()
+				for {
+					hdrBuf := make([]byte, HeaderLength)
+					if _, readErr := io.ReadFull(c, hdrBuf); readErr != nil {
+						return
+					}
+					hdr, decErr := DecodeHeader(hdrBuf)
+					if decErr != nil {
+						return
+					}
+					payload := make([]byte, hdr.DataLength)
+					if _, readErr := io.ReadFull(c, payload); readErr != nil {
+						return
+					}
+
+					if id == 1 && hdr.MsgID == MsgTransSendData {
+						return
+					}
+
+					var respMsgID uint16
+					var respPayload []byte
+					switch hdr.MsgID {
+					case MsgMonitorClaimReq:
+						respMsgID = MsgMonitorClaimResp
+						respPayload = []byte(`{"Ret":100,"LoginEncryptionType":{"MD5":true,"NONE":true,"RSA":false}}`)
+					case MsgLoginReq:
+						respMsgID = MsgLoginResp
+						respPayload = []byte(`{"Ret":100,"SessionID":"0x00000042"}`)
+					case MsgTransStartReq:
+						transStarts.Add(1)
+						respMsgID = MsgTransStartResp
+						respPayload = []byte(`{"Name":"OPTrans","Ret":100}`)
+					default:
+						respMsgID = hdr.MsgID + 1
+						respPayload = []byte(`{"Ret":100}`)
+					}
+					respTerm := append(respPayload, 0x00)
+					rHdr := Header{
+						Magic:      HeaderMagic,
+						SessionID:  0x42,
+						Sequence:   hdr.Sequence,
+						MsgID:      respMsgID,
+						DataLength: uint32(len(respTerm)),
+					}
+					_, _ = c.Write(append(rHdr.Encode(), respTerm...))
+				}
+			}(conn, n)
+		}
+	}()
+
+	port := ln.Addr().(*net.TCPAddr).Port
+	client := NewClient("127.0.0.1", port, "admin", "")
+	client.mcuTelemetryTimeout = 50 * time.Millisecond
+	defer func() { _ = client.Close() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	require.NoError(t, client.Connect(ctx))
+	assert.Equal(t, int32(1), transStarts.Load())
+
+	err = client.SendMCUCommand("BMdU")
+	require.Error(t, err)
+	assert.False(t, client.IsLoggedIn())
+
+	require.NoError(t, client.Connect(ctx))
+	assert.Equal(t, int32(2), transStarts.Load())
+}
+
+func TestClient_SofiaDeviceStatusAndSettings(t *testing.T) {
+	t.Parallel()
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer func() { _ = ln.Close() }()
+
+	var stateMu sync.Mutex
+	volume := 70
+	osdBlend := true
+	osdPos := []int{5166, 512, 255, 24}
+	motionEnable := true
+	voiceEnable := false
+	beepEnable := false
+	recordEnable := true
+	recordMode := "ConfigRecord"
+	var rebootCalled atomic.Bool
+
+	go func() {
+		conn, acceptErr := ln.Accept()
+		if acceptErr != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+
+		for {
+			hdrBuf := make([]byte, HeaderLength)
+			if _, readErr := io.ReadFull(conn, hdrBuf); readErr != nil {
+				return
+			}
+			hdr, decErr := DecodeHeader(hdrBuf)
+			if decErr != nil {
+				return
+			}
+			payload := make([]byte, hdr.DataLength)
+			if _, readErr := io.ReadFull(conn, payload); readErr != nil {
+				return
+			}
+			clean := bytes.TrimRight(payload, "\x00\r\n ")
+
+			var req map[string]interface{}
+			_ = json.Unmarshal(clean, &req)
+			name, _ := req["Name"].(string)
+
+			var respMsgID uint16
+			var respObj map[string]interface{}
+
+			stateMu.Lock()
+			switch hdr.MsgID {
+			case MsgMonitorClaimReq:
+				respMsgID = MsgMonitorClaimResp
+				respObj = map[string]interface{}{
+					"Ret":                 100,
+					"LoginEncryptionType": map[string]bool{"MD5": true, "NONE": true, "RSA": false},
+				}
+			case MsgLoginReq:
+				respMsgID = MsgLoginResp
+				respObj = map[string]interface{}{"Ret": 100, "SessionID": "0x00000042"}
+			case MsgSysManagerReq:
+				respMsgID = MsgSysManagerResp
+				switch name {
+				case "SystemInfo":
+					respObj = map[string]interface{}{
+						"Name": "SystemInfo",
+						"Ret":  100,
+						"SystemInfo": map[string]interface{}{
+							"SerialNo":        "00b48293bca93acc",
+							"SoftWareVersion": "V4.03.R12.F9552520.10002.040109.0000000",
+						},
+					}
+				case "StorageInfo":
+					respObj = map[string]interface{}{
+						"Name": "StorageInfo",
+						"Ret":  100,
+						"StorageInfo": []map[string]interface{}{
+							{
+								"Partition": []map[string]interface{}{
+									{
+										"DirverType":  0,
+										"IsCurrent":   true,
+										"Status":      0,
+										"TotalSpace":  "0x0001D8FA",
+										"RemainSpace": "0x00017244",
+									},
+								},
+							},
+						},
+					}
+				default:
+					respObj = map[string]interface{}{"Ret": 100}
+				}
+			case MsgConfigGetReq:
+				respMsgID = MsgConfigGetResp
+				switch name {
+				case "fVideo.Volume.[0]":
+					respObj = map[string]interface{}{
+						"Name": name,
+						"Ret":  100,
+						name: map[string]interface{}{
+							"AudioMode":   "Single",
+							"LeftVolume":  volume,
+							"RightVolume": volume,
+						},
+					}
+				case "AVEnc.VideoWidget.[0]":
+					respObj = map[string]interface{}{
+						"Name": name,
+						"Ret":  100,
+						name: map[string]interface{}{
+							"TimeTitleAttribute": map[string]interface{}{
+								"EncodeBlend":  osdBlend,
+								"PreviewBlend": osdBlend,
+								"RelativePos":  osdPos,
+							},
+						},
+					}
+				case "Detect.MotionDetect.[0]":
+					respObj = map[string]interface{}{
+						"Name": name,
+						"Ret":  100,
+						name: map[string]interface{}{
+							"Enable": motionEnable,
+							"EventHandler": map[string]interface{}{
+								"VoiceEnable":  voiceEnable,
+								"BeepEnable":   beepEnable,
+								"RecordEnable": recordEnable,
+							},
+						},
+					}
+				case "Record.[0]":
+					respObj = map[string]interface{}{
+						"Name": name,
+						"Ret":  100,
+						name: map[string]interface{}{
+							"RecordMode": recordMode,
+						},
+					}
+				default:
+					respObj = map[string]interface{}{"Ret": 100}
+				}
+			case MsgConfigSetReq:
+				respMsgID = MsgConfigSetResp
+				respObj = map[string]interface{}{"Name": name, "Ret": 100}
+				if cfgObj, ok := req[name].(map[string]interface{}); ok {
+					switch name {
+					case "fVideo.Volume.[0]":
+						if v, ok := jsonNumberToInt(cfgObj["LeftVolume"]); ok {
+							volume = v
+						}
+					case "AVEnc.VideoWidget.[0]":
+						if ta, ok := cfgObj["TimeTitleAttribute"].(map[string]interface{}); ok {
+							osdBlend, _ = ta["EncodeBlend"].(bool)
+							if rp, ok := ta["RelativePos"].([]interface{}); ok && len(rp) >= 4 {
+								x, _ := jsonNumberToInt(rp[0])
+								y, _ := jsonNumberToInt(rp[1])
+								w, _ := jsonNumberToInt(rp[2])
+								h, _ := jsonNumberToInt(rp[3])
+								osdPos = []int{x, y, w, h}
+							}
+						}
+					case "Detect.MotionDetect.[0]":
+						if en, ok := cfgObj["Enable"].(bool); ok {
+							motionEnable = en
+						}
+						if eh, ok := cfgObj["EventHandler"].(map[string]interface{}); ok {
+							if ve, ok := eh["VoiceEnable"].(bool); ok {
+								voiceEnable = ve
+							}
+							if be, ok := eh["BeepEnable"].(bool); ok {
+								beepEnable = be
+							}
+							if re, ok := eh["RecordEnable"].(bool); ok {
+								recordEnable = re
+							}
+						}
+					case "Record.[0]":
+						if rm, ok := cfgObj["RecordMode"].(string); ok {
+							recordMode = rm
+						}
+					}
+				}
+			case MsgTimeSettingReq:
+				respMsgID = MsgTimeSettingResp
+				if name == "OPMachine" {
+					rebootCalled.Store(true)
+				}
+				respObj = map[string]interface{}{"Name": name, "Ret": 100}
+			default:
+				respMsgID = hdr.MsgID + 1
+				respObj = map[string]interface{}{"Ret": 100}
+			}
+			stateMu.Unlock()
+
+			respBytes, _ := json.Marshal(respObj)
+			respTerm := append(respBytes, 0x00)
+			rHdr := Header{
+				Magic:      HeaderMagic,
+				SessionID:  0x42,
+				Sequence:   hdr.Sequence,
+				MsgID:      respMsgID,
+				DataLength: uint32(len(respTerm)),
+			}
+			_, _ = conn.Write(append(rHdr.Encode(), respTerm...))
+		}
+	}()
+
+	port := ln.Addr().(*net.TCPAddr).Port
+	bus := events.NewBus()
+	d := NewDriver("127.0.0.1", "admin", "", "1080p", nil, bus)
+	d.client.addr = fmt.Sprintf("127.0.0.1:%d", port)
+	defer func() { _ = d.Close() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, d.client.Connect(ctx))
+
+	st, err := d.client.QueryDeviceStatus()
+	require.NoError(t, err)
+	assert.Equal(t, "V4.03.R12.F9552520.10002.040109.0000000", st.FirmwareVer)
+	assert.Equal(t, 121082, st.SDTotalMB)
+	assert.Equal(t, 94788, st.SDFreeMB)
+	assert.Equal(t, "ok", st.SDStatus)
+	assert.Equal(t, 70, st.SpeakerVolume)
+	assert.Equal(t, OSDTopRight, st.OSDPosition)
+	assert.Equal(t, "ai", st.DetectMode)
+	assert.Equal(t, RecordModeCameraOrPIR, st.RecordMode)
+
+	require.NoError(t, d.SetSpeakerVolume(45))
+	assert.Equal(t, 45, bus.GetStatus().SpeakerVolume)
+
+	require.NoError(t, d.SetTimestampPosition(OSDBottomLeft))
+	assert.Equal(t, OSDBottomLeft, bus.GetStatus().OSDPosition)
+
+	require.NoError(t, d.SetTimestampPosition(OSDOff))
+	assert.Equal(t, OSDOff, bus.GetStatus().OSDPosition)
+
+	require.NoError(t, d.SetDetectMode("off"))
+	assert.Equal(t, "off", bus.GetStatus().DetectMode)
+
+	require.NoError(t, d.SetRecordMode(RecordModeNone))
+	assert.Equal(t, RecordModeNone, bus.GetStatus().RecordMode)
+
+	require.NoError(t, d.SetSiren(true))
+	stAfter, err := d.client.QueryDeviceStatus()
+	require.NoError(t, err)
+	assert.Equal(t, 45, stAfter.SpeakerVolume)
+	assert.Equal(t, OSDOff, stAfter.OSDPosition)
+	assert.Equal(t, "off", stAfter.DetectMode)
+	assert.Equal(t, RecordModeNone, stAfter.RecordMode)
+	assert.True(t, stAfter.SirenEnabled)
+
+	require.NoError(t, d.Reboot())
+	assert.True(t, rebootCalled.Load())
 }
