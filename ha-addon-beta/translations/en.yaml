@@ -44,6 +44,9 @@ configuration:
   hold_last_frame_seconds:
     name: "Hold last frame during outages (seconds)"
     description: "While the camera delivers no video (connection drop) the last keyframe is repeated for this many seconds so Home Assistant and recorders stay connected and resume without reconnecting. After that the stream goes silent so a real outage is noticed. 0 disables it. L 625 only."
+  device_info_interval_minutes:
+    name: "Repeat device info (minutes)"
+    description: "Wi-Fi signal, SD card, firmware and update offer are queried once on connecting. With a value above 0 the bridge repeats the query at this interval. Note: the L 625 freezes after about 328 of these queries since its last restart and is then gone for about four minutes, so choose long intervals (e.g. 360). 0 = on connecting only. L 625 only."
   debug_api:
     name: "Diagnostic API"
     description: "Enables POST /api/debug/command, which passes single commands straight to the camera (L 625 only). Switch on for troubleshooting only and off again afterwards."

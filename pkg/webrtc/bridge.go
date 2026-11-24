@@ -27,6 +27,7 @@ type Bridge struct {
 	resGuard         h264x.ResolutionGuard
 	debugTap         chan []byte
 	pliInterval      time.Duration
+	deviceInfoEvery  time.Duration
 	pc               *pion.PeerConnection
 	dc               *pion.DataChannel
 	audioSendTrack   *pion.TrackLocalStaticRTP
@@ -97,6 +98,14 @@ func (b *Bridge) SetOnConnected(fn func()) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.onConnected = fn
+}
+
+// SetDeviceInfoInterval sets how often get_device_info is repeated during a
+// session. 0 or less asks once per session only (the default).
+func (b *Bridge) SetDeviceInfoInterval(d time.Duration) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.deviceInfoEvery = d
 }
 
 // SetRecoveryTimeout configures the maximum duration the SD control plane is permitted to stall

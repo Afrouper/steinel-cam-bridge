@@ -497,3 +497,24 @@ func TestVideoOptions_FileAndEnv(t *testing.T) {
 		assert.Equal(t, 120, Resolve(optsFile, nil).HoldLastFrameSeconds, "HOLD_LAST_FRAME_SECONDS=%s", bad)
 	}
 }
+
+// TestDeviceInfoIntervalMinutes covers the default (once per session),
+// options.json and the environment variable.
+func TestDeviceInfoIntervalMinutes(t *testing.T) {
+	optsFile := filepath.Join(t.TempDir(), "options.json")
+	write := func(content string) {
+		require.NoError(t, os.WriteFile(optsFile, []byte(content), 0644))
+	}
+
+	write(`{"camera_ip": "192.168.1.10"}`)
+	assert.Equal(t, 0, Resolve(optsFile, nil).DeviceInfoIntervalMinutes)
+
+	write(`{"camera_ip": "192.168.1.10", "device_info_interval_minutes": 360}`)
+	assert.Equal(t, 360, Resolve(optsFile, nil).DeviceInfoIntervalMinutes)
+
+	write(`{"camera_ip": "192.168.1.10", "device_info_interval_minutes": -1}`)
+	assert.Equal(t, 0, Resolve(optsFile, nil).DeviceInfoIntervalMinutes)
+
+	t.Setenv("DEVICE_INFO_INTERVAL_MINUTES", "720")
+	assert.Equal(t, 720, Resolve(optsFile, nil).DeviceInfoIntervalMinutes)
+}

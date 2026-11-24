@@ -29,6 +29,7 @@ options:
   audio_codec: "aac"
   instant_start: false
   hold_last_frame_seconds: 300
+  device_info_interval_minutes: 0
   debug_api: false
   rtsp_port: 8554
   onvif_port: 8000
@@ -67,6 +68,7 @@ schema:
   audio_codec: "list(aac|pcmu|none)"
   instant_start: "bool?"
   hold_last_frame_seconds: "int(0,3600)?"
+  device_info_interval_minutes: "int(0,10080)?"
   debug_api: "bool?"
   rtsp_port: "port"
   onvif_port: "port"
