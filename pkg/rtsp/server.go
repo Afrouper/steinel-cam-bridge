@@ -183,8 +183,7 @@ func (s *Server) findStreamForPath(reqPath string) *Stream {
 	}
 
 	// 2. Base segment match (e.g. "einfahrt/main", "einfahrt/trackID=0")
-	parts := strings.Split(reqPath, "/")
-	basePath := parts[0]
+	basePath, _, _ := strings.Cut(reqPath, "/")
 	if st, ok := s.streams[basePath]; ok {
 		return st
 	}
@@ -286,6 +285,18 @@ func (s *Server) handleBackchannelPacket(medi *description.Media, pkt *rtp.Packe
 	}
 }
 
+func (s *Server) hasAuthenticatedSession() bool {
+	found := false
+	s.sessionStreams.Range(func(k, _ any) bool {
+		if sess, ok := k.(*gortsplib.ServerSession); ok && sess.UserData() == true {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
+}
+
 func (s *Server) readUDPBackchannelLoop(conn *net.UDPConn) {
 	buf := make([]byte, 2048)
 	for {
@@ -294,11 +305,6 @@ func (s *Server) readUDPBackchannelLoop(conn *net.UDPConn) {
 			return
 		}
 		if n < 12 { // Minimum valid RTP header length
-			continue
-		}
-
-		pkt := &rtp.Packet{}
-		if err := pkt.Unmarshal(buf[:n]); err != nil {
 			continue
 		}
 
@@ -315,13 +321,24 @@ func (s *Server) readUDPBackchannelLoop(conn *net.UDPConn) {
 			st.backchannelMu.Unlock()
 		}
 		if targetStream == nil {
+			if s.authUser != "" && !s.hasAuthenticatedSession() {
+				s.streamsMu.RUnlock()
+				continue
+			}
 			targetStream = s.primaryStream
 		}
 		s.streamsMu.RUnlock()
 
-		if targetStream != nil {
-			targetStream.handleBackchannelPacket(nil, pkt, "UDP", nil)
+		if targetStream == nil {
+			continue
 		}
+
+		rawCopy := append([]byte(nil), buf[:n]...)
+		pkt := &rtp.Packet{}
+		if err := pkt.Unmarshal(rawCopy); err != nil {
+			continue
+		}
+		targetStream.handleBackchannelPacket(nil, pkt, "UDP", nil)
 	}
 }
 
@@ -398,6 +415,12 @@ func (s *Server) OnDescribe(ctx *gortsplib.ServerHandlerOnDescribeCtx) (*base.Re
 	sStream := st.serverStream
 	st.mu.RUnlock()
 
+	if ctx.Conn != nil {
+		if ic, ok := ctx.Conn.NetConn().(*interceptingConn); ok {
+			ic.setDescribedStream(sStream)
+		}
+	}
+
 	return &base.Response{
 		StatusCode: base.StatusOK,
 	}, sStream, nil
@@ -416,13 +439,49 @@ func (s *Server) OnSetup(ctx *gortsplib.ServerHandlerOnSetupCtx) (*base.Response
 		}, nil, nil
 	}
 
+	st.mu.RLock()
+	sStream := st.serverStream
+	sessDesc := st.session
+	bcMedia := st.backchannelMedia
+	st.mu.RUnlock()
+
+	if ctx.Conn != nil {
+		if ic, ok := ctx.Conn.NetConn().(*interceptingConn); ok {
+			if ctx.Session != nil && ctx.Session.State() == gortsplib.ServerSessionStateInitial {
+				if descStream := ic.describedStream(); descStream != nil && descStream != sStream {
+					ic.setDescribedStream(nil)
+					logger.Debug("RTSP", "🔁 Stream '%s' codec changed between DESCRIBE and SETUP; rejecting stale SETUP so client re-describes", st.pathName)
+					return &base.Response{
+						StatusCode: base.StatusSessionNotFound,
+					}, nil, nil
+				}
+			}
+
+			ic.bindSession(st, ctx.Session)
+			if ctx.Transport == gortsplib.TransportTCP && ctx.Request != nil {
+				bcIdx := -1
+				if bcMedia != nil && sessDesc != nil {
+					for i, m := range sessDesc.Medias {
+						if m == bcMedia {
+							bcIdx = i
+							break
+						}
+					}
+				}
+				isBackchannel := false
+				if bcIdx >= 0 {
+					if trackID, ok := extractSetupTrackID(ctx.Request.URL); ok && trackID == bcIdx {
+						isBackchannel = true
+					}
+				}
+				ic.recordTrackSetup(ctx.Request.Header["Transport"], isBackchannel)
+			}
+		}
+	}
+
 	if ctx.Session != nil {
 		s.sessionStreams.Store(ctx.Session, st)
 	}
-
-	st.mu.RLock()
-	sStream := st.serverStream
-	st.mu.RUnlock()
 
 	return &base.Response{
 		StatusCode: base.StatusOK,
@@ -447,6 +506,11 @@ func (s *Server) OnPlay(ctx *gortsplib.ServerHandlerOnPlayCtx) (*base.Response, 
 	if targetStream != nil {
 		if ctx.Session != nil {
 			s.sessionStreams.Store(ctx.Session, targetStream)
+		}
+		if ctx.Conn != nil {
+			if ic, ok := ctx.Conn.NetConn().(*interceptingConn); ok {
+				ic.bindSession(targetStream, ctx.Session)
+			}
 		}
 		targetStream.handlePlay(ctx.Path, ctx.Session)
 	}

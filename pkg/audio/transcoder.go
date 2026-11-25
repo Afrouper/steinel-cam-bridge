@@ -25,13 +25,15 @@ const (
 	AACFrameBytes = AACFrameSamples * 2
 )
 
-// Transcoder converts raw G.711u (PCMU 8000 Hz) bytes into AAC-LC Access Units (AUs) in real time.
+// Transcoder converts raw G.711 (PCMU/PCMA 8000 Hz) bytes into AAC-LC Access Units (AUs) in real time.
 type Transcoder struct {
 	mu          sync.Mutex
 	encoder     *aac.Encoder
 	adtsBuf     *bytes.Buffer
 	pcmReader   bytes.Reader
 	pcmBuf      []byte
+	prevSample  int16
+	hasPrev     bool
 	sampleCount uint64
 	sampleRate  int
 	onAACFrame  func(au []byte, pts time.Duration)
@@ -79,7 +81,8 @@ func (t *Transcoder) ProcessPCMU(pcmuData []byte) error {
 		return fmt.Errorf("transcoder is closed")
 	}
 
-	return t.processPCM8kLocked(DecodePCMU(pcmuData))
+	t.appendResampledG711Locked(pcmuData, &ulawToPCM)
+	return t.encodeReadyFramesLocked()
 }
 
 // ProcessPCMA processes a chunk of G.711a (8000 Hz) audio bytes from an RTP packet.
@@ -95,36 +98,52 @@ func (t *Transcoder) ProcessPCMA(pcmaData []byte) error {
 		return fmt.Errorf("transcoder is closed")
 	}
 
-	return t.processPCM8kLocked(DecodePCMA(pcmaData))
+	t.appendResampledG711Locked(pcmaData, &alawToPCM)
+	return t.encodeReadyFramesLocked()
 }
 
-// processPCM8kLocked resamples 8 kHz PCM to 16 kHz and encodes complete frames to AAC. Must be called with t.mu held.
-func (t *Transcoder) processPCM8kLocked(pcm8k []int16) error {
-	if len(pcm8k) == 0 {
-		return nil
+// appendResampledG711Locked decodes 8 kHz G.711 bytes via table and writes 2x linearly
+// interpolated 16 kHz Little-Endian PCM samples directly into t.pcmBuf without heap allocations.
+// Remembering t.prevSample eliminates 50 Hz step discontinuities across 20 ms RTP packet boundaries.
+func (t *Transcoder) appendResampledG711Locked(g711Data []byte, table *[256]int16) {
+	needBytes := len(g711Data) * 4 // 2 output samples * 2 bytes per input byte
+	oldLen := len(t.pcmBuf)
+	if cap(t.pcmBuf)-oldLen < needBytes {
+		grown := make([]byte, oldLen+needBytes, max((oldLen+needBytes)*2, AACFrameBytes*4))
+		copy(grown, t.pcmBuf)
+		t.pcmBuf = grown
+	} else {
+		t.pcmBuf = t.pcmBuf[:oldLen+needBytes]
 	}
 
-	// 1. Resample 8000 Hz -> 16000 Hz (2x upsample)
-	pcm16k := Resample8kTo16k(pcm8k)
-
-	// 2. Append to PCM buffer (Little-Endian 16-bit)
-	byteBuf := make([]byte, len(pcm16k)*2)
-	for i, s := range pcm16k {
-		binary.LittleEndian.PutUint16(byteBuf[i*2:], uint16(s))
+	out := t.pcmBuf[oldLen : oldLen+needBytes]
+	prev := t.prevSample
+	if !t.hasPrev {
+		prev = table[g711Data[0]]
+		t.hasPrev = true
 	}
-	t.pcmBuf = append(t.pcmBuf, byteBuf...)
 
-	// 3. While we have at least one full AAC frame (1024 samples = 2048 bytes)
+	for i, b := range g711Data {
+		cur := table[b]
+		mid := int16((int32(prev) + int32(cur)) / 2)
+		off := i * 4
+		binary.LittleEndian.PutUint16(out[off:], uint16(mid))
+		binary.LittleEndian.PutUint16(out[off+2:], uint16(cur))
+		prev = cur
+	}
+	t.prevSample = prev
+}
+
+// encodeReadyFramesLocked encodes all complete 1024-sample AAC frames in t.pcmBuf. Must be called with t.mu held.
+func (t *Transcoder) encodeReadyFramesLocked() error {
 	consumed := 0
 	for len(t.pcmBuf)-consumed >= AACFrameBytes {
 		chunk := t.pcmBuf[consumed : consumed+AACFrameBytes]
 		consumed += AACFrameBytes
 
-		// Calculate Presentation Timestamp (PTS)
 		pts := time.Duration(t.sampleCount) * time.Second / time.Duration(t.sampleRate)
 		t.sampleCount += AACFrameSamples
 
-		// Encode 1024 PCM samples into continuous ADTS buffer
 		t.adtsBuf.Reset()
 		t.pcmReader.Reset(chunk)
 		if err := t.encoder.Encode(&t.pcmReader); err != nil && err != io.EOF {
@@ -136,10 +155,8 @@ func (t *Transcoder) processPCM8kLocked(pcm8k []int16) error {
 			continue
 		}
 
-		// Extract raw AAC Access Units from ADTS bitstream
 		var pkts mpeg4audio.ADTSPackets
 		if err := pkts.Unmarshal(adtsData); err != nil {
-			// Fallback: If stripping ADTS header directly (ADTS header is 7 bytes)
 			if len(adtsData) > 7 && t.onAACFrame != nil {
 				t.onAACFrame(adtsData[7:], pts)
 			}
@@ -153,11 +170,9 @@ func (t *Transcoder) processPCM8kLocked(pcm8k []int16) error {
 		}
 	}
 
-	// Compact remaining unencoded bytes to the beginning of the buffer to prevent memory growth
 	if consumed > 0 {
 		remaining := copy(t.pcmBuf, t.pcmBuf[consumed:])
 		t.pcmBuf = t.pcmBuf[:remaining]
 	}
-
 	return nil
 }

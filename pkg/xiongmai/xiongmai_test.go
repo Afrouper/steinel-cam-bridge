@@ -305,51 +305,55 @@ func TestTalkAudioPacketForwarding(t *testing.T) {
 	receivedAudioFrames := make(chan receivedPacket, 10)
 
 	go func() {
-		conn, err := listener.Accept()
-		if err != nil {
-			return
-		}
-		defer func() { _ = conn.Close() }()
-
 		for {
-			hdrBuf := make([]byte, HeaderLength)
-			if _, err := io.ReadFull(conn, hdrBuf); err != nil {
+			conn, acceptErr := listener.Accept()
+			if acceptErr != nil {
 				return
 			}
-			hdr, err := DecodeHeader(hdrBuf)
-			if err != nil {
-				return
-			}
+			go func(conn net.Conn) {
+				defer func() { _ = conn.Close() }()
 
-			payload := make([]byte, hdr.DataLength)
-			if _, err := io.ReadFull(conn, payload); err != nil {
-				return
-			}
+				for {
+					hdrBuf := make([]byte, HeaderLength)
+					if _, rErr := io.ReadFull(conn, hdrBuf); rErr != nil {
+						return
+					}
+					hdr, dErr := DecodeHeader(hdrBuf)
+					if dErr != nil {
+						return
+					}
 
-			switch hdr.MsgID {
-			case MsgLoginReq:
-				resp, _ := json.Marshal(LoginResp{Ret: 100, SessionID: "0x01"})
-				respWithTerm := append(resp, 0x0A, 0x00)
-				respHdr := Header{Magic: HeaderMagic, SessionID: 1, Sequence: hdr.Sequence, MsgID: MsgLoginResp, DataLength: uint32(len(respWithTerm))}
-				_, _ = conn.Write(append(respHdr.Encode(), respWithTerm...))
-			case MsgTalkClaimReq, MsgTalkClaimV2Req:
-				resp := []byte(`{"Name":"OPTalk","Ret":100,"AudioFormat":{"BitRate":64,"EncodeType":"G711_ALAW","SampleBit":16,"SampleRate":8000}}`)
-				respWithTerm := append(resp, 0x0A, 0x00)
-				respHdr := Header{Magic: HeaderMagic, SessionID: 1, Sequence: hdr.Sequence, MsgID: hdr.MsgID + 1, DataLength: uint32(len(respWithTerm))}
-				_, _ = conn.Write(append(respHdr.Encode(), respWithTerm...))
-			case MsgTalkControlReq:
-				resp := []byte(`{"Name":"OPTalk","Ret":100}`)
-				respWithTerm := append(resp, 0x0A, 0x00)
-				respHdr := Header{Magic: HeaderMagic, SessionID: 1, Sequence: hdr.Sequence, MsgID: MsgTalkControlResp, DataLength: uint32(len(respWithTerm))}
-				_, _ = conn.Write(append(respHdr.Encode(), respWithTerm...))
-			case MsgTalkSendData, MsgTalkAudioData:
-				receivedAudioFrames <- receivedPacket{channel: hdr.Channel, payload: payload}
-			default:
-				resp := []byte(`{"Ret":100}`)
-				respWithTerm := append(resp, 0x0A, 0x00)
-				respHdr := Header{Magic: HeaderMagic, SessionID: 1, Sequence: hdr.Sequence, MsgID: hdr.MsgID + 1, DataLength: uint32(len(respWithTerm))}
-				_, _ = conn.Write(append(respHdr.Encode(), respWithTerm...))
-			}
+					payload := make([]byte, hdr.DataLength)
+					if _, rErr := io.ReadFull(conn, payload); rErr != nil {
+						return
+					}
+
+					switch hdr.MsgID {
+					case MsgLoginReq:
+						resp, _ := json.Marshal(LoginResp{Ret: 100, SessionID: "0x01"})
+						respWithTerm := append(resp, 0x0A, 0x00)
+						respHdr := Header{Magic: HeaderMagic, SessionID: 1, Sequence: hdr.Sequence, MsgID: MsgLoginResp, DataLength: uint32(len(respWithTerm))}
+						_, _ = conn.Write(append(respHdr.Encode(), respWithTerm...))
+					case MsgTalkClaimReq, MsgTalkClaimV2Req:
+						resp := []byte(`{"Name":"OPTalk","Ret":100,"AudioFormat":{"BitRate":64,"EncodeType":"G711_ALAW","SampleBit":16,"SampleRate":8000}}`)
+						respWithTerm := append(resp, 0x0A, 0x00)
+						respHdr := Header{Magic: HeaderMagic, SessionID: 1, Sequence: hdr.Sequence, MsgID: hdr.MsgID + 1, DataLength: uint32(len(respWithTerm))}
+						_, _ = conn.Write(append(respHdr.Encode(), respWithTerm...))
+					case MsgTalkControlReq:
+						resp := []byte(`{"Name":"OPTalk","Ret":100}`)
+						respWithTerm := append(resp, 0x0A, 0x00)
+						respHdr := Header{Magic: HeaderMagic, SessionID: 1, Sequence: hdr.Sequence, MsgID: MsgTalkControlResp, DataLength: uint32(len(respWithTerm))}
+						_, _ = conn.Write(append(respHdr.Encode(), respWithTerm...))
+					case MsgTalkSendData, MsgTalkAudioData:
+						receivedAudioFrames <- receivedPacket{channel: hdr.Channel, payload: payload}
+					default:
+						resp := []byte(`{"Ret":100}`)
+						respWithTerm := append(resp, 0x0A, 0x00)
+						respHdr := Header{Magic: HeaderMagic, SessionID: 1, Sequence: hdr.Sequence, MsgID: hdr.MsgID + 1, DataLength: uint32(len(respWithTerm))}
+						_, _ = conn.Write(append(respHdr.Encode(), respWithTerm...))
+					}
+				}
+			}(conn)
 		}
 	}()
 
@@ -363,6 +367,7 @@ func TestTalkAudioPacketForwarding(t *testing.T) {
 	defer func() { _ = client.Close() }()
 
 	talk := NewTalkClient(client)
+	defer func() { _ = talk.StopTalk() }()
 
 	// Send an RTP G.711 Audio Packet from RTSP Backchannel (PCMU, PT=0)
 	rtpPkt := &rtp.Packet{
@@ -381,11 +386,9 @@ func TestTalkAudioPacketForwarding(t *testing.T) {
 
 	select {
 	case frame := <-receivedAudioFrames:
-		if len(frame.payload) != len(rtpPkt.Payload) {
-			t.Errorf("expected frame length %d, got %d", len(rtpPkt.Payload), len(frame.payload))
-		}
 		expectedPCMA := audio.TranscodePCMUToPCMA(rtpPkt.Payload)
-		assert.Equal(t, expectedPCMA, frame.payload, "Audio payload must be transcoded from PCMU to PCMA for L 620 speaker DAC")
+		expectedRecord := buildDVRIPTalkAudioRecord("G711_ALAW", expectedPCMA)
+		assert.Equal(t, expectedRecord, frame.payload, "Audio payload must carry 8-byte 00 00 01 FA DVRIP header + PCMA samples")
 		assert.Equal(t, byte(0), frame.channel, "Audio data channel must be 0 (unencrypted raw PCM audio)")
 	case <-time.After(1 * time.Second):
 		t.Fatalf("timeout waiting for talk audio frame on TCP socket")
