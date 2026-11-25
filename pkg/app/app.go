@@ -259,6 +259,7 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 				RebootCamera:         camBridgeMgr.Reboot,
 			}
 			if !isL620 {
+				callbacks.WifiSignal = true
 				callbacks.SetPixelChangeDetection = camBridgeMgr.SetPixelChangeDetection
 				callbacks.SetDrawFrame = camBridgeMgr.SetDrawFrame
 				callbacks.SetAIPersonSensitivity = camBridgeMgr.SetAIPersonSensitivity

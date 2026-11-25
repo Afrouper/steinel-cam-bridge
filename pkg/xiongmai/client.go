@@ -46,6 +46,9 @@ type Client struct {
 	onTelemetry         func(*MCUConfig)
 	onAlarm             func(event string, isStart bool)
 	mcuTelemetryTimeout time.Duration
+	telemetrySeq        atomic.Uint64
+	telemetryMu         sync.Mutex // lock order: telemetryMu -> c.mu (never acquire while holding c.mu)
+	appliedTelemetrySeq uint64     // guarded by telemetryMu
 	closeChan           chan struct{}
 	closed              atomic.Bool
 }
@@ -952,12 +955,15 @@ func (c *Client) SetLightMode(mode string) error {
 	}
 
 	c.mu.Lock()
-	if c.lastMCUConfig != nil && c.lastMCUConfig.Mode != expectedMode {
-		cp := *c.lastMCUConfig
-		cp.Mode = expectedMode
-		c.lastMCUConfig = &cp
+	mismatch := c.lastMCUConfig != nil && c.lastMCUConfig.Mode != expectedMode
+	actual := -1
+	if c.lastMCUConfig != nil {
+		actual = c.lastMCUConfig.Mode
 	}
 	c.mu.Unlock()
+	if mismatch {
+		return fmt.Errorf("xiongmai: MCU remained in mode %d after retry for %q (expected %d)", actual, mode, expectedMode)
+	}
 	return nil
 }
 
@@ -1216,13 +1222,40 @@ func (c *Client) handleTelemetryPushLocked(raw string) bool {
 		return false
 	}
 	c.lastMCUConfig = cfg
+	seq := c.telemetrySeq.Add(1)
 	logger.Debug("Xiongmai", "💡 Received MCU Telemetry (1582): %q -> LightOn=%v, Dim=%d%%, Lux=%d, Dist=%dm, Delay=%ds, Lowlight=%d%% (%s)",
 		frame, cfg.IsLightOn(), cfg.Highlight, cfg.TwilightLux, cfg.Distance, cfg.HighlightDelaySec, cfg.Lowlight, cfg.LowlightDuration)
 	if c.onTelemetry != nil {
 		cb := c.onTelemetry
-		go cb(cfg)
+		cfgCopy := *cfg
+		go func() {
+			c.telemetryMu.Lock()
+			defer c.telemetryMu.Unlock()
+			if c.telemetrySeq.Load() != seq {
+				return
+			}
+			cb(&cfgCopy)
+			c.appliedTelemetrySeq = seq
+		}()
 	}
 	return true
+}
+
+// runSerializedTelemetry runs fn serialized with async telemetry callbacks and
+// invalidates any older queued telemetry goroutines that have not started yet.
+// alreadyApplied is true when the latest received telemetry frame was already
+// delivered to onTelemetry, allowing callers to skip duplicate status updates.
+func (c *Client) runSerializedTelemetry(fn func(cfg *MCUConfig, alreadyApplied bool)) {
+	c.telemetryMu.Lock()
+	defer c.telemetryMu.Unlock()
+	latestSeq := c.telemetrySeq.Load()
+	alreadyApplied := latestSeq > 0 && c.appliedTelemetrySeq == latestSeq
+	if !alreadyApplied {
+		nextSeq := c.telemetrySeq.Add(1)
+		c.appliedTelemetrySeq = nextSeq
+	}
+	cfg := c.GetLastMCUConfig()
+	fn(cfg, alreadyApplied)
 }
 
 func (c *Client) drainPendingTelemetryLocked(timeout time.Duration) bool {

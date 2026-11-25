@@ -176,19 +176,15 @@ func (c *Client) handleCameraControlsCommand(topic, payload, baseTopic string, c
 	switch {
 	case strings.HasSuffix(topic, "/pixel_change/set"):
 		on := isOn(payload)
-		if cb.SetPixelChangeDetection != nil {
-			if err := cb.SetPixelChangeDetection(on); err != nil {
-				logger.Warn("MQTT", "⚠️ Command %s (%s) failed: %v", topic, payload, err)
-			}
+		if cb.SetPixelChangeDetection != nil && !runCommand(topic, payload, func() error { return cb.SetPixelChangeDetection(on) }) {
+			return true
 		}
 		c.publishOptimistic(baseTopic, "pixel_change/state", onOff(boolState(on)))
 
 	case strings.HasSuffix(topic, "/draw_frame/set"):
 		on := isOn(payload)
-		if cb.SetDrawFrame != nil {
-			if err := cb.SetDrawFrame(on); err != nil {
-				logger.Warn("MQTT", "⚠️ Command %s (%s) failed: %v", topic, payload, err)
-			}
+		if cb.SetDrawFrame != nil && !runCommand(topic, payload, func() error { return cb.SetDrawFrame(on) }) {
+			return true
 		}
 		c.publishOptimistic(baseTopic, "draw_frame/state", onOff(boolState(on)))
 
@@ -197,10 +193,8 @@ func (c *Client) handleCameraControlsCommand(topic, payload, baseTopic string, c
 		if !ok {
 			return true
 		}
-		if cb.SetAIPersonSensitivity != nil {
-			if err := cb.SetAIPersonSensitivity(level); err != nil {
-				logger.Warn("MQTT", "⚠️ Command %s (%s) failed: %v", topic, payload, err)
-			}
+		if cb.SetAIPersonSensitivity != nil && !runCommand(topic, payload, func() error { return cb.SetAIPersonSensitivity(level) }) {
+			return true
 		}
 		c.publishOptimistic(baseTopic, "ai_person/state", aiPersonNames[level])
 
@@ -209,10 +203,8 @@ func (c *Client) handleCameraControlsCommand(topic, payload, baseTopic string, c
 		if !ok {
 			return true
 		}
-		if cb.SetRecordMode != nil {
-			if err := cb.SetRecordMode(mode); err != nil {
-				logger.Warn("MQTT", "⚠️ Command %s (%s) failed: %v", topic, payload, err)
-			}
+		if cb.SetRecordMode != nil && !runCommand(topic, payload, func() error { return cb.SetRecordMode(mode) }) {
+			return true
 		}
 		c.publishOptimistic(baseTopic, "record_mode/state", recordModeNames[mode])
 

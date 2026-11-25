@@ -40,12 +40,14 @@ type SofiaDeviceStatus struct {
 	DetectMode    string
 	RecordMode    int
 	SirenEnabled  bool
+	SirenKnown    bool
 }
 
 // QueryDeviceStatus reads firmware, SD card storage, audio volume, OSD timestamp,
 // motion detection, and recording mode from the camera's Sofia endpoints.
 // Unreachable optional endpoints leave their corresponding fields at sentinel values
 // (SpeakerVolume = -1, OSDPosition = -1) so callers only apply known fields.
+// Individual unsupported endpoints are skipped; only a dropped connection aborts early.
 func (c *Client) QueryDeviceStatus() (*SofiaDeviceStatus, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -59,14 +61,23 @@ func (c *Client) QueryDeviceStatus() (*SofiaDeviceStatus, error) {
 		OSDPosition:   -1,
 	}
 
-	if !c.queryVolumeLocked(st) {
-		return st, nil
+	queries := []func(*SofiaDeviceStatus){
+		c.queryVolumeLocked,
+		c.queryVideoWidgetLocked,
+		c.queryMotionDetectLocked,
+		c.queryRecordConfigLocked,
+		c.querySystemInfoLocked,
+		c.queryStorageInfoLocked,
 	}
-	c.queryVideoWidgetLocked(st)
-	c.queryMotionDetectLocked(st)
-	c.queryRecordConfigLocked(st)
-	c.querySystemInfoLocked(st)
-	c.queryStorageInfoLocked(st)
+	for _, query := range queries {
+		if c.conn == nil || !c.isLoggedIn {
+			return st, errors.New("xiongmai: connection lost during device status query")
+		}
+		query(st)
+	}
+	if c.conn == nil || !c.isLoggedIn {
+		return st, errors.New("xiongmai: connection lost during device status query")
+	}
 
 	return st, nil
 }
@@ -118,6 +129,7 @@ func (c *Client) queryStorageInfoLocked(st *SofiaDeviceStatus) {
 	bestTotal := 0
 	bestFree := 0
 	bestStatus := -1
+	bestDriverType := -1
 	for _, disk := range parsed.StorageInfo {
 		for _, part := range disk.Partition {
 			total := parseSofiaHexOrDecInt(part.TotalSpace)
@@ -125,11 +137,14 @@ func (c *Client) queryStorageInfoLocked(st *SofiaDeviceStatus) {
 				continue
 			}
 			free := parseSofiaHexOrDecInt(part.RemainSpace)
-			// Prefer primary recording partition (DirverType == 0) or largest partition
-			if bestTotal == 0 || (part.DriverType == 0 && total > bestTotal) {
+			// Prefer primary recording partition (DirverType == 0) over others, then largest partition.
+			if bestTotal == 0 ||
+				(part.DriverType == 0 && bestDriverType != 0) ||
+				((part.DriverType == 0) == (bestDriverType == 0) && total > bestTotal) {
 				bestTotal = total
 				bestFree = free
 				bestStatus = part.Status
+				bestDriverType = part.DriverType
 			}
 		}
 	}
@@ -150,20 +165,18 @@ func (c *Client) queryStorageInfoLocked(st *SofiaDeviceStatus) {
 	}
 }
 
-func (c *Client) queryVolumeLocked(st *SofiaDeviceStatus) bool {
+func (c *Client) queryVolumeLocked(st *SofiaDeviceStatus) {
 	obj, err := c.getConfigObjectLocked("fVideo.Volume.[0]", "fVideo.Volume")
 	if err != nil {
-		return false
+		return
 	}
 	if vol, ok := jsonNumberToInt(obj["LeftVolume"]); ok && vol >= 0 && vol <= 100 {
 		st.SpeakerVolume = vol
-		return true
+		return
 	}
 	if vol, ok := jsonNumberToInt(obj["RightVolume"]); ok && vol >= 0 && vol <= 100 {
 		st.SpeakerVolume = vol
-		return true
 	}
-	return false
 }
 
 func (c *Client) queryVideoWidgetLocked(st *SofiaDeviceStatus) {
@@ -206,6 +219,7 @@ func (c *Client) queryMotionDetectLocked(st *SofiaDeviceStatus) {
 		voiceOn, _ := eh["VoiceEnable"].(bool)
 		beepOn, _ := eh["BeepEnable"].(bool)
 		st.SirenEnabled = voiceOn || beepOn
+		st.SirenKnown = true
 	}
 }
 

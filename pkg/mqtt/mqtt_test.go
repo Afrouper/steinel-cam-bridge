@@ -715,3 +715,60 @@ func TestMQTT_AppVersionAndConcurrentUpdate(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestPublishDeviceStatus_SirenState(t *testing.T) {
+	mockCl := &mockPahoClient{published: make(map[string]string)}
+	c := NewClient(Config{
+		TopicPrefix: "steinel",
+		DeviceID:    "de-test",
+	}, Callbacks{}, nil)
+	c.client = mockCl
+	dev := &CameraDevice{baseTopic: "steinel/de-test"}
+
+	// Unknown (-1 from NewBus) must not publish siren/state.
+	stUnknown := events.NewBus().GetStatus()
+	c.publishDeviceStatus(dev, stUnknown)
+	_, ok := mockCl.published["steinel/de-test/siren/state"]
+	assert.False(t, ok)
+
+	// 0 -> OFF
+	mockCl.published = make(map[string]string)
+	c.publishDeviceStatus(dev, events.DeviceStatus{SirenEnabled: 0})
+	assert.Equal(t, "OFF", mockCl.published["steinel/de-test/siren/state"])
+
+	// 1 -> ON
+	mockCl.published = make(map[string]string)
+	c.publishDeviceStatus(dev, events.DeviceStatus{SirenEnabled: 1})
+	assert.Equal(t, "ON", mockCl.published["steinel/de-test/siren/state"])
+}
+
+func TestHandleCommand_SkipsOptimisticOnError(t *testing.T) {
+	mockCl := &mockPahoClient{published: make(map[string]string)}
+	failErr := fmt.Errorf("camera rejected command")
+	c := NewClient(Config{
+		TopicPrefix: "steinel",
+		DeviceID:    "de-test",
+	}, Callbacks{
+		SetLampMode:      func(mode string) error { return failErr },
+		SetSiren:         func(on bool) error { return failErr },
+		SetSpeakerVolume: func(percent int) error { return failErr },
+		SetRecordMode:    func(mode int) error { return failErr },
+	}, nil)
+	c.client = mockCl
+
+	cmds := []struct{ sub, payload string }{
+		{"light/set", "OFF"},
+		{"mode/set", "Sensor"},
+		{"siren/set", "ON"},
+		{"volume/set", "80"},
+		{"record_mode/set", "Keine Aufnahme"},
+	}
+	for _, cmd := range cmds {
+		c.handleCommand(nil, &mockMessage{
+			topic:   "steinel/de-test/" + cmd.sub,
+			payload: []byte(cmd.payload),
+		})
+	}
+
+	assert.Empty(t, mockCl.published, "failed callbacks must not publish optimistic MQTT state")
+}

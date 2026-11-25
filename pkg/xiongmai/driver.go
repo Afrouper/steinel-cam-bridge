@@ -284,13 +284,21 @@ func (d *Driver) syncInitialStateLocked() {
 	}
 	d.eventBus.UpdateStatus(st)
 
-	if sofiaSt, err := d.client.QueryDeviceStatus(); err == nil && sofiaSt != nil {
+	sofiaSt, statusErr := d.client.QueryDeviceStatus()
+	if statusErr != nil {
+		logger.Debug("Xiongmai Driver", "Sofia device status query incomplete: %v", statusErr)
+	}
+	if sofiaSt != nil {
 		d.applySofiaDeviceStatus(sofiaSt)
 	}
 
 	// Query MCU Config via OPTrans (which also queries light on/off state via mode)
 	if mcuCfg, err := d.client.QueryMCUConfig(); err == nil && mcuCfg != nil {
-		d.applyMCUConfig(mcuCfg)
+		d.client.runSerializedTelemetry(func(_ *MCUConfig, alreadyApplied bool) {
+			if !alreadyApplied {
+				d.applyMCUConfig(mcuCfg)
+			}
+		})
 		logger.Debug("Xiongmai Driver", "💡 Synced MCU Config: LightOn=%v, Bright=%d%%, Lux=%d, Dist=%dm, Delay=%ds, Lowlight=%d%% (%s)",
 			mcuCfg.IsLightOn(), mcuCfg.Highlight, mcuCfg.TwilightLux, mcuCfg.Distance, mcuCfg.HighlightDelaySec, mcuCfg.Lowlight, mcuCfg.LowlightDuration)
 	}
@@ -322,6 +330,13 @@ func (d *Driver) applySofiaDeviceStatus(sofiaSt *SofiaDeviceStatus) {
 	}
 	if sofiaSt.RecordMode > 0 {
 		st.RecordMode = sofiaSt.RecordMode
+	}
+	if sofiaSt.SirenKnown {
+		if sofiaSt.SirenEnabled {
+			st.SirenEnabled = 1
+		} else {
+			st.SirenEnabled = 0
+		}
 	}
 	d.eventBus.UpdateStatus(st)
 }
@@ -495,12 +510,20 @@ func (d *Driver) SetLampMode(mode string) error {
 	}
 	err = d.client.SetLightMode(mode)
 	if err == nil && d.eventBus != nil {
-		st := d.eventBus.GetStatus()
-		st.LampMode = MCUModeToLampMode(expectedMCUMode)
-		if expectedMCUMode == MCUModeOff {
-			st.PIRActive = false
-		}
-		d.eventBus.UpdateStatus(st)
+		d.client.runSerializedTelemetry(func(cfg *MCUConfig, alreadyApplied bool) {
+			if cfg != nil {
+				if !alreadyApplied {
+					d.applyMCUConfig(cfg)
+				}
+				return
+			}
+			st := d.eventBus.GetStatus()
+			st.LampMode = MCUModeToLampMode(expectedMCUMode)
+			if expectedMCUMode == MCUModeOff {
+				st.PIRActive = false
+			}
+			d.eventBus.UpdateStatus(st)
+		})
 	}
 	return err
 }
@@ -700,7 +723,17 @@ func (d *Driver) SetSiren(on bool) error {
 	if d.client == nil {
 		return errors.New("camera driver not connected")
 	}
-	return d.client.SetSiren(on)
+	err := d.client.SetSiren(on)
+	if err == nil && d.eventBus != nil {
+		st := d.eventBus.GetStatus()
+		if on {
+			st.SirenEnabled = 1
+		} else {
+			st.SirenEnabled = 0
+		}
+		d.eventBus.UpdateStatus(st)
+	}
+	return err
 }
 
 // Reboot sends a restart command to the camera.

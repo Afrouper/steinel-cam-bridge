@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/Afrouper/steinel-cam-bridge/pkg/events"
-	"github.com/Afrouper/steinel-cam-bridge/pkg/logger"
 )
 
 // Camera-side settings of the L 625 (timestamp overlay, speaker volume,
@@ -154,10 +153,8 @@ func (c *Client) handleCameraSettingsCommand(topic, payload, baseTopic string, c
 		if strings.EqualFold(payload, "ON") || payload == "1" || strings.EqualFold(payload, "true") {
 			position = c.lastOSDPosition(baseTopic)
 		}
-		if cb.SetTimestampPosition != nil {
-			if err := cb.SetTimestampPosition(position); err != nil {
-				logger.Warn("MQTT", "⚠️ Command %s (%s) failed: %v", topic, payload, err)
-			}
+		if cb.SetTimestampPosition != nil && !runCommand(topic, payload, func() error { return cb.SetTimestampPosition(position) }) {
+			return true
 		}
 		if position == 0 {
 			c.publishOptimistic(baseTopic, "osd_switch/state", "OFF")
@@ -171,12 +168,10 @@ func (c *Client) handleCameraSettingsCommand(topic, payload, baseTopic string, c
 		if !ok {
 			return true
 		}
-		c.rememberOSDPosition(baseTopic, position)
-		if cb.SetTimestampPosition != nil {
-			if err := cb.SetTimestampPosition(position); err != nil {
-				logger.Warn("MQTT", "⚠️ Command %s (%s) failed: %v", topic, payload, err)
-			}
+		if cb.SetTimestampPosition != nil && !runCommand(topic, payload, func() error { return cb.SetTimestampPosition(position) }) {
+			return true
 		}
+		c.rememberOSDPosition(baseTopic, position)
 		c.publishOptimistic(baseTopic, "osd_position/state", osdPositionNames[position])
 		c.publishOptimistic(baseTopic, "osd_switch/state", "ON")
 
@@ -191,10 +186,8 @@ func (c *Client) handleCameraSettingsCommand(topic, payload, baseTopic string, c
 		} else if vol > 100 {
 			vol = 100
 		}
-		if cb.SetSpeakerVolume != nil {
-			if err := cb.SetSpeakerVolume(vol); err != nil {
-				logger.Warn("MQTT", "⚠️ Command %s (%s) failed: %v", topic, payload, err)
-			}
+		if cb.SetSpeakerVolume != nil && !runCommand(topic, payload, func() error { return cb.SetSpeakerVolume(vol) }) {
+			return true
 		}
 		c.publishOptimistic(baseTopic, "volume/state", strconv.Itoa(vol))
 
@@ -203,10 +196,8 @@ func (c *Client) handleCameraSettingsCommand(topic, payload, baseTopic string, c
 		if !ok {
 			return true
 		}
-		if cb.SetDetectMode != nil {
-			if err := cb.SetDetectMode(mode); err != nil {
-				logger.Warn("MQTT", "⚠️ Command %s (%s) failed: %v", topic, payload, err)
-			}
+		if cb.SetDetectMode != nil && !runCommand(topic, payload, func() error { return cb.SetDetectMode(mode) }) {
+			return true
 		}
 		c.publishOptimistic(baseTopic, "detect_mode/state", detectModeNames[mode])
 

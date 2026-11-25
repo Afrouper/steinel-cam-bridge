@@ -214,11 +214,14 @@ func (c *Client) publishDeviceStatus(dev *CameraDevice, st events.DeviceStatus) 
 	}
 
 	// 5. Camera diagnostics, only for cameras that announce the sensors
-	if dev.Callbacks.CameraInfo {
-		c.publishCameraInfoState(st, pub)
+	if dev.Callbacks.CameraInfo || dev.Callbacks.WifiSignal {
+		c.publishCameraInfoState(dev.Callbacks, st, pub)
 	}
 
 	// 6. Camera-side settings and controls
+	if st.SirenEnabled >= 0 {
+		pub("siren/state", onOff(st.SirenEnabled))
+	}
 	c.publishCameraSettingsState(dev.baseTopic, st, pub)
 	c.publishCameraControlsState(st, pub)
 }
