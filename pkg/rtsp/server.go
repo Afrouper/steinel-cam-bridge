@@ -18,6 +18,7 @@ import (
 
 type AudioBackchannelHandler func(pkt *rtp.Packet) error
 type OnPlayHandler func()
+type OnDescribeHandler func()
 
 // Server manages the RTSP server, authentication, and multiple camera streams.
 type Server struct {
@@ -393,6 +394,7 @@ func (s *Server) OnDescribe(ctx *gortsplib.ServerHandlerOnDescribeCtx) (*base.Re
 			StatusCode: base.StatusNotFound,
 		}, nil, nil
 	}
+	st.runOnDescribe()
 
 	st.mu.RLock()
 	sStream := st.serverStream
@@ -634,4 +636,34 @@ func (s *Server) VideoSize() (width int, height int, since time.Time) {
 		return s.primaryStream.VideoSize()
 	}
 	return 0, 0, time.Time{}
+}
+
+// ResetVideoParameters clears cached out-of-band SPS/PPS/VPS parameter sets on the primary stream.
+func (s *Server) ResetVideoParameters() {
+	if s.primaryStream != nil {
+		s.primaryStream.ResetVideoParameters()
+	}
+}
+
+// HasVideoParameters reports whether the primary stream already has out-of-band video SDP parameters.
+func (s *Server) HasVideoParameters() bool {
+	if s.primaryStream != nil {
+		return s.primaryStream.HasVideoParameters()
+	}
+	return false
+}
+
+// SetOnDescribeHandler registers a callback executed on the primary stream before DESCRIBE reads its SDP.
+func (s *Server) SetOnDescribeHandler(handler OnDescribeHandler) {
+	if s.primaryStream != nil {
+		s.primaryStream.SetOnDescribeHandler(handler)
+	}
+}
+
+// ResolveVideoCodec warms the primary stream if needed and returns its active video codec ("h264" or "h265").
+func (s *Server) ResolveVideoCodec() string {
+	if s.primaryStream != nil {
+		return s.primaryStream.ResolveVideoCodec()
+	}
+	return VideoCodecH264
 }

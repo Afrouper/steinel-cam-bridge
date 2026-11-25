@@ -77,14 +77,19 @@ func newVideoPacketizer(codec string) (videoPacketizer, error) {
 }
 
 type h264Packetizer struct {
-	enc *rtph264.Encoder
+	enc      *rtph264.Encoder
+	filtered [][]byte
 }
 
 func (p *h264Packetizer) codec() string { return videoCodecH264 }
 
 func (p *h264Packetizer) packetize(nalus [][]byte, writer VideoWriter) ([]*rtp.Packet, error) {
 	var sps, pps []byte
-	filtered := make([][]byte, 0, len(nalus))
+	filtered := p.filtered[:0]
+	defer func() {
+		clear(filtered)
+		p.filtered = filtered[:0]
+	}()
 
 	for _, nalu := range nalus {
 		if len(nalu) == 0 || nalu[0]&0x80 != 0 {
@@ -138,14 +143,19 @@ func needsHEVCAggregationTemporalIDFix(payload []byte) bool {
 }
 
 type h265Packetizer struct {
-	enc *rtph265.Encoder
+	enc      *rtph265.Encoder
+	filtered [][]byte
 }
 
 func (p *h265Packetizer) codec() string { return videoCodecH265 }
 
 func (p *h265Packetizer) packetize(nalus [][]byte, writer VideoWriter) ([]*rtp.Packet, error) {
 	var vps, sps, pps []byte
-	filtered := make([][]byte, 0, len(nalus))
+	filtered := p.filtered[:0]
+	defer func() {
+		clear(filtered)
+		p.filtered = filtered[:0]
+	}()
 
 	for _, nalu := range nalus {
 		// Reject truncated headers, forbidden_zero_bit != 0, and illegal temporal_id_plus1 == 0 (RFC 7798 Section 1.1.4).
@@ -201,6 +211,78 @@ func (p *h265Packetizer) packetize(nalus [][]byte, writer VideoWriter) ([]*rtp.P
 	return pkts, nil
 }
 
+// publishKeyframeParameters extracts out-of-band codec parameter sets (SPS/PPS or VPS/SPS/PPS)
+// from an Annex-B keyframe payload and publishes them to writer before SetVideoCodec switches
+// the RTSP ServerStream, ensuring immediate DESCRIBE responses carry complete SDP parameters.
+func publishKeyframeParameters(codec string, data []byte, writer VideoWriter) {
+	if len(data) == 0 || writer == nil {
+		return
+	}
+	if !bytes.HasPrefix(data, sofiaRecordStartCode) && !bytes.HasPrefix(data, annexBLongStartCode) {
+		if idx := bytes.Index(data, sofiaRecordStartCode); idx > 0 {
+			data = data[idx:]
+		}
+	}
+
+	switch codec {
+	case videoCodecH265:
+		pw, ok := writer.(h265ParamsWriter)
+		if !ok {
+			return
+		}
+		var vps, sps, pps []byte
+		scanAnnexBNALUs(data, 32, func(nal []byte) bool {
+			if len(nal) < 2 || nal[0]&0x80 != 0 || nal[1]&0x07 == 0 {
+				return false
+			}
+			switch hevcNALUType(nal[0]) {
+			case hevcNALUVPS:
+				if vps == nil {
+					vps = nal
+				}
+			case hevcNALUSPS:
+				if sps == nil {
+					sps = nal
+				}
+			case hevcNALUPPS:
+				if pps == nil {
+					pps = nal
+				}
+			}
+			return vps != nil && sps != nil && pps != nil
+		})
+		if len(vps) > 0 && len(sps) > 0 && len(pps) > 0 {
+			pw.SetH265Parameters(vps, sps, pps)
+		}
+
+	case videoCodecH264:
+		pw, ok := writer.(h264ParamsWriter)
+		if !ok {
+			return
+		}
+		var sps, pps []byte
+		scanAnnexBNALUs(data, 32, func(nal []byte) bool {
+			if len(nal) == 0 || nal[0]&0x80 != 0 {
+				return false
+			}
+			switch h264.NALUType(nal[0] & 0x1F) {
+			case h264.NALUTypeSPS:
+				if sps == nil {
+					sps = nal
+				}
+			case h264.NALUTypePPS:
+				if pps == nil {
+					pps = nal
+				}
+			}
+			return sps != nil && pps != nil
+		})
+		if len(sps) > 0 && len(pps) > 0 {
+			pw.SetH264Parameters(sps, pps)
+		}
+	}
+}
+
 // firstAnnexBNALU returns the first NAL unit (without start code) of an Annex-B buffer.
 func firstAnnexBNALU(data []byte) []byte {
 	var first []byte
@@ -216,12 +298,12 @@ func firstAnnexBNALU(data []byte) []byte {
 func scanAnnexBNALUs(data []byte, maxNALUs int, fn func(nal []byte) bool) {
 	rem := data
 	for count := 0; count < maxNALUs && len(rem) > 0; count++ {
-		idx := bytes.Index(rem, []byte{0x00, 0x00, 0x01})
+		idx := bytes.Index(rem, sofiaRecordStartCode)
 		if idx < 0 {
 			return
 		}
 		nal := rem[idx+3:]
-		if next := bytes.Index(nal, []byte{0x00, 0x00, 0x01}); next >= 0 {
+		if next := bytes.Index(nal, sofiaRecordStartCode); next >= 0 {
 			end := next
 			if end > 0 && nal[end-1] == 0x00 {
 				end--
@@ -235,6 +317,45 @@ func scanAnnexBNALUs(data []byte, maxNALUs int, fn func(nal []byte) bool) {
 			return
 		}
 	}
+}
+
+const maxAnnexBNALUsPerFrame = 512
+
+// splitAnnexBNALUs splits an H.264/H.265 Annex-B access unit into individual NAL unit sub-slices
+// using a single SIMD-accelerated bytes.Index pass without copying NAL payloads.
+func splitAnnexBNALUs(dst [][]byte, data []byte) ([][]byte, bool) {
+	switch {
+	case len(data) >= 3 && data[0] == 0x00 && data[1] == 0x00 && data[2] == 0x01:
+		data = data[3:]
+	case len(data) >= 4 && data[0] == 0x00 && data[1] == 0x00 && data[2] == 0x00 && data[3] == 0x01:
+		data = data[4:]
+	default:
+		return dst[:0], false
+	}
+
+	out := dst[:0]
+	rem := data
+	for len(rem) > 0 {
+		next := bytes.Index(rem, sofiaRecordStartCode)
+		if next < 0 {
+			out = append(out, rem)
+			break
+		}
+		end := next
+		for end > 0 && rem[end-1] == 0x00 {
+			// A single preceding 0x00 belongs to a 4-byte 00 00 00 01 start code.
+			end--
+			break
+		}
+		if end > 0 {
+			if len(out) >= maxAnnexBNALUsPerFrame {
+				return dst[:0], false
+			}
+			out = append(out, rem[:end])
+		}
+		rem = rem[next+3:]
+	}
+	return out, len(out) > 0
 }
 
 // isHEVCLayerZeroHeader reports whether a 2-byte NAL header belongs to HEVC layer 0
@@ -259,7 +380,7 @@ func detectSofiaVideoCodec(codecByte byte, payload []byte) string {
 	// Pass 1: Match unambiguous parameter sets and H.264 IDR across the initial NAL units.
 	// H.264 SPS (7) and IDR (5) have bit 0 set in nal[0] and cannot collide with single-layer HEVC (bit 0 == 0).
 	// HEVC VPS/SPS/PPS (32..34 -> 0x40/0x42/0x44) have nal[0]&0x1F in {0, 2, 4} and cannot collide with H.264 SPS/PPS/IDR/SEI/AUD.
-	scanAnnexBNALUs(payload, 8, func(nal []byte) bool {
+	scanAnnexBNALUs(payload, 32, func(nal []byte) bool {
 		if len(nal) < 2 || nal[0]&0x80 != 0 {
 			return false
 		}
@@ -281,7 +402,7 @@ func detectSofiaVideoCodec(codecByte byte, payload []byte) string {
 	}
 
 	// Pass 2: Match bare HEVC IRAP slices (16..21) or H.264 PPS (8) when no SPS/VPS preceded them.
-	scanAnnexBNALUs(payload, 8, func(nal []byte) bool {
+	scanAnnexBNALUs(payload, 32, func(nal []byte) bool {
 		if len(nal) < 2 || nal[0]&0x80 != 0 {
 			return false
 		}

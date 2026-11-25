@@ -104,15 +104,15 @@ func (h *Header) Encode() []byte {
 	return buf
 }
 
-// DecodeHeader parses a 20-byte slice into a Header struct.
-func DecodeHeader(data []byte) (*Header, error) {
+// DecodeHeaderValue parses a 20-byte slice into a Header value without heap allocation.
+func DecodeHeaderValue(data []byte) (Header, error) {
 	if len(data) < HeaderLength {
-		return nil, fmt.Errorf("data too short for header: %d < %d", len(data), HeaderLength)
+		return Header{}, fmt.Errorf("data too short for header: %d < %d", len(data), HeaderLength)
 	}
 	if data[0] != HeaderMagic {
-		return nil, fmt.Errorf("invalid header magic: 0x%02X, expected 0x%02X", data[0], HeaderMagic)
+		return Header{}, fmt.Errorf("invalid header magic: 0x%02X, expected 0x%02X", data[0], HeaderMagic)
 	}
-	return &Header{
+	return Header{
 		Magic:      data[0],
 		Channel:    data[1],
 		Reserved:   [2]byte{data[2], data[3]},
@@ -123,6 +123,15 @@ func DecodeHeader(data []byte) (*Header, error) {
 		MsgID:      binary.LittleEndian.Uint16(data[14:16]),
 		DataLength: binary.LittleEndian.Uint32(data[16:20]),
 	}, nil
+}
+
+// DecodeHeader parses a 20-byte slice into a Header struct.
+func DecodeHeader(data []byte) (*Header, error) {
+	hdr, err := DecodeHeaderValue(data)
+	if err != nil {
+		return nil, err
+	}
+	return &hdr, nil
 }
 
 // Login JSON Request (DVRIP / Sofia standard flat structure on MsgID 1000)

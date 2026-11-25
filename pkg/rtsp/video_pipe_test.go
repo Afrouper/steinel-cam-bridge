@@ -443,3 +443,48 @@ func TestServerVideoSizeForwardsToPrimaryStream(t *testing.T) {
 	assert.Zero(t, h)
 	assert.True(t, since.IsZero())
 }
+
+func TestSetH265ParametersPreservedAcrossSetVideoCodec(t *testing.T) {
+	srv, err := NewServer(8579, "cam", "none", "", "")
+	require.NoError(t, err)
+	require.NoError(t, srv.Start())
+	defer srv.Close()
+
+	st := srv.PrimaryStream()
+	vps := []byte{
+		0x40, 0x01, 0x0c, 0x01, 0xff, 0xff, 0x01, 0x60, 0x00, 0x00, 0x03, 0x00,
+		0x00, 0x03, 0x00, 0x00, 0x03, 0x00, 0x00, 0x03, 0x00, 0x5d, 0xac, 0x09,
+	}
+	sps := []byte{
+		0x42, 0x01, 0x01, 0x01, 0x60, 0x00, 0x00, 0x03,
+		0x00, 0x90, 0x00, 0x00, 0x03, 0x00, 0x00, 0x03,
+		0x00, 0x78, 0xa0, 0x03, 0xc0, 0x80, 0x10, 0xe5,
+		0x96, 0x66, 0x69, 0x24, 0xca, 0xe0, 0x10, 0x00,
+		0x00, 0x03, 0x00, 0x10, 0x00, 0x00, 0x03, 0x01,
+		0xe0, 0x80,
+	}
+	pps := []byte{0x44, 0x01, 0xc1, 0x72, 0xb4, 0x62, 0x40}
+
+	// Publish H.265 parameters BEFORE switching the stream from H.264 to H.265.
+	st.SetH265Parameters(vps, sps, pps)
+	require.True(t, st.SetVideoCodec(VideoCodecH265))
+
+	u, err := base.ParseURL("rtsp://127.0.0.1:8579/cam")
+	require.NoError(t, err)
+
+	tcp := gortsplib.TransportTCP
+	c := &gortsplib.Client{Transport: &tcp}
+	require.NoError(t, c.Start(u.Scheme, u.Host))
+	defer c.Close()
+
+	desc, _, err := c.Describe(u)
+	require.NoError(t, err)
+
+	var h265Fmt *format.H265
+	medi := desc.FindFormat(&h265Fmt)
+	require.NotNil(t, medi, "DESCRIBE must announce H.265 track")
+	gotVPS, gotSPS, gotPPS := h265Fmt.SafeParams()
+	assert.Equal(t, vps, gotVPS, "SDP must immediately carry VPS")
+	assert.Equal(t, sps, gotSPS, "SDP must immediately carry SPS")
+	assert.Equal(t, pps, gotPPS, "SDP must immediately carry PPS")
+}

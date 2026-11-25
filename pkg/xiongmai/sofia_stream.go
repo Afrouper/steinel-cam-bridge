@@ -2,9 +2,7 @@ package xiongmai
 
 import (
 	"bufio"
-	"bytes"
 	"context"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,9 +15,16 @@ import (
 
 	"github.com/Afrouper/steinel-cam-bridge/pkg/audio"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/logger"
-	"github.com/bluenviron/mediacommon/pkg/codecs/h264"
 	"github.com/pion/rtp"
 )
+
+// defaultSofiaVideoSilenceTimeout bounds how long readLoop tolerates an active media socket
+// without any incoming video records (0xFC/0xFE/0xFD), e.g. audio-only or metadata-only zombie state.
+const defaultSofiaVideoSilenceTimeout = 15 * time.Second
+
+// defaultSofiaKeyframeWaitTimeout bounds how long readLoop waits for an I-frame while P-frames
+// are gated (!gotKeyframe), recovering if the camera encoder stops emitting keyframes altogether.
+const defaultSofiaKeyframeWaitTimeout = 30 * time.Second
 
 // VideoWriter represents an RTSP stream or server that accepts H.264/H.265 RTP video packets.
 type VideoWriter interface {
@@ -29,19 +34,23 @@ type VideoWriter interface {
 // SofiaStream handles streaming H.264/H.265 video natively from the camera's Xiongmai Sofia NetIP
 // port (TCP 34567) using OPMonitor (MsgID 1410 / 1412), completely bypassing RTSP port 554.
 type SofiaStream struct {
-	cameraIP        string
-	port            int
-	streamType      string
-	client          *Client
-	rtspServer      VideoWriter
-	mediaConn       net.Conn
-	connMu          sync.Mutex
-	streamStartTime time.Time
-	lastPacketTime  atomic.Int64
-	running         atomic.Bool
-	stopChan        chan struct{}
-	wg              sync.WaitGroup
-	mu              sync.Mutex
+	cameraIP            string
+	port                int
+	streamType          string
+	client              *Client
+	rtspServer          VideoWriter
+	mediaConn           net.Conn
+	streamStartTime     time.Time
+	lastPacketTime      atomic.Int64
+	lastVideoRecordTime atomic.Int64
+	videoSilenceTimeout time.Duration
+	keyframeWaitTimeout time.Duration
+	running             atomic.Bool
+	stopChan            chan struct{}
+	wg                  sync.WaitGroup
+	// Lock order: opMu -> mu -> tsMu (readLoop never acquires opMu).
+	opMu sync.Mutex // serializes Start and Stop lifecycle transitions (including wg.Wait)
+	mu   sync.Mutex // guards mediaConn, stopChan, streamType, and timeout overrides
 
 	// Timestamp & Frame timing
 	fps           int
@@ -49,13 +58,17 @@ type SofiaStream struct {
 	currentTS     uint32
 	lastFrameTime time.Time
 	streamBuf     []byte
+	nalusBuf      [][]byte
 
 	// Video packetization state (guarded by tsMu)
 	packetizer         videoPacketizer
-	activeStreamType   string // snapshot of streamType for the active session
-	detectedCodec      string // last detected codec ("h264" or "h265"), preserved across on-demand restarts
-	hasLoggedCodec     bool   // whether initial codec detection has been logged
-	gotKeyframe        bool   // P-frames are dropped until the first I-frame of a session
+	activeStreamType   string        // snapshot of streamType for the active session
+	detectedCodec      string        // last detected codec ("h264" or "h265"), preserved across on-demand restarts
+	hasLoggedCodec     bool          // whether initial codec detection has been logged
+	gotKeyframe        bool          // P-frames are dropped until the first I-frame of a session
+	keyframeNotify     chan struct{} // closed (and set to nil) when a keyframe is dispatched
+	keyframeWaitStart  time.Time
+	lastKeyframeTime   time.Time
 	isCodecUnsupported bool   // camera codec cannot be announced by the RTSP writer: drop video
 	droppedBeforeKey   uint64 // P-frames dropped while waiting for the first keyframe
 	payloadCount       uint64
@@ -91,13 +104,16 @@ func NewSofiaStream(cameraIP string, port int, client *Client, rtspServer VideoW
 		audioCodec = ac.GetAudioCodec()
 	}
 	s := &SofiaStream{
-		cameraIP:   cameraIP,
-		port:       port,
-		streamType: st,
-		client:     client,
-		rtspServer: rtspServer,
-		fps:        fps,
-		audioCodec: audioCodec,
+		cameraIP:            cameraIP,
+		port:                port,
+		streamType:          st,
+		client:              client,
+		rtspServer:          rtspServer,
+		videoSilenceTimeout: defaultSofiaVideoSilenceTimeout,
+		keyframeWaitTimeout: defaultSofiaKeyframeWaitTimeout,
+		fps:                 fps,
+		keyframeNotify:      make(chan struct{}),
+		audioCodec:          audioCodec,
 	}
 	if audioCodec == "aac" {
 		if aacWriter, ok := rtspServer.(interface {
@@ -139,8 +155,69 @@ func (s *SofiaStream) SetFPS(fps int) {
 func (s *SofiaStream) AwaitNextKeyframe() {
 	s.tsMu.Lock()
 	s.gotKeyframe = false
+	if s.keyframeNotify == nil {
+		s.keyframeNotify = make(chan struct{})
+	}
+	s.keyframeWaitStart = time.Now()
 	s.droppedBeforeKey = 0
 	s.tsMu.Unlock()
+}
+
+// AwaitNextKeyframeIfStale gates P-frame forwarding until the next I-frame only if the last
+// delivered keyframe is older than minAge. This avoids dropping P-frames right after an
+// initial keyframe or an automatic H.264->H.265 codec switch.
+func (s *SofiaStream) AwaitNextKeyframeIfStale(minAge time.Duration) {
+	s.tsMu.Lock()
+	if s.gotKeyframe && (s.lastKeyframeTime.IsZero() || time.Since(s.lastKeyframeTime) >= minAge) {
+		s.gotKeyframe = false
+		if s.keyframeNotify == nil {
+			s.keyframeNotify = make(chan struct{})
+		}
+		s.keyframeWaitStart = time.Now()
+		s.droppedBeforeKey = 0
+	}
+	s.tsMu.Unlock()
+}
+
+// WaitFirstKeyframe blocks until the active SofiaStream has processed and dispatched at least
+// one keyframe (including any H.264/H.265 SDP codec and parameter-set switch), or until the
+// stream stops, ctx is canceled, or timeout elapses.
+func (s *SofiaStream) WaitFirstKeyframe(ctx context.Context, timeout time.Duration) bool {
+	if timeout <= 0 {
+		return false
+	}
+	s.mu.Lock()
+	stopCh := s.stopChan
+	running := s.running.Load()
+	s.mu.Unlock()
+	if !running || stopCh == nil {
+		return false
+	}
+
+	s.tsMu.Lock()
+	if s.gotKeyframe {
+		s.tsMu.Unlock()
+		return true
+	}
+	if s.keyframeNotify == nil {
+		s.keyframeNotify = make(chan struct{})
+	}
+	notifyCh := s.keyframeNotify
+	s.tsMu.Unlock()
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	select {
+	case <-notifyCh:
+		return true
+	case <-stopCh:
+		return false
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return false
+	}
 }
 
 // FPS returns the configured framerate.
@@ -173,14 +250,18 @@ func (s *SofiaStream) SetStreamType(streamType string) {
 // Start establishes the secondary TCP media connection, claims the media channel,
 // issues the encrypted OPMonitor Start command on the control socket, and begins streaming.
 func (s *SofiaStream) Start(ctx context.Context) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
 
 	if s.running.Load() {
 		return nil
 	}
+	// Wait for any previously exiting readLoop (e.g. after an unexpected media socket drop)
+	// to finish teardown and OPMonitor Stop before dialing a new media session.
+	s.wg.Wait()
+
 	if s.client == nil || !s.client.IsLoggedIn() {
-		return errors.New("cannot start Sofia video stream: control client is not logged in")
+		return errors.New("xiongmai: cannot start sofia video stream: control client is not logged in")
 	}
 
 	sessionID := s.client.GetSessionID()
@@ -200,10 +281,7 @@ func (s *SofiaStream) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to connect to Sofia media port: %w", err)
 	}
 
-	stType := s.streamType
-	if stType == "" {
-		stType = "Main"
-	}
+	stType := s.StreamType()
 
 	// Step 1: OPMonitor Media Claim (MsgID 1413) on media socket
 	claimReq := OPMonitorReq{
@@ -252,7 +330,7 @@ func (s *SofiaStream) Start(ctx context.Context) error {
 		_ = conn.Close()
 		return fmt.Errorf("failed to read OPMonitor Claim response header: %w", err)
 	}
-	respHdr, err := DecodeHeader(respHdrBuf)
+	respHdr, err := decodeMediaHeader(respHdrBuf)
 	if err != nil {
 		_ = conn.Close()
 		return fmt.Errorf("invalid OPMonitor Claim response header: %w", err)
@@ -282,6 +360,7 @@ func (s *SofiaStream) Start(ctx context.Context) error {
 			return fmt.Errorf("OPMonitor Claim rejected by camera with Ret=%d", claimResp.Ret)
 		}
 	}
+	_ = conn.SetDeadline(time.Time{})
 	logger.Debug("Xiongmai Stream", "✅ OPMonitor Claim acknowledged on media socket (Ret=%d)", claimResp.Ret)
 
 	// Step 2: OPMonitor Start (MsgID 1410) on Control Socket (AES encrypted with CommunicateKey)
@@ -309,12 +388,22 @@ func (s *SofiaStream) Start(ctx context.Context) error {
 	} else {
 		logger.Debug("Xiongmai Stream", "📡 Sending OPMonitor Start (MsgID 1410) on control socket...")
 	}
-	_, err = s.client.SendPacket(MsgMonitorStartReq, startPayload)
+	startRespBytes, err := s.client.SendPacket(MsgMonitorStartReq, startPayload)
 	if err != nil {
 		_ = conn.Close()
 		return fmt.Errorf("failed to send OPMonitor Start: %w", err)
 	}
-	logger.Debug("Xiongmai Stream", "✅ OPMonitor Start acknowledged, video stream triggered")
+	var startResp struct {
+		Ret int `json:"Ret"`
+	}
+	cleanStartResp := strings.TrimRight(string(startRespBytes), "\x00\r\n ")
+	if err := json.Unmarshal([]byte(cleanStartResp), &startResp); err == nil {
+		if startResp.Ret != 100 && startResp.Ret != 0 {
+			_ = conn.Close()
+			return fmt.Errorf("opmonitor start rejected by camera (ret=%d)", startResp.Ret)
+		}
+	}
+	logger.Debug("Xiongmai Stream", "✅ OPMonitor Start acknowledged (Ret=%d), video stream triggered", startResp.Ret)
 
 	// Step 3: Initialize the video packetizer on first start and reuse it across on-demand
 	// restarts so RTP sequence numbers and SSRCs remain continuous.
@@ -334,95 +423,100 @@ func (s *SofiaStream) Start(ctx context.Context) error {
 		}
 	}
 
-	s.connMu.Lock()
-	s.mediaConn = conn
-	s.connMu.Unlock()
-	s.stopChan = make(chan struct{})
+	now := time.Now()
 	s.tsMu.Lock()
 	if s.streamStartTime.IsZero() {
-		s.streamStartTime = time.Now()
+		s.streamStartTime = now
 	}
 	s.streamBuf = nil
 	s.packetizer = pktz
 	s.activeStreamType = stType
 	s.gotKeyframe = false
+	if s.keyframeNotify == nil {
+		s.keyframeNotify = make(chan struct{})
+	}
+	s.keyframeWaitStart = now
+	s.lastKeyframeTime = time.Time{}
 	s.isCodecUnsupported = false
 	s.droppedBeforeKey = 0
 	s.payloadCount = 0
 	if s.audioSSRC == 0 {
-		s.audioSSRC = uint32(time.Now().UnixNano())
+		s.audioSSRC = uint32(now.UnixNano())
 	}
 	s.audioTimestamp = 0
 	fps := s.fps
 	s.tsMu.Unlock()
-	s.running.Store(true)
 
+	s.lastPacketTime.Store(0)
+	s.lastVideoRecordTime.Store(0)
+	s.mu.Lock()
+	s.mediaConn = conn
+	s.stopChan = make(chan struct{})
+	s.running.Store(true)
 	s.wg.Add(1)
+	s.mu.Unlock()
+
 	go s.readLoop(ctx, conn)
 
 	logger.Info("Xiongmai Stream", "▶️ Sofia native video streaming pipeline active (Port %d, FPS %d)", s.port, fps)
 	return nil
 }
 
-// maxSofiaMediaPayload is the sanity limit for a single DVRIP packet on the media socket.
-const maxSofiaMediaPayload = 1024 * 1024
-
-// maxSofiaResyncBytes bounds the number of bytes scanned while resynchronizing DVRIP framing.
-const maxSofiaResyncBytes = 512 * 1024
-
-// sofiaDiagPayloads is the number of initial MsgID 1412 payloads hex-dumped at debug level.
-const sofiaDiagPayloads = 3
-
-// decodeMediaHeader decodes a DVRIP header received on the media socket and validates its payload length.
-func decodeMediaHeader(buf []byte) (*Header, error) {
-	hdr, err := DecodeHeader(buf)
-	if err != nil {
-		return nil, err
-	}
-	if hdr.DataLength > maxSofiaMediaPayload {
-		return nil, fmt.Errorf("implausible payload length %d", hdr.DataLength)
-	}
-	return hdr, nil
-}
-
-// resyncMediaHeader slides byte-by-byte over the media stream until a plausible DVRIP header is found.
-func resyncMediaHeader(rd io.ByteReader, hdrBuf []byte) (*Header, error) {
-	for i := 0; i < maxSofiaResyncBytes; i++ {
-		copy(hdrBuf, hdrBuf[1:])
-		b, err := rd.ReadByte()
-		if err != nil {
-			return nil, err
-		}
-		hdrBuf[len(hdrBuf)-1] = b
-		if hdrBuf[0] != HeaderMagic {
-			continue
-		}
-		hdr, err := decodeMediaHeader(hdrBuf)
-		if err != nil {
-			continue
-		}
-		isValidEnvelope := hdr.Channel <= 1 && hdr.Reserved[0] == 0 && hdr.Reserved[1] == 0 && hdr.DataLength > 0
-		isMonitorMsg := hdr.MsgID == MsgMonitorData || hdr.MsgID == MsgMonitorStartResp || hdr.MsgID == MsgMonitorClaimResp
-		if isValidEnvelope && isMonitorMsg {
-			return hdr, nil
-		}
-	}
-	return nil, fmt.Errorf("no valid dvrip header found within %d bytes", maxSofiaResyncBytes)
-}
-
 // readLoop continuously reads binary Sofia packets from the media socket,
 // reassembles H.264/H.265 video frames, and forwards them to the RTSP server.
 func (s *SofiaStream) readLoop(ctx context.Context, conn net.Conn) {
 	defer func() {
-		s.running.Store(false)
-		s.connMu.Lock()
-		if s.mediaConn == conn {
-			_ = conn.Close()
+		_ = conn.Close()
+
+		s.mu.Lock()
+		isCurrentSession := s.mediaConn == conn
+		var unexpectedExit bool
+		var sessionStopChan chan struct{}
+		if isCurrentSession {
 			s.mediaConn = nil
+			sessionStopChan = s.stopChan
+			s.stopChan = nil
+			unexpectedExit = s.running.CompareAndSwap(true, false)
 		}
-		s.connMu.Unlock()
+		s.mu.Unlock()
+		if sessionStopChan != nil {
+			close(sessionStopChan)
+		}
+
+		if isCurrentSession {
+			s.tsMu.Lock()
+			s.streamBuf = nil
+			s.tsMu.Unlock()
+		}
+
+		if unexpectedExit {
+			if ctx.Err() == nil {
+				logger.Warn("Xiongmai Stream", "⚠️ Sofia video stream readLoop exited unexpectedly; marking stream inactive for recovery")
+				s.sendMonitorStop()
+			} else {
+				logger.Debug("Xiongmai Stream", "⏹️ Sofia video stream readLoop stopped (context canceled: %v)", ctx.Err())
+			}
+		}
+
 		s.wg.Done()
 	}()
+
+	s.mu.Lock()
+	stopChan := s.stopChan
+	silenceTimeout := s.videoSilenceTimeout
+	keyframeTimeout := s.keyframeWaitTimeout
+	s.mu.Unlock()
+	if stopChan == nil || !s.running.Load() {
+		return
+	}
+	if silenceTimeout <= 0 {
+		silenceTimeout = defaultSofiaVideoSilenceTimeout
+	}
+	if keyframeTimeout <= 0 {
+		keyframeTimeout = defaultSofiaKeyframeWaitTimeout
+	}
+	readWait := min(5*time.Second, silenceTimeout)
+	sessionStart := time.Now()
 
 	var firstPacketOnce sync.Once
 	rd := bufio.NewReaderSize(conn, 64*1024)
@@ -433,13 +527,18 @@ func (s *SofiaStream) readLoop(ctx context.Context, conn net.Conn) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-s.stopChan:
+		case <-stopChan:
 			return
 		default:
 		}
 
+		if s.isVideoSilent(sessionStart, silenceTimeout, keyframeTimeout) {
+			logger.Warn("Xiongmai Stream", "⚠️ Sofia video stream stalled (no video records for >%v or no keyframe for >%v); restarting stream", silenceTimeout, keyframeTimeout)
+			return
+		}
+
 		// Read 20-byte Sofia header
-		_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		_ = conn.SetReadDeadline(time.Now().Add(readWait))
 		if _, err := io.ReadFull(rd, hdrBuf); err != nil {
 			if s.running.Load() {
 				logger.Warn("Xiongmai Stream", "⚠️ Sofia media socket read header error: %v", err)
@@ -450,7 +549,7 @@ func (s *SofiaStream) readLoop(ctx context.Context, conn net.Conn) {
 		hdr, err := decodeMediaHeader(hdrBuf)
 		if err != nil {
 			logger.Debug("Xiongmai Stream", "⚠️ Lost DVRIP framing on media socket (%v), resynchronizing: %s", err, logger.FormatBinary(hdrBuf))
-			_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+			_ = conn.SetReadDeadline(time.Now().Add(readWait))
 			hdr, err = resyncMediaHeader(rd, hdrBuf)
 			if err != nil {
 				if s.running.Load() {
@@ -461,6 +560,10 @@ func (s *SofiaStream) readLoop(ctx context.Context, conn net.Conn) {
 			s.tsMu.Lock()
 			s.streamBuf = s.streamBuf[:0]
 			s.gotKeyframe = false
+			if s.keyframeNotify == nil {
+				s.keyframeNotify = make(chan struct{})
+			}
+			s.keyframeWaitStart = time.Now()
 			s.tsMu.Unlock()
 		}
 
@@ -468,7 +571,7 @@ func (s *SofiaStream) readLoop(ctx context.Context, conn net.Conn) {
 			payloadBuf = make([]byte, hdr.DataLength)
 		}
 		payload := payloadBuf[:hdr.DataLength]
-		_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		_ = conn.SetReadDeadline(time.Now().Add(readWait))
 		if _, err := io.ReadFull(rd, payload); err != nil {
 			if s.running.Load() {
 				logger.Warn("Xiongmai Stream", "⚠️ Sofia media socket read payload error: %v", err)
@@ -486,405 +589,105 @@ func (s *SofiaStream) readLoop(ctx context.Context, conn net.Conn) {
 	}
 }
 
-// handleMediaPayload appends incoming Sofia media data to the stream buffer and triggers demuxing.
-func (s *SofiaStream) handleMediaPayload(payload []byte) {
-	if len(payload) == 0 {
+func (s *SofiaStream) isVideoSilent(sessionStart time.Time, silenceTimeout, keyframeTimeout time.Duration) bool {
+	s.tsMu.Lock()
+	unsupported := s.isCodecUnsupported
+	waitingForKey := !s.gotKeyframe
+	keyWaitStart := s.keyframeWaitStart
+	s.tsMu.Unlock()
+	if unsupported {
+		return false
+	}
+	if silenceTimeout > 0 {
+		lastRecNS := s.lastVideoRecordTime.Load()
+		ref := sessionStart
+		if lastRecNS > 0 {
+			ref = time.Unix(0, lastRecNS)
+		}
+		if time.Since(ref) >= silenceTimeout {
+			return true
+		}
+	}
+	if keyframeTimeout > 0 && waitingForKey {
+		ref := sessionStart
+		if !keyWaitStart.IsZero() {
+			ref = keyWaitStart
+		}
+		if time.Since(ref) >= keyframeTimeout {
+			return true
+		}
+	}
+	return false
+}
+
+// sendMonitorStop sends an OPMonitor Stop command on the control socket if still logged in.
+func (s *SofiaStream) sendMonitorStop() {
+	if s.client == nil || !s.client.IsLoggedIn() {
 		return
 	}
 
 	s.tsMu.Lock()
-	defer s.tsMu.Unlock()
-
-	// Skip JSON control responses that might be interleaved on the media socket when idle,
-	// without ever dropping binary continuation chunks that happen to start with 0x7B ('{').
-	if len(s.streamBuf) == 0 && payload[0] == '{' {
-		trimmed := bytes.TrimRight(payload, "\x00\r\n ")
-		if len(trimmed) >= 2 && trimmed[len(trimmed)-1] == '}' {
-			return
-		}
+	stType := s.activeStreamType
+	s.tsMu.Unlock()
+	if stType == "" {
+		stType = s.StreamType()
 	}
 
-	s.payloadCount++
-	if s.payloadCount <= sofiaDiagPayloads {
-		logger.Debug("Xiongmai Stream", "🔬 MsgID 1412 payload #%d (raw): %s", s.payloadCount, logger.FormatBinary(payload, 64))
-	}
-
-	s.streamBuf = append(s.streamBuf, payload...)
-	s.processStreamBufferLocked()
-}
-
-// findNextSofiaRecord searches for the next MPEG-PS / Sofia record start code (0x00 0x00 0x01 [0xF8-0xFE]).
-func findNextSofiaRecord(buf []byte) int {
-	for i := 0; i+3 < len(buf); i++ {
-		if buf[i] == 0x00 && buf[i+1] == 0x00 && buf[i+2] == 0x01 {
-			marker := buf[i+3]
-			if marker >= 0xF8 && marker <= 0xFE {
-				return i
-			}
-		}
-	}
-	return -1
-}
-
-// processStreamBufferLocked parses Xiongmai media markers (I-Frame, P-Frame, Audio) using exact record lengths
-// and demuxes H.264 Annex-B data immediately without waiting for the next frame delimiter.
-func (s *SofiaStream) processStreamBufferLocked() {
-	for len(s.streamBuf) >= 4 {
-		// Resynchronize on MPEG-PS / Sofia record start code (0x00 0x00 0x01)
-		if !bytes.HasPrefix(s.streamBuf, []byte{0x00, 0x00, 0x01}) {
-			idx := bytes.Index(s.streamBuf, []byte{0x00, 0x00, 0x01})
-			if idx > 0 {
-				s.streamBuf = s.streamBuf[idx:]
-			} else {
-				if len(s.streamBuf) > 2 {
-					s.streamBuf = s.streamBuf[len(s.streamBuf)-2:]
-				}
-				break
-			}
-			if len(s.streamBuf) < 4 {
-				break
-			}
-		}
-
-		pType := s.streamBuf[3]
-		var totalRecordSize int
-		var headerLen int
-
-		switch pType {
-		case 0xFC, 0xFE:
-			// Keyframe / I-Frame
-			headerLen = 16
-			if len(s.streamBuf) < headerLen {
-				return
-			}
-			payloadSize := int(binary.LittleEndian.Uint32(s.streamBuf[12:16]))
-			if payloadSize > 0 {
-				totalRecordSize = headerLen + payloadSize
-			} else {
-				// Fallback: search for next Sofia record start code
-				if nextIdx := findNextSofiaRecord(s.streamBuf[headerLen:]); nextIdx >= 0 {
-					totalRecordSize = headerLen + nextIdx
-				} else {
-					return
-				}
-			}
-
-		case 0xFD:
-			// Inter-frame / P-Frame
-			headerLen = 8
-			if len(s.streamBuf) < headerLen {
-				return
-			}
-			payloadSize := int(binary.LittleEndian.Uint32(s.streamBuf[4:8]))
-			if payloadSize > 0 {
-				totalRecordSize = headerLen + payloadSize
-			} else {
-				// Fallback: search for next Sofia record start code
-				if nextIdx := findNextSofiaRecord(s.streamBuf[headerLen:]); nextIdx >= 0 {
-					totalRecordSize = headerLen + nextIdx
-				} else {
-					return
-				}
-			}
-
-		case 0xFA, 0xF9:
-			// Audio frame (0xFA) or metadata frame (0xF9)
-			headerLen = 8
-			if len(s.streamBuf) < headerLen {
-				return
-			}
-			payloadSize := int(binary.LittleEndian.Uint16(s.streamBuf[6:8]))
-			if payloadSize > 0 {
-				totalRecordSize = headerLen + payloadSize
-			} else {
-				// Fallback: search for next Sofia record start code
-				if nextIdx := findNextSofiaRecord(s.streamBuf[headerLen:]); nextIdx >= 0 {
-					totalRecordSize = headerLen + nextIdx
-				} else {
-					return
-				}
-			}
-
-		default:
-			// Unknown marker byte: advance past the start code to resynchronize
-			s.streamBuf = s.streamBuf[3:]
-			continue
-		}
-
-		if totalRecordSize <= headerLen || totalRecordSize > 2*1024*1024 {
-			s.streamBuf = s.streamBuf[3:]
-			continue
-		}
-
-		if len(s.streamBuf) < totalRecordSize {
-			// Record not complete yet, wait for more data
-			break
-		}
-
-		record := s.streamBuf[:totalRecordSize]
-		s.streamBuf = s.streamBuf[totalRecordSize:]
-
-		switch pType {
-		case 0xFC, 0xFE, 0xFD:
-			s.dispatchVideoRecordLocked(pType, record[:headerLen], record[headerLen:])
-		case 0xFA:
-			audioData := record[headerLen:]
-			s.dispatchAudioLocked(audioData)
-		case 0xF9:
-			// 0xF9 is stream/encoder metadata or sync marker in Xiongmai DVRIP protocol, NOT audio samples.
-			// Silently advance buffer without forwarding to audio pipeline to eliminate clicking noise (Issue #74).
-		}
-	}
-
-	if len(s.streamBuf) == 0 {
-		if cap(s.streamBuf) > 256*1024 {
-			s.streamBuf = nil
-		} else {
-			s.streamBuf = s.streamBuf[:0]
-		}
-	}
-}
-
-// dispatchVideoRecordLocked routes a complete Sofia video record (I- or P-frame) through the
-// active codec packetizer. Codec detection runs on every I-frame so an H.265 stream is switched
-// automatically even if Simplify.Encode reported H.264.
-func (s *SofiaStream) dispatchVideoRecordLocked(pType byte, hdr []byte, payload []byte) {
-	if pType == 0xFC || pType == 0xFE {
-		s.ensureVideoCodecLocked(hdr, payload)
-		if !s.gotKeyframe && s.droppedBeforeKey > 0 {
-			logger.Debug("Xiongmai Stream", "⏭️ Dropped %d P-frame(s) before the first keyframe", s.droppedBeforeKey)
-		}
-		s.gotKeyframe = true
-	} else if !s.gotKeyframe {
-		// Decoders cannot start on a P-frame: wait for the first I-frame of the session.
-		s.droppedBeforeKey++
-		return
-	}
-
-	if s.isCodecUnsupported {
-		return
-	}
-	s.dispatchVideoFrameLocked(payload)
-}
-
-// ensureVideoCodecLocked selects or switches the active videoPacketizer based on an I-frame.
-func (s *SofiaStream) ensureVideoCodecLocked(hdr []byte, payload []byte) {
-	var codecByte, fpsByte, widthBlocks, heightBlocks byte
-	if len(hdr) >= 8 {
-		codecByte = hdr[4]
-		fpsByte = hdr[5]
-		widthBlocks = hdr[6]
-		heightBlocks = hdr[7]
-	}
-
-	detected := detectSofiaVideoCodec(codecByte, payload)
-	if detected == "" {
-		if s.packetizer != nil {
-			return
-		}
-		detected = videoCodecH264
-	}
-
-	codecChanged := s.packetizer == nil || s.packetizer.codec() != detected
-	if !s.hasLoggedCodec || codecChanged {
-		nalHdr := firstAnnexBNALU(payload)
-		if len(nalHdr) > 2 {
-			nalHdr = nalHdr[:2]
-		}
-		logger.Info("Xiongmai Stream", "🎞️ Sofia video codec detected: %s (Xiongmai record header: %s, first NAL header: %s, %dx%d @ %d fps)",
-			strings.ToUpper(detected), logger.FormatBinary(hdr), logger.FormatBinary(nalHdr),
-			int(widthBlocks)*8, int(heightBlocks)*8, fpsByte)
-
-		if detected == videoCodecH265 && s.client != nil {
-			stType := s.activeStreamType
-			if stType == "" {
-				stType = "Main"
-			}
-			if comp := s.client.GetVideoCompression(stType); comp != "" && !strings.Contains(strings.ToUpper(comp), "265") {
-				logger.Warn("Xiongmai Stream", "⚠️ Camera reports Compression=%s for stream '%s' (Simplify.Encode), but the native Sofia stream actually carries H.265/HEVC. Announcing H.265 via RTSP.", comp, stType)
-			}
-		}
-	}
-
-	s.detectedCodec = detected
-	s.hasLoggedCodec = true
-
-	if !codecChanged {
-		return
-	}
-
-	pktz, err := newVideoPacketizer(detected)
-	if err != nil {
-		logger.Error("Xiongmai Stream", "❌ Failed to initialize %s packetizer: %v", strings.ToUpper(detected), err)
-		s.isCodecUnsupported = true
-		return
-	}
-
-	if sw, ok := s.rtspServer.(videoCodecSwitcher); ok {
-		sw.SetVideoCodec(detected)
-	} else if detected != videoCodecH264 {
-		logger.Error("Xiongmai Stream", "❌ Camera delivers %s but the RTSP output only supports H.264; dropping video.", strings.ToUpper(detected))
-		s.isCodecUnsupported = true
-		return
-	}
-
-	s.packetizer = pktz
-	s.isCodecUnsupported = false
-}
-
-// dispatchVideoFrameLocked unmarshals an Annex-B frame, packetizes it via the active codec
-// packetizer, assigns a strictly monotonic 90 kHz timestamp, and forwards it to the RTSP server.
-func (s *SofiaStream) dispatchVideoFrameLocked(data []byte) {
-	if len(data) == 0 || s.rtspServer == nil || s.packetizer == nil {
-		return
-	}
-
-	// Resynchronize on first Annex-B start code if leading padding exists
-	if !bytes.HasPrefix(data, []byte{0x00, 0x00, 0x01}) && !bytes.HasPrefix(data, []byte{0x00, 0x00, 0x00, 0x01}) {
-		if idx := bytes.Index(data, []byte{0x00, 0x00, 0x01}); idx > 0 {
-			data = data[idx:]
-		}
-	}
-
-	// Annex-B start-code framing is identical for H.264 and H.265.
-	nalus, err := h264.AnnexBUnmarshal(data)
-	if err != nil || len(nalus) == 0 {
-		logger.Trace("Xiongmai Stream", "⚠️ Failed to unmarshal Annex-B NALUs (%d bytes): %v", len(data), err)
-		return
-	}
-
-	pkts, err := s.packetizer.packetize(nalus, s.rtspServer)
-	if err != nil || len(pkts) == 0 {
-		if err != nil {
-			logger.Trace("Xiongmai Stream", "⚠️ Failed to RTP-encode %s NALUs: %v", strings.ToUpper(s.packetizer.codec()), err)
-		}
-		return
-	}
-
-	ts := s.generateTimestampLocked()
-	s.lastPacketTime.Store(time.Now().UnixNano())
-	for _, pkt := range pkts {
-		pkt.Timestamp = ts
-		s.rtspServer.WriteVideoPacket(pkt)
-	}
-}
-
-// dispatchAudioLocked processes camera microphone audio (8 kHz G.711 A-law) and forwards it to the RTSP server.
-func (s *SofiaStream) dispatchAudioLocked(audioData []byte) {
-	if len(audioData) == 0 || len(audioData) > 4096 || s.rtspServer == nil || s.audioCodec == "none" {
-		return
-	}
-	if s.audioTranscoder != nil {
-		// Xiongmai microphone default is G.711 A-law (PCMA)
-		_ = s.audioTranscoder.ProcessPCMA(audioData)
-	} else if audioWriter, ok := s.rtspServer.(interface {
-		WriteAudioPacket(pkt *rtp.Packet)
-	}); ok {
-		pcmuPayload := audio.TranscodePCMAToPCMU(audioData)
-		now := time.Now()
-		if s.audioTimestamp == 0 {
-			if s.streamStartTime.IsZero() {
-				s.streamStartTime = now
-			}
-			s.audioTimestamp = uint32(now.Sub(s.streamStartTime).Seconds() * 8000)
-		}
-		pkt := &rtp.Packet{
-			Header: rtp.Header{
-				Version:        2,
-				PayloadType:    0,
-				SequenceNumber: s.audioSeq,
-				Timestamp:      s.audioTimestamp,
-				SSRC:           s.audioSSRC,
+	sessionHex := fmt.Sprintf("0x%010x", s.client.GetSessionID())
+	stopReq := OPMonitorReq{
+		Name: "OPMonitor",
+		OPMonitor: OPMonitorInfo{
+			Action: "Stop",
+			Parameter: &OPMonitorParam{
+				Channel:    0,
+				CombinMode: "NONE",
+				StreamType: stType,
+				TransMode:  "TCP",
 			},
-			Payload: pcmuPayload,
-		}
-		s.audioSeq++
-		s.audioTimestamp += uint32(len(pcmuPayload))
-		audioWriter.WriteAudioPacket(pkt)
+		},
+		SessionID: sessionHex,
 	}
-}
-
-// generateTimestampLocked generates strictly monotonic 90 kHz RTP timestamps anchored to streamStartTime.
-// This prevents timestamp drift during TCP/Wi-Fi burst packet delivery while ensuring strict monotonicity.
-func (s *SofiaStream) generateTimestampLocked() uint32 {
-	now := time.Now()
-	if s.streamStartTime.IsZero() {
-		s.streamStartTime = now
+	if stopPayload, err := json.Marshal(stopReq); err == nil {
+		logger.Debug("Xiongmai Stream", "⏹️ Sending OPMonitor Stop on control socket...")
+		_, _ = s.client.SendPacket(MsgMonitorStartReq, stopPayload)
 	}
-
-	wallTicks := uint32(now.Sub(s.streamStartTime).Seconds() * 90000)
-
-	if s.lastFrameTime.IsZero() {
-		s.lastFrameTime = now
-		s.currentTS = wallTicks
-		return s.currentTS
-	}
-
-	// RFC 3550 modular comparison: if wallTicks has not advanced beyond currentTS (due to sub-millisecond
-	// TCP bursts or jitter), advance by 1 tick to preserve strict monotonicity without drifting ahead.
-	if int32(wallTicks-s.currentTS) <= 0 {
-		s.currentTS++
-	} else {
-		s.currentTS = wallTicks
-	}
-
-	s.lastFrameTime = now
-	return s.currentTS
 }
 
 // Stop gracefully terminates the Sofia video streaming session and closes the media socket.
 func (s *SofiaStream) Stop() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
 
-	if !s.running.CompareAndSwap(true, false) {
-		s.wg.Wait()
+	s.mu.Lock()
+	wasRunning := s.running.CompareAndSwap(true, false)
+	stopChan := s.stopChan
+	s.stopChan = nil
+	conn := s.mediaConn
+	s.mediaConn = nil
+	s.mu.Unlock()
+
+	if stopChan != nil {
+		close(stopChan)
+	}
+	if conn != nil {
+		_ = conn.Close()
+	}
+
+	// Wait for any active or previously exiting readLoop goroutine to finish before returning.
+	s.wg.Wait()
+
+	if !wasRunning {
 		return nil
 	}
 
-	if s.stopChan != nil {
-		close(s.stopChan)
-	}
-
-	s.connMu.Lock()
-	if s.mediaConn != nil {
-		_ = s.mediaConn.Close()
-		s.mediaConn = nil
-	}
-	s.connMu.Unlock()
-
 	// Send encrypted OPMonitor Stop on control socket
-	if s.client != nil && s.client.IsLoggedIn() {
-		sessionHex := fmt.Sprintf("0x%010x", s.client.GetSessionID())
-		stType := s.streamType
-		if stType == "" {
-			stType = "Main"
-		}
-		stopReq := OPMonitorReq{
-			Name: "OPMonitor",
-			OPMonitor: OPMonitorInfo{
-				Action: "Stop",
-				Parameter: &OPMonitorParam{
-					Channel:    0,
-					CombinMode: "NONE",
-					StreamType: stType,
-					TransMode:  "TCP",
-				},
-			},
-			SessionID: sessionHex,
-		}
-		if stopPayload, err := json.Marshal(stopReq); err == nil {
-			logger.Debug("Xiongmai Stream", "⏹️ Sending OPMonitor Stop on control socket...")
-			_, _ = s.client.SendPacket(MsgMonitorStartReq, stopPayload)
-		}
-	}
-
-	s.wg.Wait()
+	s.sendMonitorStop()
 
 	// Clear the reassembly buffer for the closed media socket while keeping the audio
 	// transcoder, packetizer, and RTP clock anchor intact for subsequent on-demand sessions.
 	s.tsMu.Lock()
 	s.streamBuf = nil
+	s.nalusBuf = nil
 	s.tsMu.Unlock()
 
 	logger.Info("Xiongmai Stream", "⏹️ Sofia native video streaming stopped")
@@ -894,8 +697,12 @@ func (s *SofiaStream) Stop() error {
 // Close stops streaming and releases the audio transcoder's C resources.
 func (s *SofiaStream) Close() error {
 	err := s.Stop()
-	if s.audioTranscoder != nil {
-		s.audioTranscoder.Close()
+	s.tsMu.Lock()
+	tr := s.audioTranscoder
+	s.audioTranscoder = nil
+	s.tsMu.Unlock()
+	if tr != nil {
+		tr.Close()
 	}
 	return err
 }

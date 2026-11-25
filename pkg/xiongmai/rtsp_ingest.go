@@ -233,20 +233,20 @@ func configureIngestVideoTrack(writer rtsp.MediaStream, videoFormat format.Forma
 
 	switch f := videoFormat.(type) {
 	case *format.H264:
-		if writer.SetVideoCodec(rtsp.VideoCodecH264) {
-			logger.Info("Xiongmai Ingest", "📹 Camera RTSP stream on %s uses H.264; switched local RTSP output to H.264", SanitizeRTSPURL(rawURL))
-		}
 		if sps, pps := f.SafeParams(); len(sps) > 0 && len(pps) > 0 {
 			writer.SetH264Parameters(sps, pps)
 		}
+		if writer.SetVideoCodec(rtsp.VideoCodecH264) {
+			logger.Info("Xiongmai Ingest", "📹 Camera RTSP stream on %s uses H.264; switched local RTSP output to H.264", SanitizeRTSPURL(rawURL))
+		}
 	case *format.H265:
+		if vps, sps, pps := f.SafeParams(); len(vps) > 0 && len(sps) > 0 && len(pps) > 0 {
+			writer.SetH265Parameters(vps, sps, pps)
+		}
 		if writer.SetVideoCodec(rtsp.VideoCodecH265) {
 			logger.Info("Xiongmai Ingest", "📹 Camera RTSP stream on %s uses H.265 (HEVC); switched local RTSP output to H.265", SanitizeRTSPURL(rawURL))
 		} else {
 			logger.Debug("Xiongmai Ingest", "📹 Camera RTSP stream on %s uses H.265 (HEVC)", SanitizeRTSPURL(rawURL))
-		}
-		if vps, sps, pps := f.SafeParams(); len(vps) > 0 && len(sps) > 0 && len(pps) > 0 {
-			writer.SetH265Parameters(vps, sps, pps)
 		}
 	}
 }

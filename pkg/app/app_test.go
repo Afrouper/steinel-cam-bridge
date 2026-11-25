@@ -282,7 +282,7 @@ func TestAppONVIFReflectsStreamVideoCodec(t *testing.T) {
 
 	h265Options := postMedia(optionsReq)
 	is.Contains(h265Options, "<tt:H265>")
-	is.NotContains(h265Options, "<tt:H264>")
+	is.Contains(h265Options, "<tt:H264>", "H.264 options must remain advertised alongside H.265 for Scrypted / NVR compatibility")
 
 	camReq := httptest.NewRequest(http.MethodGet, "/api/cameras", nil)
 	camRec := httptest.NewRecorder()
@@ -293,5 +293,7 @@ func TestAppONVIFReflectsStreamVideoCodec(t *testing.T) {
 	// Switch back to H.264 -> ONVIF returns to H.264 cleanly
 	must.True(application.cameras[0].stream.SetVideoCodec(rtsp.VideoCodecH264))
 	is.Contains(postMedia(profilesReq), "<tt:Encoding>H264</tt:Encoding>")
-	is.Contains(postMedia(optionsReq), "<tt:H264>")
+	h264Options := postMedia(optionsReq)
+	is.Contains(h264Options, "<tt:H264>")
+	is.NotContains(h264Options, "<tt:H265>")
 }

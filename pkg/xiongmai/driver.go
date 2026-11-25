@@ -17,32 +17,44 @@ import (
 )
 
 const (
-	defaultIdleGracePeriod = 15 * time.Second
+	defaultIdleGracePeriod               = 15 * time.Second
+	defaultDescribeWarmupTimeout         = 2500 * time.Millisecond
+	defaultFallbackControlOutageGrace    = 15 * time.Second
+	defaultFallbackSofiaProbeInterval    = 2 * time.Minute
+	maxSofiaStreamFailuresBeforeFallback = 3
 )
 
 // Driver implements the Steinel Camera Driver for Generation 1 devices (Steinel L 620 CAM / XLED CAM 1).
 type Driver struct {
-	cameraIP         string
-	user             string
-	password         string
-	resolution       string
-	rtspServer       rtsp.MediaStream
-	eventBus         *events.Bus
-	client           *Client
-	sofiaStream      *SofiaStream
-	ingest           *RTSPIngest
-	talk             *TalkClient
-	sdcard           *SDCardManager
-	ctx              context.Context
-	motionResetTimer *time.Timer
-	motionMu         sync.Mutex
-	mu               sync.Mutex
-	streamMu         sync.Mutex
-	ingestMu         sync.Mutex
-	lastClientSeen   time.Time
-	forceRTSPIngest  bool
-	running          bool
-	closeChan        chan struct{}
+	cameraIP              string
+	user                  string
+	password              string
+	resolution            string
+	rtspServer            rtsp.MediaStream
+	eventBus              *events.Bus
+	client                *Client
+	sofiaStream           *SofiaStream
+	ingest                *RTSPIngest
+	talk                  *TalkClient
+	sdcard                *SDCardManager
+	ctx                   context.Context
+	motionResetTimer      *time.Timer
+	motionMu              sync.Mutex
+	mu                    sync.Mutex
+	streamMu              sync.Mutex
+	ingestMu              sync.Mutex
+	lastClientSeen        time.Time
+	idleSinceLastClient   bool
+	describeWarmupTimeout time.Duration
+	onDemandTickInterval  time.Duration
+	initialStreamBackoff  time.Duration
+	controlOutageGrace    time.Duration
+	sofiaProbeInterval    time.Duration
+	sofiaWakeCh           chan struct{}
+	streamWakeCh          chan struct{}
+	forceRTSPIngest       bool
+	running               bool
+	closeChan             chan struct{}
 }
 
 // SetForceRTSPIngest enables or disables forcing RTSP Port 554 video ingest instead of Sofia port 34567.
@@ -82,20 +94,29 @@ func NewDriver(cameraIP string, user, password string, resolution string, rtspSe
 	talk := NewTalkClient(client)
 	sdcard := NewSDCardManager(client, cameraIP, user, password)
 
-	return &Driver{
-		cameraIP:    cameraIP,
-		user:        user,
-		password:    password,
-		resolution:  resNormalized,
-		rtspServer:  rtspServer,
-		eventBus:    eventBus,
-		client:      client,
-		sofiaStream: sofiaStream,
-		talk:        talk,
-		ingest:      nil, // Only started if Sofia connection fails
-		sdcard:      sdcard,
-		closeChan:   make(chan struct{}),
+	d := &Driver{
+		cameraIP:            cameraIP,
+		user:                user,
+		password:            password,
+		resolution:          resNormalized,
+		rtspServer:          rtspServer,
+		eventBus:            eventBus,
+		client:              client,
+		sofiaStream:         sofiaStream,
+		talk:                talk,
+		ingest:              nil, // Only started if Sofia connection fails
+		sdcard:              sdcard,
+		idleSinceLastClient: true,
+		sofiaWakeCh:         make(chan struct{}, 1),
+		streamWakeCh:        make(chan struct{}, 1),
+		closeChan:           make(chan struct{}),
 	}
+	if dh, ok := rtspServer.(interface {
+		SetOnDescribeHandler(rtsp.OnDescribeHandler)
+	}); ok {
+		dh.SetOnDescribeHandler(d.PrepareDescribe)
+	}
+	return d
 }
 
 func (d *Driver) GetSDCardManager() *SDCardManager {
@@ -201,37 +222,46 @@ func (d *Driver) Start(ctx context.Context) error {
 	return nil
 }
 
+func distanceToPIRSensitivity(dist int) int {
+	if dist >= 8 {
+		return 100
+	}
+	if dist >= 5 {
+		return 66
+	}
+	if dist > 0 {
+		return 33
+	}
+	return 0
+}
+
 func (d *Driver) applyMCUConfig(mcuCfg *MCUConfig) {
 	if d.eventBus == nil || mcuCfg == nil {
 		return
 	}
-	st := d.eventBus.GetStatus()
-	st.LampMode = MCUModeToLampMode(mcuCfg.Mode)
-	st.PIRActive = (mcuCfg.Distance > 0 && mcuCfg.Mode != MCUModeOff)
+	d.eventBus.UpdateStatusFunc(func(st *events.DeviceStatus) {
+		st.LampMode = MCUModeToLampMode(mcuCfg.Mode)
+		st.PIRActive = (mcuCfg.Distance > 0 && mcuCfg.Mode != MCUModeOff)
 
-	if mcuCfg.Highlight > 0 {
-		st.Highlight = mcuCfg.Highlight
-	}
-	if mcuCfg.HighlightDelaySec > 0 {
-		st.HighlightTime = mcuCfg.HighlightDelaySec
-	}
-	if mcuCfg.TwilightLux > 0 {
-		st.Lux = mcuCfg.TwilightLux
-	}
-	if mcuCfg.Distance >= 10 {
-		st.PIRSensitivity = 100
-	} else if mcuCfg.Distance >= 6 {
-		st.PIRSensitivity = 66
-	} else if mcuCfg.Distance > 0 {
-		st.PIRSensitivity = 33
-	}
-	st.Lowlight = mcuCfg.Lowlight
-	if mcuCfg.LowlightDuration == "all_night" || strings.HasPrefix(mcuCfg.LowlightDuration, "all") {
-		st.LowlightTime = 24 * 60
-	} else if dur, err := strconv.Atoi(strings.TrimSuffix(mcuCfg.LowlightDuration, "h")); err == nil {
-		st.LowlightTime = dur * 60
-	}
-	d.eventBus.UpdateStatus(st)
+		if mcuCfg.Highlight > 0 {
+			st.Highlight = mcuCfg.Highlight
+		}
+		if mcuCfg.HighlightDelaySec > 0 {
+			st.HighlightTime = mcuCfg.HighlightDelaySec
+		}
+		if mcuCfg.TwilightLux > 0 {
+			st.Lux = mcuCfg.TwilightLux
+		}
+		if sens := distanceToPIRSensitivity(mcuCfg.Distance); sens > 0 {
+			st.PIRSensitivity = sens
+		}
+		st.Lowlight = mcuCfg.Lowlight
+		if mcuCfg.LowlightDuration == "all_night" || strings.HasPrefix(mcuCfg.LowlightDuration, "all") {
+			st.LowlightTime = 24 * 60
+		} else if dur, err := strconv.Atoi(strings.TrimSuffix(mcuCfg.LowlightDuration, "h")); err == nil {
+			st.LowlightTime = dur * 60
+		}
+	})
 }
 
 func (d *Driver) closeIngest() {
@@ -277,12 +307,13 @@ func (d *Driver) syncInitialStateLocked() {
 		}
 	}
 
-	st := d.eventBus.GetStatus()
-	st.Resolution = d.resolution
-	if st.FirmwareVer == "" {
-		st.FirmwareVer = "Xiongmai-Sofia"
-	}
-	d.eventBus.UpdateStatus(st)
+	activeRes := d.resolution
+	d.eventBus.UpdateStatusFunc(func(st *events.DeviceStatus) {
+		st.Resolution = activeRes
+		if st.FirmwareVer == "" {
+			st.FirmwareVer = "Xiongmai-Sofia"
+		}
+	})
 
 	sofiaSt, statusErr := d.client.QueryDeviceStatus()
 	if statusErr != nil {
@@ -308,37 +339,47 @@ func (d *Driver) applySofiaDeviceStatus(sofiaSt *SofiaDeviceStatus) {
 	if d.eventBus == nil || sofiaSt == nil {
 		return
 	}
-	st := d.eventBus.GetStatus()
-	if sofiaSt.FirmwareVer != "" {
-		st.FirmwareVer = sofiaSt.FirmwareVer
-	}
-	if sofiaSt.SDTotalMB > 0 {
-		st.SDTotalMB = sofiaSt.SDTotalMB
-		st.SDFreeMB = sofiaSt.SDFreeMB
-	}
-	if sofiaSt.SDStatus != "" {
-		st.SDStatus = sofiaSt.SDStatus
-	}
-	if sofiaSt.SpeakerVolume >= 0 {
-		st.SpeakerVolume = sofiaSt.SpeakerVolume
-	}
-	if sofiaSt.OSDPosition >= 0 {
-		st.OSDPosition = sofiaSt.OSDPosition
-	}
-	if sofiaSt.DetectMode != "" {
-		st.DetectMode = sofiaSt.DetectMode
-	}
-	if sofiaSt.RecordMode > 0 {
-		st.RecordMode = sofiaSt.RecordMode
-	}
-	if sofiaSt.SirenKnown {
-		if sofiaSt.SirenEnabled {
-			st.SirenEnabled = 1
-		} else {
-			st.SirenEnabled = 0
+	d.eventBus.UpdateStatusFunc(func(st *events.DeviceStatus) {
+		if sofiaSt.FirmwareVer != "" {
+			st.FirmwareVer = sofiaSt.FirmwareVer
 		}
+		if sofiaSt.SDTotalMB > 0 {
+			st.SDTotalMB = sofiaSt.SDTotalMB
+			st.SDFreeMB = sofiaSt.SDFreeMB
+		}
+		if sofiaSt.SDStatus != "" {
+			st.SDStatus = sofiaSt.SDStatus
+		}
+		if sofiaSt.SpeakerVolume >= 0 {
+			st.SpeakerVolume = sofiaSt.SpeakerVolume
+		}
+		if sofiaSt.OSDPosition >= 0 {
+			st.OSDPosition = sofiaSt.OSDPosition
+		}
+		if sofiaSt.DetectMode != "" {
+			st.DetectMode = sofiaSt.DetectMode
+		}
+		if sofiaSt.RecordMode > 0 {
+			st.RecordMode = sofiaSt.RecordMode
+		}
+		if sofiaSt.SirenKnown {
+			if sofiaSt.SirenEnabled {
+				st.SirenEnabled = 1
+			} else {
+				st.SirenEnabled = 0
+			}
+		}
+	})
+}
+
+func (d *Driver) wakeSofiaLoop() {
+	if d.sofiaWakeCh == nil {
+		return
 	}
-	d.eventBus.UpdateStatus(st)
+	select {
+	case d.sofiaWakeCh <- struct{}{}:
+	default:
+	}
 }
 
 func (d *Driver) superviseSofiaLoop(ctx context.Context) {
@@ -350,13 +391,21 @@ func (d *Driver) superviseSofiaLoop(ctx context.Context) {
 
 	for {
 		if !d.client.IsLoggedIn() {
+			if d.talk != nil {
+				d.talk.Reset()
+			}
 			if !firstAttempt {
+				timer := time.NewTimer(reconnectBackoff)
 				select {
 				case <-ctx.Done():
+					timer.Stop()
 					return
 				case <-d.closeChan:
+					timer.Stop()
 					return
-				case <-time.After(reconnectBackoff):
+				case <-d.sofiaWakeCh:
+					timer.Stop()
+				case <-timer.C:
 				}
 			}
 			firstAttempt = false
@@ -370,6 +419,9 @@ func (d *Driver) superviseSofiaLoop(ctx context.Context) {
 				logger.Info("Xiongmai Driver", "✅ Sofia control connection established (SessionID: 0x%08X)", d.client.GetSessionID())
 				reconnectBackoff = 5 * time.Second
 				firstAttempt = false
+				if d.talk != nil {
+					d.talk.Reset()
+				}
 
 				_ = d.client.EnsureH264Encoding()
 				d.mu.Lock()
@@ -387,18 +439,18 @@ func (d *Driver) superviseSofiaLoop(ctx context.Context) {
 					}
 				}
 
-				if !forceRTSP && d.sofiaStream != nil && !d.sofiaStream.IsRunning() && d.rtspServer != nil && d.rtspServer.ActiveClients() > 0 {
-					go func() {
+				if !forceRTSP && d.sofiaStream != nil {
+					if d.sofiaStream.IsRunning() {
+						_ = d.sofiaStream.Stop()
+					}
+					if d.rtspServer != nil && d.rtspServer.ActiveClients() > 0 {
 						_ = d.startSofiaStream(ctx)
-					}()
+					}
 				}
 			} else {
 				logger.Debug("Xiongmai Driver", "ℹ️ Sofia reconnect attempt failed: %v (retrying in %v)", err, reconnectBackoff)
 				if reconnectBackoff < 60*time.Second {
-					reconnectBackoff *= 2
-					if reconnectBackoff > 60*time.Second {
-						reconnectBackoff = 60 * time.Second
-					}
+					reconnectBackoff = min(reconnectBackoff*2, 60*time.Second)
 				}
 			}
 			continue
@@ -409,6 +461,11 @@ func (d *Driver) superviseSofiaLoop(ctx context.Context) {
 			return
 		case <-d.closeChan:
 			return
+		case <-d.sofiaWakeCh:
+			if !d.client.IsLoggedIn() {
+				reconnectBackoff = 5 * time.Second
+				firstAttempt = true
+			}
 		case <-ticker.C:
 			if d.client.IsLoggedIn() {
 				if err := d.client.SendKeepAlive(); err != nil {
@@ -417,8 +474,20 @@ func (d *Driver) superviseSofiaLoop(ctx context.Context) {
 						d.talk.Reset()
 					}
 					_ = d.client.Close()
+					if d.sofiaStream != nil {
+						_ = d.sofiaStream.Stop()
+					}
 					reconnectBackoff = 5 * time.Second
 				}
+			} else {
+				if d.talk != nil {
+					d.talk.Reset()
+				}
+				if d.sofiaStream != nil && d.sofiaStream.IsRunning() {
+					_ = d.sofiaStream.Stop()
+				}
+				reconnectBackoff = 5 * time.Second
+				firstAttempt = true
 			}
 		}
 	}
@@ -481,10 +550,14 @@ func (d *Driver) ReconnectSession() error {
 	defer d.mu.Unlock()
 	if d.client != nil {
 		logger.Info("Xiongmai Driver", "🔄 Manual session reconnect requested via MQTT / API")
+		if d.sofiaStream != nil {
+			_ = d.sofiaStream.Stop()
+		}
 		if d.talk != nil {
 			d.talk.Reset()
 		}
 		_ = d.client.Close()
+		d.wakeSofiaLoop()
 		return nil
 	}
 	return errors.New("no active camera connection")
@@ -517,12 +590,12 @@ func (d *Driver) SetLampMode(mode string) error {
 				}
 				return
 			}
-			st := d.eventBus.GetStatus()
-			st.LampMode = MCUModeToLampMode(expectedMCUMode)
-			if expectedMCUMode == MCUModeOff {
-				st.PIRActive = false
-			}
-			d.eventBus.UpdateStatus(st)
+			d.eventBus.UpdateStatusFunc(func(st *events.DeviceStatus) {
+				st.LampMode = MCUModeToLampMode(expectedMCUMode)
+				if expectedMCUMode == MCUModeOff {
+					st.PIRActive = false
+				}
+			})
 		})
 	}
 	return err
@@ -542,9 +615,11 @@ func (d *Driver) SetDim(val int) error {
 	logger.Trace("Xiongmai Driver", "SetDim: val=%d%%", val)
 	err := d.client.SetHighlight(val)
 	if err == nil && d.eventBus != nil {
-		st := d.eventBus.GetStatus()
-		st.Highlight = val
-		d.eventBus.UpdateStatus(st)
+		d.client.runSerializedTelemetry(func(_ *MCUConfig, _ bool) {
+			d.eventBus.UpdateStatusFunc(func(st *events.DeviceStatus) {
+				st.Highlight = val
+			})
+		})
 	}
 	return err
 }
@@ -554,9 +629,11 @@ func (d *Driver) SetTwilight(val int) error {
 	logger.Trace("Xiongmai Driver", "SetTwilight: lux=%d", val)
 	err := d.client.SetLux(val)
 	if err == nil && d.eventBus != nil {
-		st := d.eventBus.GetStatus()
-		st.Lux = val
-		d.eventBus.UpdateStatus(st)
+		d.client.runSerializedTelemetry(func(_ *MCUConfig, _ bool) {
+			d.eventBus.UpdateStatusFunc(func(st *events.DeviceStatus) {
+				st.Lux = val
+			})
+		})
 	}
 	return err
 }
@@ -566,15 +643,15 @@ func (d *Driver) SetDistance(val int) error {
 	logger.Trace("Xiongmai Driver", "SetDistance: distance=%dm", val)
 	err := d.client.SetDistance(val)
 	if err == nil && d.eventBus != nil {
-		st := d.eventBus.GetStatus()
-		if val >= 8 {
-			st.PIRSensitivity = 100
-		} else if val >= 5 {
-			st.PIRSensitivity = 66
-		} else {
-			st.PIRSensitivity = 33
+		sens := distanceToPIRSensitivity(val)
+		if sens == 0 {
+			sens = 33
 		}
-		d.eventBus.UpdateStatus(st)
+		d.client.runSerializedTelemetry(func(_ *MCUConfig, _ bool) {
+			d.eventBus.UpdateStatusFunc(func(st *events.DeviceStatus) {
+				st.PIRSensitivity = sens
+			})
+		})
 	}
 	return err
 }
@@ -584,9 +661,11 @@ func (d *Driver) SetDuration(val int) error {
 	logger.Trace("Xiongmai Driver", "SetDuration: seconds=%ds", val)
 	err := d.client.SetHighlightDelay(val)
 	if err == nil && d.eventBus != nil {
-		st := d.eventBus.GetStatus()
-		st.HighlightTime = val
-		d.eventBus.UpdateStatus(st)
+		d.client.runSerializedTelemetry(func(_ *MCUConfig, _ bool) {
+			d.eventBus.UpdateStatusFunc(func(st *events.DeviceStatus) {
+				st.HighlightTime = val
+			})
+		})
 	}
 	return err
 }
@@ -596,9 +675,11 @@ func (d *Driver) SetNightlight(val int) error {
 	logger.Trace("Xiongmai Driver", "SetNightlight: val=%d%%", val)
 	err := d.client.SetLowlight(val)
 	if err == nil && d.eventBus != nil {
-		st := d.eventBus.GetStatus()
-		st.Lowlight = val
-		d.eventBus.UpdateStatus(st)
+		d.client.runSerializedTelemetry(func(_ *MCUConfig, _ bool) {
+			d.eventBus.UpdateStatusFunc(func(st *events.DeviceStatus) {
+				st.Lowlight = val
+			})
+		})
 	}
 	return err
 }
@@ -622,15 +703,17 @@ func (d *Driver) SetNightlightDuration(val string) error {
 
 	err := d.client.SetLowlightDuration(durInt)
 	if err == nil && d.eventBus != nil {
-		st := d.eventBus.GetStatus()
-		if valLower == "off" || valLower == "aus" || valLower == "0" || valLower == "0h" {
-			st.LowlightTime = 0
-		} else if valLower == "all_night" || valLower == "ganze nacht" || valLower == "24h" || valLower == "all" || valLower == "12h" {
-			st.LowlightTime = 12 * 60
-		} else if dur, err := strconv.Atoi(strings.TrimSuffix(valLower, "h")); err == nil {
-			st.LowlightTime = dur * 60
-		}
-		d.eventBus.UpdateStatus(st)
+		d.client.runSerializedTelemetry(func(_ *MCUConfig, _ bool) {
+			d.eventBus.UpdateStatusFunc(func(st *events.DeviceStatus) {
+				if valLower == "off" || valLower == "aus" || valLower == "0" || valLower == "0h" {
+					st.LowlightTime = 0
+				} else if valLower == "all_night" || valLower == "ganze nacht" || valLower == "24h" || valLower == "all" || valLower == "12h" {
+					st.LowlightTime = 12 * 60
+				} else if dur, err := strconv.Atoi(strings.TrimSuffix(valLower, "h")); err == nil {
+					st.LowlightTime = dur * 60
+				}
+			})
+		})
 	}
 	return err
 }
@@ -664,9 +747,9 @@ func (d *Driver) SetSpeakerVolume(percent int) error {
 	}
 	err := d.client.SetSpeakerVolume(percent)
 	if err == nil && d.eventBus != nil {
-		st := d.eventBus.GetStatus()
-		st.SpeakerVolume = percent
-		d.eventBus.UpdateStatus(st)
+		d.eventBus.UpdateStatusFunc(func(st *events.DeviceStatus) {
+			st.SpeakerVolume = percent
+		})
 	}
 	return err
 }
@@ -678,9 +761,9 @@ func (d *Driver) SetTimestampPosition(position int) error {
 	}
 	err := d.client.SetTimestampPosition(position)
 	if err == nil && d.eventBus != nil {
-		st := d.eventBus.GetStatus()
-		st.OSDPosition = position
-		d.eventBus.UpdateStatus(st)
+		d.eventBus.UpdateStatusFunc(func(st *events.DeviceStatus) {
+			st.OSDPosition = position
+		})
 	}
 	return err
 }
@@ -692,14 +775,14 @@ func (d *Driver) SetDetectMode(mode string) error {
 	}
 	err := d.client.SetDetectMode(mode)
 	if err == nil && d.eventBus != nil {
-		st := d.eventBus.GetStatus()
+		detectMode := "off"
 		switch strings.ToLower(strings.TrimSpace(mode)) {
 		case "ai", "on", "true", "1":
-			st.DetectMode = "ai"
-		default:
-			st.DetectMode = "off"
+			detectMode = "ai"
 		}
-		d.eventBus.UpdateStatus(st)
+		d.eventBus.UpdateStatusFunc(func(st *events.DeviceStatus) {
+			st.DetectMode = detectMode
+		})
 	}
 	return err
 }
@@ -711,9 +794,9 @@ func (d *Driver) SetRecordMode(mode int) error {
 	}
 	err := d.client.SetRecordMode(mode)
 	if err == nil && d.eventBus != nil {
-		st := d.eventBus.GetStatus()
-		st.RecordMode = mode
-		d.eventBus.UpdateStatus(st)
+		d.eventBus.UpdateStatusFunc(func(st *events.DeviceStatus) {
+			st.RecordMode = mode
+		})
 	}
 	return err
 }
@@ -725,13 +808,13 @@ func (d *Driver) SetSiren(on bool) error {
 	}
 	err := d.client.SetSiren(on)
 	if err == nil && d.eventBus != nil {
-		st := d.eventBus.GetStatus()
+		sirenVal := 0
 		if on {
-			st.SirenEnabled = 1
-		} else {
-			st.SirenEnabled = 0
+			sirenVal = 1
 		}
-		d.eventBus.UpdateStatus(st)
+		d.eventBus.UpdateStatusFunc(func(st *events.DeviceStatus) {
+			st.SirenEnabled = sirenVal
+		})
 	}
 	return err
 }
@@ -761,6 +844,15 @@ func (d *Driver) SetResolution(res string) error {
 		resNormalized = "720p"
 	}
 
+	prevRes := d.resolution
+	prevStreamType := sofiaStreamType
+	if d.sofiaStream != nil {
+		prevStreamType = d.sofiaStream.StreamType()
+	}
+	if prevRes == resNormalized && prevStreamType == sofiaStreamType {
+		return nil
+	}
+
 	d.resolution = resNormalized
 	if d.eventBus != nil {
 		st := d.eventBus.GetStatus()
@@ -770,12 +862,23 @@ func (d *Driver) SetResolution(res string) error {
 
 	// 1. If SofiaStream is configured:
 	if d.sofiaStream != nil {
+		prevStreamType := d.sofiaStream.StreamType()
 		d.sofiaStream.SetStreamType(sofiaStreamType)
+		if prevStreamType != sofiaStreamType && d.rtspServer != nil {
+			if pr, ok := d.rtspServer.(interface{ ResetVideoParameters() }); ok {
+				pr.ResetVideoParameters()
+			}
+		}
 		if d.client != nil {
 			if fps := d.client.GetVideoFPS(sofiaStreamType); fps > 0 {
 				d.sofiaStream.SetFPS(fps)
 			}
 		}
+	}
+
+	streamCtx := d.ctx
+	if streamCtx == nil {
+		streamCtx = context.Background()
 	}
 
 	// 2. Forced RTSP Ingest mode
@@ -793,7 +896,7 @@ func (d *Driver) SetResolution(res string) error {
 			d.ingestMu.Lock()
 			d.ingest = newIngest
 			d.ingestMu.Unlock()
-			return newIngest.Start(context.Background())
+			return newIngest.Start(streamCtx)
 		}
 		return nil
 	}
@@ -806,9 +909,7 @@ func (d *Driver) SetResolution(res string) error {
 		if d.sofiaStream.IsRunning() {
 			logger.Info("Xiongmai Driver", "🔄 Switching native Sofia video stream resolution to %s (%s)...", resNormalized, sofiaStreamType)
 			_ = d.sofiaStream.Stop()
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			if err := d.sofiaStream.Start(ctx); err != nil {
+			if err := d.sofiaStream.Start(streamCtx); err != nil {
 				logger.Warn("Xiongmai Driver", "⚠️ Failed to restart Sofia stream with %s: %v", resNormalized, err)
 				return err
 			}
@@ -834,7 +935,7 @@ func (d *Driver) SetResolution(res string) error {
 		d.ingestMu.Lock()
 		d.ingest = newIngest
 		d.ingestMu.Unlock()
-		return newIngest.Start(context.Background())
+		return newIngest.Start(streamCtx)
 	}
 	return nil
 }
@@ -941,10 +1042,103 @@ func (d *Driver) stopSofiaStreamLocked() {
 	_ = d.sofiaStream.Stop()
 }
 
+func (d *Driver) ensureFallbackIngest(ctx context.Context) {
+	d.ingestMu.Lock()
+	if d.ingest != nil {
+		d.ingestMu.Unlock()
+		return
+	}
+	d.ingestMu.Unlock()
+
+	d.mu.Lock()
+	if !d.running || d.forceRTSPIngest {
+		d.mu.Unlock()
+		return
+	}
+	res := d.resolution
+	user := d.user
+	pwd := d.password
+	camIP := d.cameraIP
+	rtspSrv := d.rtspServer
+	d.mu.Unlock()
+
+	var effectivePwd string
+	if d.client != nil {
+		effectivePwd = d.client.GetEffectivePassword()
+	}
+	if effectivePwd == "" && pwd != "" {
+		effectivePwd = pwd
+	}
+	streamSubtype := 0
+	if res == "360p" {
+		streamSubtype = 1
+	}
+
+	d.ingestMu.Lock()
+	if d.ingest != nil {
+		d.ingestMu.Unlock()
+		return
+	}
+	logger.Warn("Xiongmai Driver", "⚠️ Native Sofia stream repeatedly failed; activating fallback RTSP ingest on port %d (User=%s, PwdMasked=%s)",
+		RTSPPort, user, MaskPassword(effectivePwd))
+	d.ingest = NewRTSPIngest(camIP, RTSPPort, user, effectivePwd, streamSubtype, rtspSrv, pwd)
+	ingestRef := d.ingest
+	d.ingestMu.Unlock()
+
+	if err := ingestRef.Start(ctx); err != nil {
+		logger.Warn("Xiongmai Driver", "⚠️ Failed to start fallback RTSP Ingest: %v", err)
+	}
+}
+
+func (d *Driver) hasFallbackIngest() bool {
+	d.ingestMu.Lock()
+	has := d.ingest != nil
+	d.ingestMu.Unlock()
+	return has
+}
+
+func (d *Driver) wakeOnDemandLoop() {
+	if d.streamWakeCh == nil {
+		return
+	}
+	select {
+	case d.streamWakeCh <- struct{}{}:
+	default:
+	}
+}
+
 // superviseOnDemandLoop monitors active RTSP clients and starts/stops the Sofia video stream on demand.
 func (d *Driver) superviseOnDemandLoop(ctx context.Context) {
-	ticker := time.NewTicker(1 * time.Second)
+	d.mu.Lock()
+	tickInterval := d.onDemandTickInterval
+	initialRestartBackoff := d.initialStreamBackoff
+	outageGrace := d.controlOutageGrace
+	probeInterval := d.sofiaProbeInterval
+	d.mu.Unlock()
+	if tickInterval <= 0 {
+		tickInterval = 1 * time.Second
+	}
+	if initialRestartBackoff <= 0 {
+		initialRestartBackoff = 2 * time.Second
+	}
+	if outageGrace <= 0 {
+		outageGrace = defaultFallbackControlOutageGrace
+	}
+	if probeInterval <= 0 {
+		probeInterval = defaultFallbackSofiaProbeInterval
+	}
+
+	ticker := time.NewTicker(tickInterval)
 	defer ticker.Stop()
+
+	const maxRestartBackoff = 15 * time.Second
+	var (
+		nextRestartAt       time.Time
+		nextSofiaProbeAt    time.Time
+		controlDownSince    time.Time
+		restartBackoff      time.Duration
+		consecutiveFailures int
+	)
 
 	for {
 		select {
@@ -952,58 +1146,180 @@ func (d *Driver) superviseOnDemandLoop(ctx context.Context) {
 			return
 		case <-d.closeChan:
 			return
+		case <-d.streamWakeCh:
 		case <-ticker.C:
+		}
+
+		d.mu.Lock()
+		forceRTSP := d.forceRTSPIngest
+		d.mu.Unlock()
+		if forceRTSP || d.rtspServer == nil {
+			continue
+		}
+
+		now := time.Now()
+		clients := d.rtspServer.ActiveClients()
+		if clients > 0 {
 			d.mu.Lock()
-			forceRTSP := d.forceRTSPIngest
+			d.lastClientSeen = now
+			d.idleSinceLastClient = false
 			d.mu.Unlock()
-			if forceRTSP || d.rtspServer == nil {
-				continue
-			}
 
-			clients := d.rtspServer.ActiveClients()
-			if clients > 0 {
-				d.mu.Lock()
-				d.lastClientSeen = time.Now()
-				d.mu.Unlock()
+			sRunning := d.sofiaStream != nil && d.sofiaStream.IsRunning()
+			loggedIn := d.client != nil && d.client.IsLoggedIn()
+			hasFallback := d.hasFallbackIngest()
 
-				if d.sofiaStream != nil && !d.sofiaStream.IsRunning() && d.client != nil && d.client.IsLoggedIn() {
-					_ = d.startSofiaStream(ctx)
+			switch {
+			case sRunning:
+				consecutiveFailures = 0
+				restartBackoff = 0
+				nextRestartAt = time.Time{}
+				nextSofiaProbeAt = time.Time{}
+				controlDownSince = time.Time{}
+				if hasFallback {
+					d.closeIngest()
 				}
-			} else {
-				d.mu.Lock()
-				lastSeen := d.lastClientSeen
-				d.mu.Unlock()
 
-				if d.sofiaStream != nil && d.sofiaStream.IsRunning() {
-					if !lastSeen.IsZero() && time.Since(lastSeen) >= defaultIdleGracePeriod {
-						d.stopSofiaStream()
+			case d.sofiaStream != nil && loggedIn:
+				controlDownSince = time.Time{}
+				// While fallback RTSP ingest is actively serving clients, avoid hammering OPMonitor
+				// on the control socket every few seconds (a control timeout would tear down MCU/alarm
+				// supervision); only probe native Sofia recovery after probeInterval.
+				if hasFallback && !nextSofiaProbeAt.IsZero() && now.Before(nextSofiaProbeAt) {
+					continue
+				}
+				if !nextRestartAt.IsZero() && now.Before(nextRestartAt) {
+					continue
+				}
+				if err := d.startSofiaStream(ctx); err != nil {
+					consecutiveFailures++
+					if consecutiveFailures >= maxSofiaStreamFailuresBeforeFallback {
+						d.ensureFallbackIngest(ctx)
+						nextSofiaProbeAt = now.Add(probeInterval)
 					}
+					if restartBackoff == 0 {
+						restartBackoff = initialRestartBackoff
+					} else {
+						restartBackoff = min(restartBackoff*2, maxRestartBackoff)
+					}
+					nextRestartAt = now.Add(restartBackoff)
+				} else {
+					consecutiveFailures = 0
+					restartBackoff = 0
+					nextRestartAt = time.Time{}
+					nextSofiaProbeAt = time.Time{}
 				}
+
+			default:
+				// Sofia control port 34567 is down while viewers are waiting: activate port 554
+				// RTSP fallback once the control outage exceeds outageGrace.
+				restartBackoff = 0
+				nextRestartAt = time.Time{}
+				if controlDownSince.IsZero() {
+					controlDownSince = now
+				} else if !hasFallback && now.Sub(controlDownSince) >= outageGrace {
+					d.ensureFallbackIngest(ctx)
+				}
+			}
+		} else {
+			consecutiveFailures = 0
+			restartBackoff = 0
+			nextRestartAt = time.Time{}
+			nextSofiaProbeAt = time.Time{}
+			controlDownSince = time.Time{}
+
+			d.mu.Lock()
+			d.idleSinceLastClient = true
+			lastSeen := d.lastClientSeen
+			d.mu.Unlock()
+
+			if !lastSeen.IsZero() && now.Sub(lastSeen) >= defaultIdleGracePeriod {
+				if d.sofiaStream != nil && d.sofiaStream.IsRunning() {
+					d.stopSofiaStream()
+				}
+				d.closeIngest()
 			}
 		}
 	}
 }
 
 // RequestKeyframe triggers immediate startup of the on-demand stream when an RTSP client connects.
+// Unlike WebRTC PLI on the L 625, Xiongmai Sofia has no out-of-band command to force an extra
+// hardware I-frame; dropping P-frames on an active stream would freeze video for existing viewers.
 func (d *Driver) RequestKeyframe() {
 	d.mu.Lock()
+	wasIdle := d.idleSinceLastClient
+	d.idleSinceLastClient = false
 	d.lastClientSeen = time.Now()
 	forceRTSP := d.forceRTSPIngest
-	ctx := d.ctx
 	d.mu.Unlock()
 
 	if forceRTSP || d.sofiaStream == nil {
 		return
 	}
 	if d.sofiaStream.IsRunning() {
-		if d.rtspServer == nil || d.rtspServer.ActiveClients() <= 1 {
-			d.sofiaStream.AwaitNextKeyframe()
+		// Only gate P-frames when the stream was sitting in its 15s idle window with zero viewers
+		// and the last keyframe is stale (not right after an automatic H.264->H.265 codec switch).
+		if wasIdle && (d.rtspServer == nil || d.rtspServer.ActiveClients() <= 1) {
+			d.sofiaStream.AwaitNextKeyframeIfStale(2 * time.Second)
 		}
 		return
 	}
-	if d.client != nil && d.client.IsLoggedIn() && ctx != nil {
-		go func() {
-			_ = d.startSofiaStream(ctx)
-		}()
+	d.wakeOnDemandLoop()
+}
+
+// PrepareDescribe warms the on-demand Sofia stream before RTSP DESCRIBE returns its SDP.
+// On cold boot or right after a resolution change (when out-of-band video SDP parameters
+// are not yet populated), it synchronously starts SofiaStream and waits briefly for the
+// first I-frame so any H.264->H.265 codec switch completes before the client receives the SDP.
+// This ensures desktop players that do not auto-reconnect after EOF (such as VLC) start
+// playing on the very first attempt.
+func (d *Driver) PrepareDescribe() {
+	d.mu.Lock()
+	running := d.running
+	forceRTSP := d.forceRTSPIngest
+	streamCtx := d.ctx
+	warmupTimeout := d.describeWarmupTimeout
+	if running && !forceRTSP {
+		d.lastClientSeen = time.Now()
+	}
+	d.mu.Unlock()
+
+	if !running || forceRTSP || d.sofiaStream == nil {
+		return
+	}
+	if warmupTimeout <= 0 {
+		warmupTimeout = defaultDescribeWarmupTimeout
+	}
+	if streamCtx == nil {
+		streamCtx = context.Background()
+	}
+
+	hasParams := false
+	if hp, ok := d.rtspServer.(interface{ HasVideoParameters() bool }); ok {
+		hasParams = hp.HasVideoParameters()
+	}
+
+	if hasParams {
+		if !d.sofiaStream.IsRunning() {
+			d.wakeOnDemandLoop()
+		}
+		return
+	}
+
+	if d.client == nil || !d.client.IsLoggedIn() {
+		return
+	}
+
+	if !d.sofiaStream.IsRunning() {
+		if err := d.startSofiaStream(streamCtx); err != nil {
+			return
+		}
+	}
+	if d.sofiaStream.WaitFirstKeyframe(streamCtx, warmupTimeout) {
+		d.mu.Lock()
+		d.idleSinceLastClient = false
+		d.lastClientSeen = time.Now()
+		d.mu.Unlock()
 	}
 }
