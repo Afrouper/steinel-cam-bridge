@@ -3,6 +3,7 @@ package webrtc
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/Afrouper/steinel-cam-bridge/pkg/events"
 	"github.com/stretchr/testify/assert"
@@ -34,4 +35,20 @@ func TestApplyDeviceInfo(t *testing.T) {
 	applyDeviceInfo(&st, map[string]interface{}{"wifi": "x", "SD": map[string]interface{}{"volume_free": "many"}})
 	assert.Equal(t, 57, st.WifiSignal)
 	assert.Equal(t, 120480, st.SDFreeMB)
+}
+
+// The device info is asked once per session unless an interval is set.
+func TestDeviceInfoInterval(t *testing.T) {
+	b := &Bridge{}
+	if got := b.deviceInfoInterval(); got != 0 {
+		t.Fatalf("default interval = %v, want 0 (once per session)", got)
+	}
+	b.SetDeviceInfoInterval(6 * time.Hour)
+	if got := b.deviceInfoInterval(); got != 6*time.Hour {
+		t.Fatalf("interval = %v, want 6h", got)
+	}
+	b.SetDeviceInfoInterval(-time.Minute)
+	if got := b.deviceInfoInterval(); got != 0 {
+		t.Fatalf("negative interval = %v, want 0", got)
+	}
 }

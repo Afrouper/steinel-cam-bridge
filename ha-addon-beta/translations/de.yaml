@@ -44,6 +44,9 @@ configuration:
   hold_last_frame_seconds:
     name: "Standbild bei Aussetzern (Sekunden)"
     description: "Liefert die Kamera kein Bild (Verbindungsabriss), wird das letzte Schlüsselbild so viele Sekunden lang weitergesendet, damit Home Assistant und Rekorder verbunden bleiben und ohne Neuaufbau weiterlaufen. Danach bleibt der Strom still, damit ein echter Ausfall auffällt. 0 schaltet das Standbild ab. Nur L 625."
+  device_info_interval_minutes:
+    name: "Geräte-Infos wiederholen (Minuten)"
+    description: "WLAN-Signal, SD-Karte, Firmware und Update-Angebot werden beim Verbinden einmal abgefragt. Mit einem Wert größer 0 wiederholt die Bridge die Abfrage in diesem Abstand. Achtung: Die L 625 friert nach rund 328 dieser Abfragen seit ihrem letzten Neustart ein und ist dann etwa vier Minuten weg. Deshalb große Abstände wählen (z. B. 360). 0 = nur beim Verbinden. Nur L 625."
   debug_api:
     name: "Diagnose-Schnittstelle"
     description: "Schaltet POST /api/debug/command frei, über das einzelne Befehle direkt an die Kamera gehen (nur L 625). Nur zur Fehlersuche einschalten und danach wieder ausschalten."

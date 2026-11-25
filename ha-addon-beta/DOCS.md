@@ -55,6 +55,7 @@ Die Bridge stellt alle Kameras über denselben RTSP-Port (`:8554/steinel-haustue
 | `resolution` | Liste | `1080p` | Standardauflösung (`1080p`, `720p`, `360p`) |
 | `audio_codec` | Liste | `aac` | Audio-Codec des RTSP-Streams: `aac` (nativ transkodiert), `pcmu` oder `none` (reiner Videostream) |
 | `hold_last_frame_seconds` | Zahl | `300` | L 625: Wiederholt bei ausbleibendem Video das letzte Keyframe so viele Sekunden lang, damit Clients verbunden bleiben (`0` = aus) |
+| `device_info_interval_minutes` | Zahl | `0` | L 625: Wiederholt die Abfrage von WLAN-Signal, SD-Karte, Firmware und Update-Angebot in diesem Abstand. `0` = nur beim Verbinden. Die Kamera friert nach rund 328 dieser Abfragen seit ihrem letzten Neustart ein, daher große Abstände wählen |
 | `instant_start` | Schalter | `false` | Neue RTSP-Clients erhalten sofort die laufende GOP statt auf das nächste Keyframe zu warten |
 | `rtsp_port` | Port | `8554` | RTSP Server Port |
 | `debug_api` | Schalter | `false` | L 625: Diagnose-Schnittstelle `POST /api/debug/command` für einzelne Kamera-Befehle (bei mehreren Kameras mit `?camera=<path>`). Nur zur Analyse einschalten; ohne Bridge-Benutzer und -Passwort ist sie im LAN offen |

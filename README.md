@@ -314,6 +314,7 @@ Die Konfiguration erfolgt nach den Grundsätzen einer [12-Factor App](https://12
 | `RESOLUTION` | `-res` | `1080p` | Videoauflösung: `1080p`, `720p`, `360p` |
 | `AUDIO_CODEC` | `-audio-codec` | `aac` | Audio-Codec des RTSP/ONVIF Streams: `aac` (nativ transkodiert, empfohlen), `pcmu` (Raw Passthrough) oder `none` (reiner Videostream ohne Mikrofon und Gegensprechen) |
 | `HOLD_LAST_FRAME_SECONDS` | – | `300` | L 625: Liefert die Kamera kein Video, wird das letzte Keyframe so viele Sekunden lang einmal pro Sekunde wiederholt, damit RTSP-Clients verbunden bleiben. `0` schaltet das ab |
+| `DEVICE_INFO_INTERVAL_MINUTES` | – | `0` | L 625: Wiederholt `get_device_info` (WLAN-Signal, SD-Karte, Firmware, Update-Angebot) in diesem Abstand. `0` = nur beim Verbinden. Die Kamera friert nach rund 328 dieser Abfragen seit ihrem letzten Neustart ein, daher große Abstände wählen |
 | `INSTANT_START` | – | `false` | Neue RTSP-Clients erhalten sofort die laufende GOP statt auf das nächste Keyframe zu warten. Standard aus: Der Client bekommt bis zu 2 s Video auf einmal, was auf WLAN-Tablets den flüssigen Start verzögert hat |
 | `RTSP_PORT` | `-port` | `8554` | Port des integrierten RTSP-Servers |
 | `DEBUG_API` | – | `false` | L 625: Schaltet `POST /api/debug/command` frei, über das einzelne JSON-Befehle direkt an die Kamera gehen (bei mehreren Kameras mit `?camera=<path>`, sonst die erste). Nur zur Firmware-Analyse einschalten; ohne Bridge-Zugangsschutz ist der Endpunkt im LAN offen, die Bridge warnt dann beim Start |

@@ -320,6 +320,7 @@ connectionLoop:
 		logger.Info("Supervisor", "🚀 Establishing WebRTC bridge session for /%s...", d.cfg.RTSPPath)
 
 		bridge := webrtc.NewBridge(client, stream, d.rtspServer, d.eventBus, d.cfg.Resolution, 1*time.Second)
+		bridge.SetDeviceInfoInterval(time.Duration(d.cfg.DeviceInfoIntervalMinutes) * time.Minute)
 		bridge.SetOnConnected(func() {
 			logger.Info("Bridge", "🚀 [ONLINE] Stream ready at rtsp://0.0.0.0:%d/%s", d.cfg.RTSPPort, d.cfg.RTSPPath)
 			logger.Info("Bridge", "🛰️ [ONVIF] Endpoints active at http://0.0.0.0:%d/onvif/device_service", d.cfg.ONVIFPort)

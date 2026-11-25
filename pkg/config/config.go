@@ -80,6 +80,11 @@ type Config struct {
 	// HoldLastFrameSeconds repeats the last keyframe for this many seconds
 	// while the camera is away (0 = off), so clients keep their session.
 	HoldLastFrameSeconds int
+	// DeviceInfoIntervalMinutes is how often the bridge repeats
+	// get_device_info on the L 625 (Wi-Fi signal, SD card, firmware, update
+	// offer). 0 asks once per session only. The camera freezes after about
+	// 328 of these calls since its last restart, so keep the interval long.
+	DeviceInfoIntervalMinutes int
 	// DebugAPI enables POST /api/debug/command, which passes raw commands to
 	// the camera. Off by default; meant for firmware exploration only.
 	DebugAPI bool
@@ -225,6 +230,7 @@ func LoadHomeAssistantOptionsFromPath(path string, cfg *Config) {
 		CacheDir                     string         `json:"cache_dir"`
 		InstantStart                 *bool          `json:"instant_start"`
 		HoldLastFrameSeconds         *int           `json:"hold_last_frame_seconds"`
+		DeviceInfoIntervalMinutes    *int           `json:"device_info_interval_minutes"`
 		DebugAPI                     bool           `json:"debug_api"`
 	}
 
@@ -331,6 +337,9 @@ func LoadHomeAssistantOptionsFromPath(path string, cfg *Config) {
 	}
 	if opts.HoldLastFrameSeconds != nil && *opts.HoldLastFrameSeconds >= 0 {
 		cfg.HoldLastFrameSeconds = *opts.HoldLastFrameSeconds
+	}
+	if opts.DeviceInfoIntervalMinutes != nil && *opts.DeviceInfoIntervalMinutes >= 0 {
+		cfg.DeviceInfoIntervalMinutes = *opts.DeviceInfoIntervalMinutes
 	}
 	if opts.DebugAPI {
 		cfg.DebugAPI = true
@@ -556,6 +565,11 @@ func Resolve(optionsPath string, fs *flag.FlagSet) *Config {
 	if v := os.Getenv("HOLD_LAST_FRAME_SECONDS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
 			cfg.HoldLastFrameSeconds = n
+		}
+	}
+	if v := os.Getenv("DEVICE_INFO_INTERVAL_MINUTES"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			cfg.DeviceInfoIntervalMinutes = n
 		}
 	}
 	if v := strings.ToLower(os.Getenv("DEBUG_API")); v == "true" || v == "1" {
