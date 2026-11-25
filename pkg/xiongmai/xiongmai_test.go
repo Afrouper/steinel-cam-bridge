@@ -2410,7 +2410,10 @@ func TestDriver_SetResolution(t *testing.T) {
 	require.NoError(t, err)
 
 	// Ingest must remain nil after Sofia connects successfully
-	assert.Nil(t, d.ingest, "Ingest must not be started when Sofia connects")
+	d.ingestMu.Lock()
+	initialIng := d.ingest
+	d.ingestMu.Unlock()
+	assert.Nil(t, initialIng, "Ingest must not be started when Sofia connects")
 
 	// 2. Trigger on-demand streaming to start the Sofia stream
 	mockStream.clients.Store(1)
@@ -2435,7 +2438,10 @@ func TestDriver_SetResolution(t *testing.T) {
 	assert.Equal(t, "720p", d.resolution)
 	assert.Equal(t, "Main", d.sofiaStream.StreamType(), "720p must map to Main stream type")
 	assert.Equal(t, "720p", bus.GetStatus().Resolution)
-	assert.Nil(t, d.ingest, "Ingest must NOT be started when Sofia stream switches resolution")
+	d.ingestMu.Lock()
+	ingAfter720 := d.ingest
+	d.ingestMu.Unlock()
+	assert.Nil(t, ingAfter720, "Ingest must NOT be started when Sofia stream switches resolution")
 
 	// Wait for restart and verify Main stream was requested
 	require.Eventually(t, func() bool {
@@ -2450,7 +2456,10 @@ func TestDriver_SetResolution(t *testing.T) {
 	assert.Equal(t, "360p", d.resolution)
 	assert.Equal(t, "Extra1", d.sofiaStream.StreamType(), "360p must map back to Extra1 stream type")
 	assert.Equal(t, "360p", bus.GetStatus().Resolution)
-	assert.Nil(t, d.ingest, "Ingest must stay nil across resolution toggles")
+	d.ingestMu.Lock()
+	ingAfter360 := d.ingest
+	d.ingestMu.Unlock()
+	assert.Nil(t, ingAfter360, "Ingest must stay nil across resolution toggles")
 
 	require.Eventually(t, func() bool {
 		st := lastStartStreamType.Load()

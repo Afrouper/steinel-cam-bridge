@@ -304,13 +304,19 @@ Die L 620 CAM speichert Videoaufnahmen als H.264- oder H.265/HEVC-Dateien (mit D
 - Führt bei bestehender Verbindung alle 15–20 Sekunden einen Keepalive-Heartbeat (`1006`) durch. Schlägt dieser fehl, wird der Socket ordnungsgemäß geschlossen und die Reconnect-Sequenz eingeleitet.
 - Nach erfolgreichem Reconnect werden automatisch `EnsureH264Encoding()`, `syncInitialState()` und der On-Demand Media-Check ausgeführt.
 
-### 2. Port 554 Dial Failure Short-Circuiting & Exponentieller Backoff
+### 2. Dedizierter Control-Socket-Demultiplexer (`client_demux.go`)
+- Ein einzelner Reader-Loop pro TCP-Kontrollverbindung liest vollständige 20-Byte-DVRIP-Header und Payloads über `io.ReadFull`, ganz ohne kurze 150-ms-/600-ms-Read-Deadlines. Abgebrochene Teil-Reads, die früher das 20-Byte-Framing des Kontrollsockets verschoben haben, treten damit nicht mehr auf.
+- Antworten werden anhand von `Header.Sequence` und erwartetem Antwort-`MsgID` dem wartenden Request zugeordnet (inkl. durch Sekundär-Sockets hochgezählter Session-Sequenznummern `Sequence >= req.seq` bei `OPMonitor`/`OPPlayBack`); verspätete Pakete abgelaufener Requests (`Sequence < req.seq` oder fremdes `MsgID`) verwirft der Demultiplexer, statt den nächsten Request zu verfälschen.
+- Spontane Kamera-Pushes (`MsgTransSerialData` 1582 und `MsgAlarmReq` 1500 inkl. `1501`-Quittung) verarbeitet der Reader sofort im Leerlauf und weckt wartende MCU-Abfragen ereignisgesteuert auf, ohne auf den nächsten 15-Sekunden-KeepAlive zu warten.
+- Ausgehende Socket-Writes laufen serialisiert über `writeMu`, während `pushMu` als eigenständiger Leaf-Lock Telemetrie- und Alarmzustand vom Request-Lock `c.mu` entkoppelt.
+
+### 3. Port 554 Dial Failure Short-Circuiting & Exponentieller Backoff
 - Erkennt TCP Dial-Fehler (`net.OpError` / `connection refused`) sofort beim ersten Kandidaten.
 - Bricht die sequentielle Prüfung aller 12 Kandidaten-URLs unmittelbar ab (`short-circuit`), anstatt für jeden Kandidaten Timeouts abzuwarten.
 - Nutzt für Neuversuche einen adaptiven exponentiellen Backoff (5s $\rightarrow$ 10s $\rightarrow$ 20s $\rightarrow$ 40s $\rightarrow$ 60s max).
 
-### 3. Passwort-Maskierung (CWE-312 Konformität)
+### 4. Passwort-Maskierung (CWE-312 Konformität)
 - Passwörter werden in Log-Ausgaben zu 100 % maskiert (`strings.Repeat("*", len(pwd))`). Es werden keinerlei Klartext-Zeichen preisgegeben.
 
-### 4. MQTT Initial-State Guarding
+### 5. MQTT Initial-State Guarding
 - Beim Verbindungsaufbau zu MQTT (`OnConnect`) wird der Gerätestatus nur dann publiziert, wenn er bereits durch echte Kamera-Telemetrie befüllt wurde (`LampMode > 0 || Lux >= 2 || Highlight > 0`). Dies verhindert falsche Dummy-Meldungen während des Bootvorgangs.
