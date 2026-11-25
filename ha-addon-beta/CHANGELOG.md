@@ -2,6 +2,34 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.6.0-beta.3
+
+> **Hinweis:** Dieses Release fasst alle Neuerungen der Version 1.6.0 (Beta.1 bis Beta.3) zusammen.
+
+### 🚀 Highlights & Neuerungen (v1.6.0)
+
+#### 🆕 Neu in Beta.3
+- **L 625 Freeze-Schutz durch optimierte `get_device_info`-Abfrage** (*@Grossmeister-T*, #93):
+  - **Ursachenbehebung für periodische Kamera-Aussetzer**: Verhindert das Einfrieren der L 625 CAM SC nach rund 328 `get_device_info`-Abfragen seit dem letzten Neustart (ca. 4 Minuten Nichterreichbarkeit nach ~5,5 h bei minütlicher Abfrage, gemessen auf Firmware `0.1.2.31` und `0.1.4.6`).
+  - **Session-basierte Abfrage**: `get_device_info` (WLAN-Signal, SD-Karten-Belegung, Firmware & Update-Status) wird standardmäßig nur noch einmal pro Session-Start abgerufen; Erkennungs- und Aufnahmeeinstellungen (`get_detect_data`, `get_record_setting`) werden weiterhin minütlich aktualisiert.
+  - **Neue Konfigurationsoption `device_info_interval_minutes`** (`DEVICE_INFO_INTERVAL_MINUTES`, Standard: `0` = nur beim Verbinden, Bereich `0–10080`): Ermöglicht bei Bedarf eine Wiederholung in großen Abständen (z. B. `360` Minuten).
+
+#### 📦 Bereits in Beta.1 & Beta.2 enthalten
+- **Xiongmai H.265 (HEVC) Live-Streaming & Standby-Stabilität** (*@szoux*, #89):
+  - Automatische H.265-Erkennung am I-Frame (Sofia-Stream Port 34567 & RTSP-Fallback Port 554) sowie dynamische RTSP- und ONVIF-Profilumschaltung (`H264` $\leftrightarrow$ `H265`).
+  - Behobenes Sofia-Framing/Chunk-Handling, DVRIP-Resynchronisation, RFC-7798 Temporal-ID-Korrektur, stabiler 15s-On-Demand-Standby und defensives Klonen von `VPS`/`SPS`/`PPS`.
+- **L 625 Diagnose-Schnittstelle & Rohbefehle** (*@Grossmeister-T*, #88):
+  - Optionaler Diagnose-Endpunkt `POST /api/debug/command` (`debug_api: true`) mit automatischer Maskierung sensibler Anmeldedaten und Warnung bei fehlender Authentifizierung.
+- **RTSP-Stream-Kontinuität & Video-Optionen** (*@Grossmeister-T*, #87):
+  - Durchgehender RTSP-Stream über Kamera-Session-Wechsel hinweg inkl. Standbild bei Aussetzern (`hold_last_frame_seconds`), optionalem `instant_start`, automatischer Auflösungsprüfung (L 625) und `audio_codec: none`.
+- **L 625 Kamera-Einstellungen, Diagnose-Sensoren & Wartung** (*@Grossmeister-T*, #84, #85, #86):
+  - Neue Entitäten für Zeitstempel, Lautstärke, Erkennung, Erkennungsrahmen, Personenerkennung, SD-Aufnahme, Licht bei Bildänderung, Firmware-Updates, Kamera-Neustart, Diagnose-Sensoren (WLAN, SD-Karte, Firmware), `switch.lowlight_switch` sowie zuverlässiger 10s-Bewegungs-Reset.
+
+### 🙏 Mitwirkende in diesem Release-Zyklus
+
+- Ein riesiger Dank an **@Grossmeister-T** für den wichtigen Freeze-Fix in PR #93 sowie die kontinuierlichen und vielseitigen Erweiterungen in PR #84, #85, #86, #87 und #88!
+- Ein herzliches Willkommen und vielen Dank an **@szoux** für die umfassende H.265-Implementierung und Fehlerbehebungen im Sofia-Streaming (PR #89)!
+
 ## 1.6.0-beta.2
 
 > **Hinweis:** Dieses Release fasst alle Neuerungen der Version 1.6.0 (Beta.1 & Beta.2) zusammen.
