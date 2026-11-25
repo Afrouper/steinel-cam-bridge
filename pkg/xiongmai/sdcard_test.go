@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"testing"
 	"time"
@@ -249,6 +250,19 @@ func TestSDCardManager_ListRecordings_Pagination(t *testing.T) {
 	assert.Equal(t, 0, respOOR.Count)
 	assert.Equal(t, 4, respOOR.Total)
 	assert.Empty(t, respOOR.List)
+
+	// Overflow-prone page/limit combinations must not panic or wrap to a negative slice index.
+	for _, tc := range []struct{ page, limit int }{
+		{math.MaxInt, 2},
+		{math.MaxInt/2 + 1, 2},
+		{2, math.MaxInt},
+	} {
+		respOverflow, ovErr := sdm.ListRecordings(ctx, time.Now().Add(-2*time.Hour), time.Now(), tc.page, tc.limit, "")
+		require.NoError(t, ovErr)
+		assert.Equal(t, 0, respOverflow.Count)
+		assert.Equal(t, 4, respOverflow.Total)
+		assert.Empty(t, respOverflow.List)
+	}
 }
 
 func TestSDCardManager_GetRecording_HistoricalTimestampWindow(t *testing.T) {
@@ -340,4 +354,62 @@ func TestSDCardManager_StreamVideo_ConcurrencyBusy(t *testing.T) {
 
 	err := sdm.StreamVideo(context.Background(), "1794950079", io.Discard, nil)
 	assert.ErrorIs(t, err, storage.ErrStorageBusy)
+}
+
+func TestSDCardManager_GetRecording_Latest(t *testing.T) {
+	t.Parallel()
+
+	server, clientConn := net.Pipe()
+	defer func() { _ = server.Close() }()
+	defer func() { _ = clientConn.Close() }()
+
+	client := &Client{
+		conn:       clientConn,
+		sessionID:  0x42,
+		sequence:   1,
+		isLoggedIn: true,
+	}
+	sdm := NewSDCardManager(client, "127.0.0.1", "admin", "secret")
+
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, err := server.Read(buf)
+			if err != nil {
+				return
+			}
+			reqHdr, err := DecodeHeader(buf[:n])
+			if err != nil {
+				return
+			}
+			if reqHdr.MsgID == MsgFileSearchReq {
+				queryResp := map[string]interface{}{
+					"Name": "OPFileQuery",
+					"OPFileQuery": []map[string]interface{}{
+						{"BeginTime": "2026-11-13 10:00:00", "EndTime": "2026-11-13 10:00:30", "FileLength": "1000", "FileName": "older.h264"},
+						{"BeginTime": "2026-11-13 11:00:00", "EndTime": "2026-11-13 11:00:30", "FileLength": "2000", "FileName": "latest.h264"},
+					},
+					"Ret":       100,
+					"SessionID": "0x00000042",
+				}
+				payload, _ := json.Marshal(queryResp)
+				respHdr := &Header{
+					Magic:      HeaderMagic,
+					SessionID:  reqHdr.SessionID,
+					Sequence:   reqHdr.Sequence,
+					MsgID:      MsgFileSearchResp,
+					DataLength: uint32(len(payload)),
+				}
+				_, _ = server.Write(append(respHdr.Encode(), payload...))
+			}
+		}
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	rec, err := sdm.GetRecording(ctx, "latest")
+	require.NoError(t, err)
+	require.NotNil(t, rec)
+	assert.Equal(t, "latest.h264", rec.FileName)
 }

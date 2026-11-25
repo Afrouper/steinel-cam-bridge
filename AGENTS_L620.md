@@ -170,7 +170,7 @@ Die L 620 MCU unterstützt genau 3 diskrete Stufen (`XMDetectSettingPresenter.ja
 | **MCU Frame-Format** | **12-Byte ASCII-Format** (`B...U`) | **18-Byte Binär-Hex** (`5A 0F 0F...`) |
 | **PIR-Stufen** | 3 diskrete Stufen (Min / Med / Max) | Stufenlos (0–100 % bzw. 1–10 m) |
 | **Alarmsirene / Warnton** | **Bewegungsalarm** (`Detect.MotionDetect.[0]` `VoiceEnable`) | **Manuelle Sirene** (Befehl `alarm_voice_ctl`) |
-| **SD-Karten Format** | H.264 MP4-Videos via `OPFileQuery` (MsgID 1440) | H.265 MP4-Videos via DataChannel `get_event_video` |
+| **SD-Karten Format** | H.264 / H.265 (HEVC) MP4-Videos via `OPFileQuery` (MsgID 1440) | H.265 MP4-Videos via DataChannel `get_event_video` |
 | **ONVIF Model** | Dynamisch als `"L 620 CAM"` gemeldet | Dynamisch als `"L 625 CAM SC"` gemeldet |
 
 ---
@@ -257,7 +257,7 @@ Die L 620 CAM unterstützt zwei komplementäre Mechanismen zur Bewegungsüberwac
 
 ## 10. MicroSD-Karten Edge Storage & Sofia Download (OPPlayBack)
 
-Die L 620 CAM speichert Videoaufnahmen als H.264/MP4 Dateien auf der internen MicroSD-Karte:
+Die L 620 CAM speichert Videoaufnahmen als H.264- oder H.265/HEVC-Dateien (mit Dateiendung `.h264`) auf der internen MicroSD-Karte:
 
 1. **Dateisuche (`OPFileQuery` 1440)**:
    ```json
@@ -273,16 +273,16 @@ Die L 620 CAM speichert Videoaufnahmen als H.264/MP4 Dateien auf der internen Mi
    }
    ```
 2. **SoC-Schutz bei Initial-Query**:
-   - Um bei vollen SD-Karten einen CPU-Lockout der Kamera zu verhindern, verwendet die Bridge beim Start ein pragmatisches **4-Stunden-Zeitfenster**.
+   - Um bei vollen SD-Karten einen CPU-Lockout der Kamera zu verhindern, verwendet die Bridge beim Start ein pragmatisches **4-Stunden-Zeitfenster**. Bei gezielten Abfragen per Timestamp-ID sucht `GetRecording` innerhalb eines `±2 min`-Fensters.
 3. **Nativer Sofia High-Speed Download (`OPPlayBack` 1424 / 1420)**:
    - Der dedizierte `SofiaDownloader` (`pkg/xiongmai/sofia_download.go`) baut einen isolierten sekundären TCP-Socket auf Port 34567 auf.
    - **Claim Handshake**: Beansprucht den Datenkanal via `OPPlayBack Claim` (MsgID 1424).
    - **DownloadStart über Kontrollsocket**: Das Startkommando `DownloadStart` (`MsgPlayReq` MsgID 1420) muss **zwingend verschlüsselt über den primären, authentifizierten Kontrollsocket** der Kamera gesendet werden (nicht auf dem Daten-Socket).
    - **Datenpakete**: Unterstützt sowohl reguläre `MsgPlayData` (1422) als auch `MsgPlayClaimData` (1426) Binärpakete.
-   - **Demuxing & Reiner H.264 Stream**: Die Demux-Routine `demuxAndWriteH264` filtert neben den Sofia-Headern (`00 00 01 FC` I-Frames, `00 00 01 FD` P-Frames) sowohl Audio-Frames (`00 00 01 FA`) als auch Metadaten-Frames (`00 00 01 F9`) heraus, um Bitstream-Korruptionen beim Muxen zu verhindern.
-   - Bei `MsgPlayEOF` (1423) oder Verbindungsende wird das Video über `ffmpeg -c:v copy -movflags +faststart` verlustfrei in `/data/recordings/<cam>/<id>.mp4` verpackt.
+   - **Format-bewusstes Demuxing & MP4-Muxing (H.264 / H.265 + AAC)**: `sofiaDownloadDemuxer` trennt Sofia-Video-Frames (`00 00 01 FC` I-Frames inkl. Codec-/FPS-Header, `00 00 01 FD` P-Frames), verwirft Metadaten-Frames (`00 00 01 F9`) und extrahiert verschachtelte 8-kHz-G.711-A-law-Audio-Frames (`00 00 01 FA`) standardmäßig mit (Opt-out über `?audio=0` / `?audio=false`).
+   - Bei `MsgPlayEOF` (1423) oder Verbindungsende verpackt `FFmpegExtractor.MuxToMP4` die Videospur verlustfrei per `-c:v copy -movflags +faststart` (bei HEVC inkl. `-f hevc -tag:v hvc1` und erkannter FPS) zusammen mit der nach AAC-LC (64 kbps) kodierten Tonspur in `/data/recordings/<cam>/<id>.mp4` (mit automatischem Fallback auf Video-only bei Audio-Muxing-Fehlern).
    - Der integrierte `FFmpegExtractor` extrahiert bei Sekunde 5 ein Standbild (`thumbnail.jpg`) und publiziert das Event samt `thumbnail_url` an MQTT / Home Assistant.
-   - Der REST-Endpunkt liefert Videos mit vollständiger HTTP 206 Partial-Content (Range Requests) Unterstützung aus.
+   - Der REST-Endpunkt liefert gecachte MP4-Dateien direkt über `http.ServeFile` mit vollständiger HTTP-206-Partial-Content-Unterstützung (Range Requests) und Tonspur aus.
 4. **Livestream-Schutz & Rate Limiting (`ThrottledReader`)**:
    - Da gleichzeitiges ungedrosseltes 1080p RTSP-Live-Streaming und High-Speed MP4-Download den Xiongmai SoC überlasten würden (CPU-Sättigung und Flash-I/O-Verzögerungen führen zu Frame-Drops im Livestream), verwendet der `SofiaDownloader` ein konfigurierbares Rate Limiting (`sdcard_download_rate_limit_kbps`, Standard: **400 KB/s**).
    - **TCP Flow Control**: Der `ThrottledReader` verlangsamt das Lesen vom TCP-Empfangssocket. Dadurch verkleinert sich das TCP Receive Window, und der TCP-Stack der Kamera zwingt den internen `dvr_app`-Prozess in blockierende `send()`-Aufrufe. Die Flash-Leseaktivität auf der SD-Karte sinkt drastisch, sodass der Hardware-H.264-Encoder ausreichend Speicherbandbreite und CPU-Zyklen behält.

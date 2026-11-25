@@ -625,13 +625,15 @@ func TestSofiaDownloader_DownloadHEVCChunked(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	assert.Equal(t, storage.MuxOptions{Codec: videoCodecH265, FPS: 6}, mockMuxer.LastMuxOpts)
+	assert.Equal(t, videoCodecH265, mockMuxer.LastMuxOpts.Codec)
+	assert.Equal(t, 6, mockMuxer.LastMuxOpts.FPS)
+	assert.NotEmpty(t, mockMuxer.LastMuxOpts.AudioPath)
 	assert.Equal(t, rec.FileName, gotName)
 	assert.Equal(t, int64(len(wantCleanVideo)), gotSize)
 	assert.Equal(t, wantCleanVideo, outBuf.Bytes())
 }
 
-func TestSofiaDownloader_DownloadHEVCWithOnDemandAudio(t *testing.T) {
+func TestSofiaDownloader_DownloadHEVCAudioOptOut(t *testing.T) {
 	t.Parallel()
 
 	l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -699,9 +701,7 @@ func TestSofiaDownloader_DownloadHEVCWithOnDemandAudio(t *testing.T) {
 		DurationSeconds: 31,
 	}
 
-	ctx := storage.WithIncludeAudio(context.Background(), true)
+	ctx := storage.WithIncludeAudio(context.Background(), false)
 	require.NoError(t, dl.Download(ctx, rec, &outBuf, nil))
-	assert.Equal(t, videoCodecH265, mockMuxer.LastMuxOpts.Codec)
-	assert.Equal(t, 6, mockMuxer.LastMuxOpts.FPS)
-	assert.NotEmpty(t, mockMuxer.LastMuxOpts.AudioPath)
+	assert.Equal(t, storage.MuxOptions{Codec: videoCodecH265, FPS: 6}, mockMuxer.LastMuxOpts)
 }

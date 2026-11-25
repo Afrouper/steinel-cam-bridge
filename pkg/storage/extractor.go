@@ -42,13 +42,15 @@ func WithIncludeAudio(ctx context.Context, include bool) context.Context {
 	return context.WithValue(ctx, includeAudioKey{}, include)
 }
 
-// IncludeAudioFromContext reports whether ctx requests audio track muxing (default false).
+// IncludeAudioFromContext reports whether ctx requests audio track muxing (default true).
 func IncludeAudioFromContext(ctx context.Context) bool {
 	if ctx == nil {
-		return false
+		return true
 	}
-	v, _ := ctx.Value(includeAudioKey{}).(bool)
-	return v
+	if v, ok := ctx.Value(includeAudioKey{}).(bool); ok {
+		return v
+	}
+	return true
 }
 
 // MuxOptions configures container muxing of an elementary Annex-B video stream

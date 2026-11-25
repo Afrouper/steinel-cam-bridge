@@ -247,10 +247,11 @@ func (s *Server) handleAPISDCardItem(w http.ResponseWriter, r *http.Request) {
 
 	case "video.mp4", "download.mp4", "video", "stream.mp4":
 		audioParam := strings.TrimSpace(r.URL.Query().Get("audio"))
-		includeAudio := audioParam == "1" || strings.EqualFold(audioParam, "true")
+		disableAudio := audioParam == "0" || strings.EqualFold(audioParam, "false")
 
-		// If cached on local disk and on-demand audio muxing was not requested, serve via http.ServeFile for Range request (HTTP 206) support
-		if !includeAudio {
+		// Serve cached MP4 files via http.ServeFile for instant Range request (HTTP 206) support.
+		// Cached recordings include audio by default; only an explicit ?audio=0/false opt-out bypasses the cache.
+		if !disableAudio {
 			if fileProvider, ok := provider.(interface {
 				GetCachedVideoPath(id string) (string, bool)
 			}); ok {
@@ -268,11 +269,13 @@ func (s *Server) handleAPISDCardItem(w http.ResponseWriter, r *http.Request) {
 		}
 
 		reqCtx := r.Context()
-		if includeAudio {
-			reqCtx = storage.WithIncludeAudio(reqCtx, true)
+		if disableAudio {
+			reqCtx = storage.WithIncludeAudio(reqCtx, false)
 		}
 
+		started := false
 		err := provider.StreamVideo(reqCtx, id, w, func(name string, size int64) {
+			started = true
 			if name == "" {
 				name = fmt.Sprintf("event_%s.mp4", id)
 			}
@@ -284,13 +287,19 @@ func (s *Server) handleAPISDCardItem(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 		})
 		if err != nil {
-			if errors.Is(err, storage.ErrStorageBusy) {
-				http.Error(w, "SD card busy", http.StatusTooManyRequests)
-				return
-			}
-			if errors.Is(err, storage.ErrFeatureDisabled) {
-				http.Error(w, "Video download is not supported for this camera model; playback is available via RTSP", http.StatusNotImplemented)
-				return
+			if !started {
+				if errors.Is(err, storage.ErrStorageNotFound) {
+					http.Error(w, "Recording not found", http.StatusNotFound)
+					return
+				}
+				if errors.Is(err, storage.ErrStorageBusy) {
+					http.Error(w, "SD card busy", http.StatusTooManyRequests)
+					return
+				}
+				if errors.Is(err, storage.ErrFeatureDisabled) {
+					http.Error(w, "Video download is not supported for this camera model; playback is available via RTSP", http.StatusNotImplemented)
+					return
+				}
 			}
 			if !errors.Is(err, storage.ErrTransferAborted) {
 				logger.Warn("SDCard", "Video streaming error: %v", err)

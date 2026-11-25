@@ -167,11 +167,12 @@ func TestMockExtractorMuxToMP4(t *testing.T) {
 func TestIncludeAudioContext(t *testing.T) {
 	t.Parallel()
 
-	assert.False(t, IncludeAudioFromContext(context.Background()))
-	ctxWith := WithIncludeAudio(context.Background(), true)
-	assert.True(t, IncludeAudioFromContext(ctxWith))
-	ctxWithout := WithIncludeAudio(ctxWith, false)
+	assert.True(t, IncludeAudioFromContext(context.TODO()))
+	assert.True(t, IncludeAudioFromContext(context.Background()))
+	ctxWithout := WithIncludeAudio(context.Background(), false)
 	assert.False(t, IncludeAudioFromContext(ctxWithout))
+	ctxWith := WithIncludeAudio(ctxWithout, true)
+	assert.True(t, IncludeAudioFromContext(ctxWith))
 }
 
 func TestFFmpegExtractorMuxToMP4(t *testing.T) {

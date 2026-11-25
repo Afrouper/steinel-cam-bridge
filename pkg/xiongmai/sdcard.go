@@ -158,12 +158,12 @@ func (m *SDCardManager) ListRecordings(ctx context.Context, start, end time.Time
 		if page < 0 {
 			page = 0
 		}
-		offset := page * limit
-		if offset >= total {
+		if total == 0 || page > (total-1)/limit {
 			recordings = []storage.RecordingItem{}
 		} else {
+			offset := page * limit
 			endIdx := offset + limit
-			if endIdx > total {
+			if endIdx > total || endIdx < offset {
 				endIdx = total
 			}
 			recordings = recordings[offset:endIdx]
@@ -191,6 +191,11 @@ func (m *SDCardManager) GetRecording(ctx context.Context, id string) (*storage.R
 	resp, err := m.ListRecordings(ctx, start, end, 0, 100, "")
 	if err != nil {
 		return nil, err
+	}
+
+	if id == "latest" && len(resp.List) > 0 {
+		latest := resp.List[0]
+		return &latest, nil
 	}
 
 	for _, r := range resp.List {
