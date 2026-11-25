@@ -167,6 +167,9 @@ Die **Steinel CAM Bridge** ist ein hochperformanter, 100 % autarker Go-Daemon, d
   - `h264x.go`: Untersucht H.264-RTP-Payloads nach RFC 6184 ohne Dekodierung (Single NAL, STAP-A, FU-A): erkennt Keyframe-Beginn, liefert SPS/PPS und die Bildgröße aus dem SPS (`ParseSize`, `ResolutionLabel`).
   - `guard.go`: `ResolutionGuard` vergleicht die tatsächlich gelieferte mit der angeforderten Auflösung und entscheidet, wann die Anforderung wiederholt wird (10 s, 30 s, 60 s, dann dreimal alle 5 min).
 
+- **`pkg/h265x/`**:
+  - `h265x.go`: Untersucht H.265/HEVC-RTP-Payloads nach RFC 7798 ohne Dekodierung (Single NAL, Aggregation Packet, Fragmentation Unit): erkennt IRAP-Keyframe-Beginn, extrahiert VPS/SPS/PPS und liest die Bildgröße aus dem SPS (`ParseSize`, `ResolutionLabel`), sodass `videoPipe` in `pkg/rtsp` auch für H.265-Kameras SSRC-/Sequenz-/Timestamp-Kontinuität und GOP-Caching (`INSTANT_START`) bereitstellt.
+
 - **`pkg/onvif/`**:
   - `auth.go`: RFC 2617 HTTP Digest Authentifizierung (zustandsloses HMAC-SHA256 Nonce-Management, MD5 Digest Berechnung mit `qop="auth"` & Legacy-Unterstützung), WS-Security UsernameToken (`PasswordDigest` via SHA-1 Nonce/Timestamp Hash sowie `PasswordText`), HTTP Basic Auth und Timing-Attack-sichere Validierung via `subtle.ConstantTimeCompare`.
   - `discovery.go`: **WS-Discovery Server** auf UDP Multicast `239.255.255.250:3702`.
