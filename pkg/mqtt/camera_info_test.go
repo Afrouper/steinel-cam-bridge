@@ -13,7 +13,7 @@ func TestCameraInfoState(t *testing.T) {
 	c := NewClient(Config{TopicPrefix: "steinel", DiscoveryPrefix: "homeassistant", DeviceID: "de-test"}, Callbacks{}, nil)
 	c.client = mockCl
 	state := func(sub string) string { return mockCl.published["steinel/de-test/"+sub] }
-	dev := &CameraDevice{baseTopic: "steinel/de-test", Callbacks: Callbacks{CameraInfo: true}}
+	dev := &CameraDevice{baseTopic: "steinel/de-test", Callbacks: Callbacks{CameraInfo: true, WifiSignal: true}}
 
 	// Nothing known yet: nothing is published.
 	c.publishDeviceStatus(dev, events.DeviceStatus{})
@@ -32,11 +32,20 @@ func TestCameraInfoState(t *testing.T) {
 	assert.Equal(t, "127.9", state("sd_total/state"))
 	assert.Equal(t, "normal", state("sd_status/state"))
 	assert.Equal(t, "0.1.2.31", state("firmware/state"))
+
+	// Without WifiSignal enabled (e.g. L 620), wifi_signal/state must not be published.
+	mockCl.published = make(map[string]string)
+	devNoWifi := &CameraDevice{baseTopic: "steinel/de-test", Callbacks: Callbacks{CameraInfo: true}}
+	c.publishDeviceStatus(devNoWifi, events.DeviceStatus{
+		WifiSignal: 57, SDFreeMB: 120480, SDTotalMB: 122000, SDStatus: "normal", FirmwareVer: "V4.03.R12",
+	})
+	_, wifiPublished := mockCl.published["steinel/de-test/wifi_signal/state"]
+	assert.False(t, wifiPublished)
+	assert.Equal(t, "V4.03.R12", state("firmware/state"))
 }
 
-// A camera without the diagnostic sensors (the L 620 driver sets a firmware
-// name, but announces no sensor for it) must not get retained state topics
-// that no entity reads.
+// A camera without the diagnostic sensors announced must not get retained
+// state topics that no entity reads.
 func TestCameraInfoStateNotAnnounced(t *testing.T) {
 	mockCl := &mockPahoClient{published: make(map[string]string)}
 	c := NewClient(Config{TopicPrefix: "steinel", DiscoveryPrefix: "homeassistant", DeviceID: "de-test"}, Callbacks{}, nil)
@@ -67,11 +76,19 @@ func TestCameraInfoDiscovery(t *testing.T) {
 		return ok
 	}
 
-	// Cameras without device info (e.g. L 620): no diagnostic sensors.
+	// Cameras without device info: no diagnostic sensors.
 	assert.False(t, has(Callbacks{}, "wifi_signal"))
+	assert.False(t, has(Callbacks{}, "firmware"))
 
-	for _, id := range []string{"wifi_signal", "sd_free", "sd_used", "sd_total", "sd_status", "firmware"} {
+	// Cameras with CameraInfo only (L 620): SD & firmware sensors without wifi_signal.
+	assert.False(t, has(Callbacks{CameraInfo: true}, "wifi_signal"))
+	for _, id := range []string{"sd_free", "sd_used", "sd_total", "sd_status", "firmware"} {
 		assert.True(t, has(Callbacks{CameraInfo: true}, id), id)
+	}
+
+	// Cameras with CameraInfo and WifiSignal (L 625): all diagnostic sensors.
+	for _, id := range []string{"wifi_signal", "sd_free", "sd_used", "sd_total", "sd_status", "firmware"} {
+		assert.True(t, has(Callbacks{CameraInfo: true, WifiSignal: true}, id), id)
 	}
 }
 

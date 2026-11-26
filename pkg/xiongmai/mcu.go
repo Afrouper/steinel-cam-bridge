@@ -199,6 +199,27 @@ func BuildSetHighlightDelayCommand(seconds int) string {
 	return fmt.Sprintf("BT%cU", CharConversion(minutes))
 }
 
+// L 620 MCU operating mode values encoded at index 4 of the B...U telemetry frame.
+const (
+	MCUModeOff        = 0 // 'a'
+	MCUModeSensorAuto = 1 // 'b'
+	MCUModeContinuous = 3 // 'd'
+	MCUModeTest       = 4 // 'e'
+)
+
+// MCUModeToLampMode maps an L 620 MCU mode value to the bridge-wide LampMode
+// convention (0 = Off, 1 = Continuous On, 2 = Sensor Automatic).
+func MCUModeToLampMode(mcuMode int) int {
+	switch mcuMode {
+	case MCUModeContinuous:
+		return 1
+	case MCUModeSensorAuto:
+		return 2
+	default:
+		return 0
+	}
+}
+
 // BuildSetLightModeCommand builds the MCU command to set the light mode: "BM<char>U"
 // On: Continuous Light (Mode 3, 'd') -> "BMdU"
 // Off: Sensor Automatic (Mode 1, 'b') -> "BMbU"
@@ -207,6 +228,23 @@ func BuildSetLightModeCommand(on bool) string {
 		return "BMdU"
 	}
 	return "BMbU"
+}
+
+// BuildSetLampModeCommand maps a bridge lamp mode string to its L 620 MCU command and mode value:
+//   - "on", "1", "dauerlicht" -> "BMdU", MCUModeContinuous
+//   - "off", "auto", "sensor", "2" -> "BMbU", MCUModeSensorAuto
+//   - "aus", "0" -> "BMaU", MCUModeOff
+func BuildSetLampModeCommand(mode string) (string, int, error) {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "on", "1", "dauerlicht":
+		return "BMdU", MCUModeContinuous, nil
+	case "off", "auto", "sensor", "2":
+		return "BMbU", MCUModeSensorAuto, nil
+	case "aus", "0":
+		return "BMaU", MCUModeOff, nil
+	default:
+		return "", 0, fmt.Errorf("unknown lamp mode: %s (use on, off, auto, aus)", mode)
+	}
 }
 
 // BuildSetTestModeCommand builds the MCU command for sensor walk test mode (Mode 4, 'e'): "BMeU"
@@ -219,5 +257,5 @@ func (c *MCUConfig) IsLightOn() bool {
 	if c == nil {
 		return false
 	}
-	return c.Mode == 3
+	return c.Mode == MCUModeContinuous
 }

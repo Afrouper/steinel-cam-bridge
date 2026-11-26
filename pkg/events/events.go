@@ -46,6 +46,7 @@ type DeviceStatus struct {
 	OSDPosition   int    `json:"osd_position"`   // timestamp overlay: 0 = off, 1-4 = corner, -1 = unknown
 	SpeakerVolume int    `json:"speaker_volume"` // 0 - 100 %, -1 = unknown
 	DetectMode    string `json:"detect_mode"`    // e.g. "ai"
+	SirenEnabled  int    `json:"siren_enabled"`  // Motion alarm siren/voice state: 1 = on, 0 = off, -1 = unknown.
 
 	// Lamp setting from the MCU status frame: 1 = "Pixel Change Detection" on,
 	// 0 = off, -1 = unknown.
@@ -86,6 +87,7 @@ func NewBus() *Bus {
 			LastSeen:       time.Now(),
 			OSDPosition:    -1,
 			SpeakerVolume:  -1,
+			SirenEnabled:   -1,
 
 			PixelChangeDetection: -1,
 			DrawFrame:            -1,

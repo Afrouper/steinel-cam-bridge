@@ -246,24 +246,35 @@ func (s *Server) handleAPISDCardItem(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(buf.Bytes())
 
 	case "video.mp4", "download.mp4", "video", "stream.mp4":
-		// If cached on local disk, serve via http.ServeFile for instant seeking and Range request (HTTP 206) support
-		if fileProvider, ok := provider.(interface {
-			GetCachedVideoPath(id string) (string, bool)
-		}); ok {
-			if path, exists := fileProvider.GetCachedVideoPath(id); exists {
-				if strings.Contains(path, "..") {
-					http.Error(w, "Invalid file path", http.StatusBadRequest)
+		audioParam := strings.TrimSpace(r.URL.Query().Get("audio"))
+		disableAudio := audioParam == "0" || strings.EqualFold(audioParam, "false")
+
+		// Serve cached MP4 files via http.ServeFile for instant Range request (HTTP 206) support.
+		// Cached recordings include audio by default; only an explicit ?audio=0/false opt-out bypasses the cache.
+		if !disableAudio {
+			if fileProvider, ok := provider.(interface {
+				GetCachedVideoPath(id string) (string, bool)
+			}); ok {
+				if path, exists := fileProvider.GetCachedVideoPath(id); exists {
+					if strings.Contains(path, "..") {
+						http.Error(w, "Invalid file path", http.StatusBadRequest)
+						return
+					}
+					w.Header().Set("Content-Type", "video/mp4")
+					w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", fmt.Sprintf("event_%s.mp4", id)))
+					http.ServeFile(w, r, path)
 					return
 				}
-				w.Header().Set("Content-Type", "video/mp4")
-				w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", fmt.Sprintf("event_%s.mp4", id)))
-				http.ServeFile(w, r, path)
-				return
 			}
 		}
 
+		reqCtx := r.Context()
+		if disableAudio {
+			reqCtx = storage.WithIncludeAudio(reqCtx, false)
+		}
+
 		headersSent := false
-		err := provider.StreamVideo(r.Context(), id, w, func(name string, size int64) {
+		err := provider.StreamVideo(reqCtx, id, w, func(name string, size int64) {
 			if name == "" {
 				name = fmt.Sprintf("event_%s.mp4", id)
 			}
@@ -277,6 +288,10 @@ func (s *Server) handleAPISDCardItem(w http.ResponseWriter, r *http.Request) {
 		})
 		if err != nil {
 			if !headersSent {
+				if errors.Is(err, storage.ErrStorageNotFound) {
+					http.Error(w, "Recording not found", http.StatusNotFound)
+					return
+				}
 				if errors.Is(err, storage.ErrStorageBusy) {
 					http.Error(w, "SD card busy", http.StatusTooManyRequests)
 					return

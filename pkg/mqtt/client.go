@@ -41,9 +41,11 @@ type Callbacks struct {
 	SetResolution     func(res string) error
 	ReconnectSession  func() error
 
-	// CameraInfo announces the diagnostic sensors for cameras that report
-	// Wi-Fi signal, SD card usage and firmware version (L 625).
+	// CameraInfo announces the diagnostic sensors for SD card usage and firmware version.
 	CameraInfo bool
+
+	// WifiSignal announces the Wi-Fi signal strength diagnostic sensor (L 625).
+	WifiSignal bool
 
 	// Camera-side settings (L 625). Each setter announces its control entity
 	// when set.
