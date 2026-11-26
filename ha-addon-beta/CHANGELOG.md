@@ -2,6 +2,40 @@
 
 Alle wichtigen Änderungen für das **Steinel CAM Bridge Beta** Add-on werden hier dokumentiert.
 
+## 1.6.0-beta.4
+
+> **Hinweis:** Dieses Release fasst alle Neuerungen der Version 1.6.0 (Beta.1 bis Beta.4) zusammen.
+
+### 🚀 Highlights & Neuerungen (v1.6.0)
+
+#### 🆕 Neu in Beta.4
+- **Xiongmai L 620 / XLED CAM 1 Leuchtensteuerung & Sofia-Einstellungen** (*@szoux*, #91):
+  - **Zuverlässige Moduswechsel**: `SendMCUCommand` synchronisiert fehlende `1582`-Telemetriepakete nach seriellen Befehlen automatisch via `BFbU`-Statusabfrage. `SetLightMode` unterstützt alle drei Betriebsmodi (`Sensor`, `Dauerlicht`, `Aus`) inkl. automatischem Wiederholungsversuch; bei Socket-Fehlern wird die serielle Brücke (`OPTrans`) sauber zurückgesetzt.
+  - **Kamera-Einstellungen & Diagnosen**: L 620 / XLED CAM 1 unterstützen nun Firmware-Version, SD-Karten-Belegung (`SystemInfo` / `StorageInfo`), Lautsprecher-Lautstärke, Zeitstempel-Einblendung, Bewegungserkennung, Bewegungsalarm-Ton, Aufnahmemodus sowie Kamera-Neustart in Home Assistant.
+- **L 620 SD-Karten-Wiedergabe: HEVC & Standard-AAC-Tonspur** (*@szoux*, #92, Fixes #83):
+  - **HEVC- & Audio-Muxing**: `sofiaDownloadDemuxer` und `FFmpegExtractor.MuxToMP4` unterstützen nun H.265/HEVC (`hvc1` mit exakter FPS aus `0xFC`-Headern) sowie eine standardmäßig gemuxte AAC-LC-Tonspur (`0xFA`, 8 kHz G.711 A-law) im Cache (Opt-out über `?audio=0` / `?audio=false`), inkl. HTTP-Range-Wiedergabe (`206 Partial Content`).
+  - **Zuverlässigere Abrufe**: Exakte `Content-Length` erst nach dem MP4-Muxing, `±2 min`-Lookup für ältere SD-Aufnahmen, `latest`-Auflösung, `404`-Mapping bei fehlenden Aufnahmen und Single-Flight-Schutz (`429 Too Many Requests` bei parallelen Transfers).
+- **Sicherheits-, Concurrency- & Stabilitäts-Härtung** (*@Afrouper*, `dev`):
+  - **Sicherheit & Netzwerk**: Gehärtete ONVIF SOAP Pre-Auth-Prüfung (XML-Body-Parsing), 1-MiB-Body-Limit, HTTP-Timeouts, Entfernung sensibler Digest-HA1-Werte aus Debug-Logs sowie Tar-Extraktions- und Nil-Pointer-Härtung im Launcher.
+  - **Concurrency & Deadlock-Schutz**: Mutex-Deadlock zwischen `SofiaStream.Stop` und `readLoop` behoben; Race-Conditions, Close-Panics und Socket-/Session-Resets in Nabto (CGo & Pure-Go), WebRTC (`SDCardManager`, `gatherComplete`), Xiongmai (Deadline-Leaks, Encryption-Reset, Download-Timeout), RTSP, MQTT, Logger und EventBus beseitigt.
+
+#### 📦 Bereits in Beta.1 bis Beta.3 enthalten
+- **L 625 Freeze-Schutz durch optimierte `get_device_info`-Abfrage** (*@Grossmeister-T*, #93):
+  - `get_device_info` wird standardmäßig nur noch einmal pro Session abgefragt (verhindert L-625-Aussetzer nach ~328 Abfragen); optional über `device_info_interval_minutes` konfigurierbar.
+- **Xiongmai H.265 (HEVC) Live-Streaming & Standby-Stabilität** (*@szoux*, #89):
+  - Automatische H.265-Erkennung am I-Frame (Sofia-Stream & RTSP-Fallback), dynamische RTSP-/ONVIF-Profilumschaltung und stabiler 15s-On-Demand-Standby.
+- **L 625 Diagnose-Schnittstelle & Rohbefehle** (*@Grossmeister-T*, #88):
+  - Optionaler Diagnose-Endpunkt `POST /api/debug/command` (`debug_api: true`) mit Maskierung sensibler Zugangsdaten.
+- **RTSP-Stream-Kontinuität & Video-Optionen** (*@Grossmeister-T*, #87):
+  - Durchgehender RTSP-Stream über Session-Wechsel hinweg inkl. `hold_last_frame_seconds`, `instant_start`, Auflösungsprüfung (L 625) und `audio_codec: none`.
+- **L 625 Kamera-Einstellungen, Diagnose-Sensoren & Wartung** (*@Grossmeister-T*, #84, #85, #86):
+  - Entitäten für Zeitstempel, Lautstärke, Erkennung, Erkennungsrahmen, Personenerkennung, SD-Aufnahme, Licht bei Bildänderung, Firmware-Updates, Neustart, Diagnose-Sensoren, `switch.lowlight_switch` und zuverlässiger 10s-Bewegungs-Reset.
+
+### 🙏 Mitwirkende in diesem Release-Zyklus
+
+- Ein herzliches Dankeschön an **@szoux** für die umfangreichen Xiongmai-/L-620-Verbesserungen (PR #89, #91 und #92)!
+- Ein riesiger Dank an **@Grossmeister-T** für die kontinuierlichen L-625-Erweiterungen und den Freeze-Fix (PR #84, #85, #86, #87, #88 und #93)!
+
 ## 1.6.0-beta.3
 
 > **Hinweis:** Dieses Release fasst alle Neuerungen der Version 1.6.0 (Beta.1 bis Beta.3) zusammen.
