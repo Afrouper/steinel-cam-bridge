@@ -344,7 +344,6 @@ func ValidateDigestAuthWithReason(
 	fmt.Fprintf(&diag, "  - User: %q, Realm: %q\n", expectedUser, realmToUse)
 	fmt.Fprintf(&diag, "  - Nonce: %q, NC: %q, Cnonce: %q, QOP: %q\n", nonce, nc, cnonce, qop)
 	fmt.Fprintf(&diag, "  - Client URI: %q, Req URI: %q, Host: %q\n", clientURI, reqURI, host)
-	fmt.Fprintf(&diag, "  - Server HA1: %s\n", ha1)
 	diag.WriteString("  - Tested Candidates:")
 	for i, cand := range testedCandidates {
 		fmt.Fprintf(&diag, "\n    [%d] %q (HA2: %s) -> Expected: %s", i+1, cand.raw, cand.hash, cand.expectedResp)

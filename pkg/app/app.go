@@ -131,14 +131,18 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 		isL620, modelName := cam.ProbeCameraModel()
 
 		// Key path and pairing reset
-		if cam.KeyPath != "" {
-			if err := os.MkdirAll(filepath.Dir(cam.KeyPath), 0755); err != nil {
+		keyPath := cam.KeyPath
+		if keyPath == "" && cam.Nabto != nil {
+			keyPath = cam.Nabto.KeyPath
+		}
+		if keyPath != "" {
+			if err := os.MkdirAll(filepath.Dir(keyPath), 0755); err != nil {
 				logger.Warn("Config", "⚠️ Warning: Could not create key directory for %s: %v", cam.Name, err)
 			}
 		}
-		if cam.ResetPair && !isL620 && cam.KeyPath != "" {
-			_ = os.Remove(cam.KeyPath)
-			logger.Info("Reset", "🔄 Pairing reset for %s: removed key '%s'", cam.Name, cam.KeyPath)
+		if cam.ResetPair && !isL620 && keyPath != "" {
+			_ = os.Remove(keyPath)
+			logger.Info("Reset", "🔄 Pairing reset for %s: removed key '%s'", cam.Name, keyPath)
 		}
 
 		camBus := events.NewBus()
@@ -413,8 +417,11 @@ func (a *App) Run(ctx context.Context) error {
 	}
 
 	// 3. Start MQTT Client and Syncers if enabled
+	var wg sync.WaitGroup
 	if a.mqttClient != nil {
+		wg.Add(1)
 		go func() {
+			defer wg.Done()
 			if err := a.mqttClient.Start(ctx); err != nil {
 				logger.Warn("MQTT", "⚠️ MQTT client error: %v", err)
 			}
@@ -422,7 +429,6 @@ func (a *App) Run(ctx context.Context) error {
 	}
 
 	// 4. Run Recording Syncers and Camera Supervisors in parallel
-	var wg sync.WaitGroup
 	for _, inst := range a.cameras {
 		if inst.recordingSyncer != nil {
 			syncer := inst.recordingSyncer

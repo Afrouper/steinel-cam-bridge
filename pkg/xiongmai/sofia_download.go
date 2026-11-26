@@ -3,6 +3,7 @@ package xiongmai
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -239,6 +240,7 @@ func (d *SofiaDownloader) Download(ctx context.Context, rec *storage.RecordingIt
 	totalBytesWritten := int64(0)
 	packetCount := 0
 	hdrBuf := make([]byte, HeaderLength)
+	demux := &sofiaDownloadDemuxer{}
 
 	downloadTimeout := 45 * time.Second
 	if d.rateLimitKBps > 0 {
@@ -275,7 +277,7 @@ func (d *SofiaDownloader) Download(ctx context.Context, rec *storage.RecordingIt
 		if time.Now().After(deadline) {
 			logger.Warn("Xiongmai Download", "⚠️ Download timeout reached for %s (received %d packets, %d bytes)",
 				rec.ID, packetCount, totalBytesWritten)
-			break
+			return fmt.Errorf("download timeout reached for %s after %v", rec.ID, downloadTimeout)
 		}
 
 		_ = conn.SetReadDeadline(time.Now().Add(20 * time.Second))
@@ -289,7 +291,7 @@ func (d *SofiaDownloader) Download(ctx context.Context, rec *storage.RecordingIt
 
 		hdr, err := DecodeHeader(hdrBuf)
 		if err != nil {
-			continue
+			return fmt.Errorf("invalid Sofia header during download of %s: %w", rec.ID, err)
 		}
 
 		// Check for EOF packet (MsgID 1423 MsgPlayEOF or zero length after packets received)
@@ -313,7 +315,7 @@ func (d *SofiaDownloader) Download(ctx context.Context, rec *storage.RecordingIt
 		// Handle Media Packets (MsgID 1422 MsgPlayData, 1426 MsgPlayClaimData, or 1412 MsgMonitorData)
 		if hdr.MsgID == MsgPlayData || hdr.MsgID == MsgPlayClaimData || hdr.MsgID == MsgMonitorData {
 			packetCount++
-			written := d.demuxAndWriteH264(payload, tmpH264)
+			written := demux.write(payload, tmpH264)
 			totalBytesWritten += int64(written)
 		} else {
 			logger.Trace("Xiongmai Download", "Ignored non-media packet during download: MsgID=%d, Len=%d", hdr.MsgID, hdr.DataLength)
@@ -333,37 +335,83 @@ func (d *SofiaDownloader) Download(ctx context.Context, rec *storage.RecordingIt
 	return d.convertAndStream(ctx, tmpH264Path, w)
 }
 
-func (d *SofiaDownloader) demuxAndWriteH264(payload []byte, dest io.Writer) int {
-	if len(payload) >= 4 {
-		marker := payload[0:4]
+// sofiaDownloadDemuxer tracks record boundaries across Sofia media packets so
+// multi-packet audio (0xFA) and metadata (0xF9) records never leak trailing
+// continuation chunks into the H.264 elementary stream.
+type sofiaDownloadDemuxer struct {
+	skipping      bool
+	skipRemaining int
+}
 
-		if bytes.Equal(marker, MarkerIFrame) {
-			// I-Frame: skip 16-byte Xiongmai record header
-			if len(payload) > 16 {
-				n, _ := dest.Write(payload[16:])
-				return n
+func (sd *sofiaDownloadDemuxer) write(payload []byte, dest io.Writer) int {
+	totalWritten := 0
+	for len(payload) > 0 {
+		if sd.skipping && sd.skipRemaining > 0 {
+			if len(payload) <= sd.skipRemaining {
+				sd.skipRemaining -= len(payload)
+				if sd.skipRemaining == 0 {
+					sd.skipping = false
+				}
+				return totalWritten
 			}
-			return 0
+			payload = payload[sd.skipRemaining:]
+			sd.skipRemaining = 0
+			sd.skipping = false
+			continue
 		}
 
-		if bytes.Equal(marker, MarkerPFrame) {
-			// P-Frame: skip 8-byte Xiongmai record header
-			if len(payload) > 8 {
-				n, _ := dest.Write(payload[8:])
-				return n
+		if len(payload) >= 4 {
+			marker := payload[0:4]
+			if bytes.Equal(marker, MarkerIFrame) {
+				sd.skipping = false
+				sd.skipRemaining = 0
+				if len(payload) > 16 {
+					n, _ := dest.Write(payload[16:])
+					totalWritten += n
+				}
+				return totalWritten
 			}
-			return 0
+			if bytes.Equal(marker, MarkerPFrame) {
+				sd.skipping = false
+				sd.skipRemaining = 0
+				if len(payload) > 8 {
+					n, _ := dest.Write(payload[8:])
+					totalWritten += n
+				}
+				return totalWritten
+			}
+			if bytes.Equal(marker, MarkerAudio) || bytes.Equal(marker, MarkerMeta) {
+				recSize := 0
+				if len(payload) >= 8 {
+					recSize = int(binary.LittleEndian.Uint16(payload[6:8]))
+				}
+				if recSize > 0 {
+					total := 8 + recSize
+					if len(payload) >= total {
+						payload = payload[total:]
+						sd.skipping = false
+						sd.skipRemaining = 0
+						continue
+					}
+					sd.skipping = true
+					sd.skipRemaining = total - len(payload)
+					return totalWritten
+				}
+				sd.skipping = true
+				sd.skipRemaining = 0
+				return totalWritten
+			}
 		}
 
-		if bytes.Equal(marker, MarkerAudio) || bytes.Equal(marker, MarkerMeta) {
-			// Audio frame or metadata/sync frame: skip to prevent H.264 elementary stream corruption
-			return 0
+		if sd.skipping {
+			return totalWritten
 		}
+
+		n, _ := dest.Write(payload)
+		totalWritten += n
+		return totalWritten
 	}
-
-	// Continuation chunk of current video frame
-	n, _ := dest.Write(payload)
-	return n
+	return totalWritten
 }
 
 func (d *SofiaDownloader) sendStop(sessionID uint32, sessionHex, fileName string) {

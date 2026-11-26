@@ -45,6 +45,7 @@ type activeTransfer struct {
 	fileSize  int64
 	chunkChan chan []byte
 	doneChan  chan struct{}
+	doneOnce  sync.Once
 	errChan   chan error
 	lastData  time.Time
 }
@@ -144,6 +145,9 @@ func (m *SDCardManager) GetEventList(ctx context.Context, startTime, endTime int
 		return nil, fmt.Errorf("failed to send get_event_list command: %w", err)
 	}
 
+	timeoutTimer := time.NewTimer(15 * time.Second)
+	defer timeoutTimer.Stop()
+
 	select {
 	case <-ctx.Done():
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -151,7 +155,7 @@ func (m *SDCardManager) GetEventList(ctx context.Context, startTime, endTime int
 			m.recordTimeout()
 		}
 		return nil, ctx.Err()
-	case <-time.After(15 * time.Second):
+	case <-timeoutTimer.C:
 		logger.Warn("SDCard", "⚠️ Timed out waiting for get_event_list response from camera")
 		m.recordTimeout()
 		return nil, ErrSDCardTimeout
@@ -361,7 +365,7 @@ func (m *SDCardManager) streamFile(ctx context.Context, cmd string, timestamp in
 		select {
 		case <-ctx.Done():
 			// Client cancelled download (e.g. shutdown or client abort)
-			_ = m.sendJSONCmd("get_event_video", map[string]interface{}{
+			_ = m.sendJSONCmd(cmd, map[string]interface{}{
 				"timestamp": timestamp,
 				"action":    "stop",
 			})
@@ -371,10 +375,26 @@ func (m *SDCardManager) streamFile(ctx context.Context, cmd string, timestamp in
 			return err
 
 		case <-transfer.doneChan:
+			// Check for any concurrent error before draining chunks
+			select {
+			case err := <-transfer.errChan:
+				return err
+			default:
+			}
 			// Transfer completed from camera side: drain any remaining buffered chunks
 			for {
 				select {
 				case chunk := <-transfer.chunkChan:
+					if !headerReported && onStart != nil {
+						m.mu.Lock()
+						name := transfer.fileName
+						size := transfer.fileSize
+						m.mu.Unlock()
+						if size > 0 {
+							onStart(name, size)
+							headerReported = true
+						}
+					}
 					if len(chunk) > 0 {
 						if _, err := w.Write(chunk); err != nil {
 							return err
@@ -474,9 +494,8 @@ func (m *SDCardManager) HandleJSONMessage(msg map[string]interface{}) bool {
 
 		m.mu.Lock()
 		t := m.active
-		m.mu.Unlock()
-
-		if t == nil {
+		if t == nil || t.cmd != resp {
+			m.mu.Unlock()
 			return true
 		}
 
@@ -490,17 +509,24 @@ func (m *SDCardManager) HandleJSONMessage(msg map[string]interface{}) bool {
 					t.fileSize = int64(size)
 				}
 			}
-			logger.Debug("SDCard", "📥 Transfer started: %s (Size: %d bytes)", t.fileName, t.fileSize)
+			fileName := t.fileName
+			fileSize := t.fileSize
+			m.mu.Unlock()
+			logger.Debug("SDCard", "📥 Transfer started: %s (Size: %d bytes)", fileName, fileSize)
 
 		case "end":
-			logger.Debug("SDCard", "✅ Transfer completed: %s", t.fileName)
-			close(t.doneChan)
+			fileName := t.fileName
+			m.mu.Unlock()
+			logger.Debug("SDCard", "✅ Transfer completed: %s", fileName)
+			t.doneOnce.Do(func() { close(t.doneChan) })
 
 		case "state":
+			m.mu.Unlock()
 			// Progress update from camera
 			logger.Trace("SDCard", "Transfer state update: %+v", info)
 
 		default:
+			m.mu.Unlock()
 			logger.Debug("SDCard", "ℹ️ Message for %s with action '%s': %v", resp, action, msg)
 			if action == "fail" || action == "error" {
 				select {
@@ -530,6 +556,10 @@ func (m *SDCardManager) HandleJSONMessage(msg map[string]interface{}) bool {
 func (m *SDCardManager) HandleBinaryChunk(data []byte) {
 	m.mu.Lock()
 	t := m.active
+	var fileName string
+	if t != nil {
+		fileName = t.fileName
+	}
 	m.mu.Unlock()
 
 	if t == nil || len(data) == 0 {
@@ -537,13 +567,15 @@ func (m *SDCardManager) HandleBinaryChunk(data []byte) {
 	}
 
 	// Trace: log chunk receipt with size only, NEVER dump raw MP4 video bytes
-	logger.Trace("SDCard", "Received binary chunk for %s (%d bytes)", t.fileName, len(data))
+	logger.Trace("SDCard", "Received binary chunk for %s (%d bytes)", fileName, len(data))
 
 	// Deliver chunk to consumer with backpressure timeout. Never drop chunks silently as it corrupts MP4 files.
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
 	select {
 	case t.chunkChan <- data:
-	case <-time.After(5 * time.Second):
-		logger.Error("SDCard", "❌ Chunk buffer full for >5s, consumer stalled. Aborting transfer for %s", t.fileName)
+	case <-timer.C:
+		logger.Error("SDCard", "❌ Chunk buffer full for >5s, consumer stalled. Aborting transfer for %s", fileName)
 		select {
 		case t.errChan <- fmt.Errorf("chunk buffer full for >5s: consumer stalled"):
 		default:

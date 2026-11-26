@@ -39,6 +39,49 @@ func TestCoAPEncodeDecode(t *testing.T) {
 	}
 }
 
+func TestDecodeCoAPMessage_ReservedNibble15(t *testing.T) {
+	// Version 1, CON, TKL=0, Code=GET(1), MID=1, Option byte 0xF0 (delta nibble 15)
+	pkt := []byte{0x40, 0x01, 0x00, 0x01, 0xF0}
+	if _, err := DecodeCoAPMessage(pkt); err == nil {
+		t.Fatalf("expected error for reserved CoAP option nibble 15")
+	}
+}
+
+func TestCoAPClient_CloseConcurrentWithIncomingPacket(t *testing.T) {
+	for i := 0; i < 50; i++ {
+		serverConn, clientConn := net.Pipe()
+		coapClient := NewCoAPClient(clientConn)
+
+		req := NewRequest(CodeGET, "/p2p/webrtc-info", 0, nil)
+		req.Token = []byte{0x01, 0x02, 0x03, 0x04}
+
+		go func() {
+			buf := make([]byte, 512)
+			_, _ = serverConn.Read(buf)
+		}()
+
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			_, _ = coapClient.Execute(req, 500*time.Millisecond)
+		}()
+
+		resp := &CoAPMessage{
+			Type:      TypeACK,
+			Code:      69,
+			MessageID: 1,
+			Token:     []byte{0x01, 0x02, 0x03, 0x04},
+		}
+		rawResp, _ := resp.Encode()
+
+		go coapClient.HandleIncomingPacket(rawResp)
+		coapClient.Close()
+		<-done
+		_ = serverConn.Close()
+		_ = clientConn.Close()
+	}
+}
+
 func TestCoAPClientMock(t *testing.T) {
 	serverConn, clientConn := net.Pipe()
 	defer func() { _ = serverConn.Close() }()

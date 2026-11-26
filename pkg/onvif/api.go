@@ -60,7 +60,7 @@ func (s *Server) handleAPIStatus(w http.ResponseWriter, r *http.Request) {
 	cam := r.URL.Query().Get("camera")
 	bus := s.eventBus
 	if cam != "" {
-		if ch := s.findChannel(cam); ch != nil && ch.EventBus != nil {
+		if ch, ok := s.findChannel(cam); ok && ch.EventBus != nil {
 			bus = ch.EventBus
 		}
 	}
@@ -79,7 +79,7 @@ func (s *Server) handleAPILight(w http.ResponseWriter, r *http.Request) {
 	cam := r.URL.Query().Get("camera")
 	var setLamp func(mode string) error
 	if cam != "" {
-		if ch := s.findChannel(cam); ch != nil && ch.SetLampFunc != nil {
+		if ch, ok := s.findChannel(cam); ok && ch.SetLampFunc != nil {
 			setLamp = ch.SetLampFunc
 		}
 	}
@@ -102,7 +102,7 @@ func (s *Server) handleAPISDCardEvents(w http.ResponseWriter, r *http.Request) {
 	cam := r.URL.Query().Get("camera")
 	providerFunc := s.recordingProvider
 	if cam != "" {
-		if ch := s.findChannel(cam); ch != nil && ch.RecordingProvider != nil {
+		if ch, ok := s.findChannel(cam); ok && ch.RecordingProvider != nil {
 			providerFunc = ch.RecordingProvider
 		}
 	}
@@ -161,7 +161,7 @@ func (s *Server) handleAPISDCardItem(w http.ResponseWriter, r *http.Request) {
 	cam := r.URL.Query().Get("camera")
 	providerFunc := s.recordingProvider
 	if cam != "" {
-		if ch := s.findChannel(cam); ch != nil && ch.RecordingProvider != nil {
+		if ch, ok := s.findChannel(cam); ok && ch.RecordingProvider != nil {
 			providerFunc = ch.RecordingProvider
 		}
 	}
@@ -262,6 +262,7 @@ func (s *Server) handleAPISDCardItem(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		headersSent := false
 		err := provider.StreamVideo(r.Context(), id, w, func(name string, size int64) {
 			if name == "" {
 				name = fmt.Sprintf("event_%s.mp4", id)
@@ -272,15 +273,18 @@ func (s *Server) handleAPISDCardItem(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 			}
 			w.WriteHeader(http.StatusOK)
+			headersSent = true
 		})
 		if err != nil {
-			if errors.Is(err, storage.ErrStorageBusy) {
-				http.Error(w, "SD card busy", http.StatusTooManyRequests)
-				return
-			}
-			if errors.Is(err, storage.ErrFeatureDisabled) {
-				http.Error(w, "Video download is not supported for this camera model; playback is available via RTSP", http.StatusNotImplemented)
-				return
+			if !headersSent {
+				if errors.Is(err, storage.ErrStorageBusy) {
+					http.Error(w, "SD card busy", http.StatusTooManyRequests)
+					return
+				}
+				if errors.Is(err, storage.ErrFeatureDisabled) {
+					http.Error(w, "Video download is not supported for this camera model; playback is available via RTSP", http.StatusNotImplemented)
+					return
+				}
 			}
 			if !errors.Is(err, storage.ErrTransferAborted) {
 				logger.Warn("SDCard", "Video streaming error: %v", err)
@@ -324,8 +328,8 @@ func (s *Server) handleAPIDebugCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if cam := r.URL.Query().Get("camera"); cam != "" {
-		ch := s.findChannel(cam)
-		if ch == nil {
+		ch, ok := s.findChannel(cam)
+		if !ok {
 			http.Error(w, `{"error":"unknown camera"}`, http.StatusNotFound)
 			return
 		}

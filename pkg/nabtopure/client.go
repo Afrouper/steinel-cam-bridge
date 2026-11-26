@@ -38,9 +38,10 @@ type Client struct {
 	coapClient    *CoAPClient
 	currentStream *Stream
 	readerClose   chan struct{}
+	connectCancel context.CancelFunc
+	closed        bool
 	mu            sync.Mutex
 	writeMu       sync.Mutex
-	closeOnce     sync.Once
 }
 
 // Ensure Client satisfies nabto.Driver interface.
@@ -143,16 +144,10 @@ func ComputeFingerprint(key *ecdsa.PrivateKey) (string, error) {
 
 // Connect establishes the DTLS 1.2 connection over UDP to the camera.
 func (c *Client) Connect() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	c.closeOnce = sync.Once{}
-
 	key, isNewKey, err := c.LoadOrGenerateKey()
 	if err != nil {
 		return err
 	}
-	c.privateKey = key
 
 	cert, err := GenerateSelfSignedCert(key)
 	if err != nil {
@@ -162,14 +157,31 @@ func (c *Client) Connect() error {
 	fingerprint, _ := ComputeFingerprint(key)
 	logger.Info("NabtoPure", "🔑 Client ECC Fingerprint: %s (new key: %v)", fingerprint, isNewKey)
 
+	c.mu.Lock()
+	c.closed = false
+	c.privateKey = key
 	targetAddr := fmt.Sprintf("%s:%d", c.cfg.CameraIP, c.cfg.CameraPort)
+	camIP := c.cfg.CameraIP
+	camPort := c.cfg.CameraPort
+	pid := c.cfg.ProductID
+	did := c.cfg.DeviceID
+	hsCtx, hsCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	c.connectCancel = hsCancel
+	c.mu.Unlock()
+	defer func() {
+		hsCancel()
+		c.mu.Lock()
+		c.connectCancel = nil
+		c.mu.Unlock()
+	}()
+
 	rAddr, err := net.ResolveUDPAddr("udp", targetAddr)
 	if err != nil {
 		return fmt.Errorf("failed to resolve camera address: %w", err)
 	}
 
 	// Wake up camera via dynamic mDNS ping
-	nabto.SendWakeup(c.cfg.CameraIP, c.cfg.CameraPort, c.cfg.ProductID, c.cfg.DeviceID)
+	nabto.SendWakeup(camIP, camPort, pid, did)
 
 	logger.Info("NabtoPure", "🚀 Connecting to %s via Pure-Go DTLS 1.2...", targetAddr)
 
@@ -192,7 +204,15 @@ func (c *Client) Connect() error {
 	if err != nil {
 		return fmt.Errorf("failed to open local UDP socket: %w", err)
 	}
+
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		_ = rawUDP.Close()
+		return fmt.Errorf("client closed during connect")
+	}
 	c.udpConn = rawUDP
+	c.mu.Unlock()
 
 	nabtoUDP, err := newNabtoPacketConn(rawUDP)
 	if err != nil {
@@ -207,8 +227,6 @@ func (c *Client) Connect() error {
 		return fmt.Errorf("DTLS handshake failed with %s: %w", targetAddr, err)
 	}
 
-	hsCtx, hsCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer hsCancel()
 	if err := conn.HandshakeContext(hsCtx); err != nil {
 		_ = conn.Close()
 		_ = rawUDP.Close()
@@ -216,28 +234,47 @@ func (c *Client) Connect() error {
 	}
 
 	logger.Info("NabtoPure", "✅ DTLS 1.2 handshake established successfully with %s", targetAddr)
+	readerClose := make(chan struct{})
+	coapClient := NewCoAPClient(conn)
+	coapClient.SetWriteMutex(&c.writeMu)
+
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		coapClient.Close()
+		_ = conn.Close()
+		_ = rawUDP.Close()
+		return fmt.Errorf("client closed during connect")
+	}
 	c.dtlsConn = conn
-	c.coapClient = NewCoAPClient(conn)
-	c.coapClient.SetWriteMutex(&c.writeMu)
-	c.readerClose = make(chan struct{})
+	c.coapClient = coapClient
+	c.readerClose = readerClose
+	needDiscovery := c.cfg.DeviceID == "" || c.cfg.ProductID == ""
+	c.mu.Unlock()
+
 	go c.packetReaderLoop()
-	go c.keepAliveLoop()
+	go c.keepAliveLoop(readerClose)
 
 	// Auto-discover ProductID and DeviceID via CoAP /iam/pairing if not configured
-	if c.cfg.DeviceID == "" || c.cfg.ProductID == "" {
+	if needDiscovery {
 		req := NewRequest(CodeGET, "/iam/pairing", 0, nil)
-		if resp, err := c.coapClient.Execute(req, 2*time.Second); err == nil && (resp.StatusCode() == 205 || resp.StatusCode() == 200) {
+		if resp, err := coapClient.Execute(req, 2*time.Second); err == nil && (resp.StatusCode() == 205 || resp.StatusCode() == 200) {
 			pid, did := extractPairingIDs(resp.Payload)
+			c.mu.Lock()
 			if did != "" && c.cfg.DeviceID == "" {
 				c.cfg.DeviceID = did
 			}
 			if pid != "" && c.cfg.ProductID == "" {
 				c.cfg.ProductID = pid
 			}
+			c.mu.Unlock()
 		}
 	}
 
-	logger.Info("NabtoPure", "📷 Camera Connected: DeviceID=%s | ProductID=%s", c.cfg.DeviceID, c.cfg.ProductID)
+	c.mu.Lock()
+	didOut, pidOut := c.cfg.DeviceID, c.cfg.ProductID
+	c.mu.Unlock()
+	logger.Info("NabtoPure", "📷 Camera Connected: DeviceID=%s | ProductID=%s", didOut, pidOut)
 
 	return nil
 }
@@ -282,13 +319,13 @@ func (c *Client) writeDTLS(data []byte, timeout time.Duration) error {
 	return err
 }
 
-func (c *Client) keepAliveLoop() {
+func (c *Client) keepAliveLoop(readerClose <-chan struct{}) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-c.readerClose:
+		case <-readerClose:
 			return
 		case <-ticker.C:
 			kaReq := make([]byte, 18)
@@ -360,47 +397,54 @@ func (c *Client) packetReaderLoop() {
 
 // Close closes the underlying DTLS and network connections cleanly.
 func (c *Client) Close() {
-	c.closeOnce.Do(func() {
-		// 1. Atomically take connection references and clear them
-		c.mu.Lock()
-		if c.readerClose != nil {
-			close(c.readerClose)
-			c.readerClose = nil
-		}
-		stream := c.currentStream
-		c.currentStream = nil
-		coap := c.coapClient
-		c.coapClient = nil
-		conn := c.dtlsConn
-		c.dtlsConn = nil
-		udp := c.udpConn
-		c.udpConn = nil
+	// 1. Atomically take connection references and clear them
+	c.mu.Lock()
+	if c.closed {
 		c.mu.Unlock()
+		return
+	}
+	c.closed = true
+	if c.connectCancel != nil {
+		c.connectCancel()
+		c.connectCancel = nil
+	}
+	if c.readerClose != nil {
+		close(c.readerClose)
+		c.readerClose = nil
+	}
+	stream := c.currentStream
+	c.currentStream = nil
+	coap := c.coapClient
+	c.coapClient = nil
+	conn := c.dtlsConn
+	c.dtlsConn = nil
+	udp := c.udpConn
+	c.udpConn = nil
+	c.mu.Unlock()
 
-		// 2. Immediately close underlying UDP socket to unblock any pending network reads/writes
-		if udp != nil {
-			_ = udp.SetDeadline(time.Now())
-			_ = udp.Close()
-		}
+	// 2. Immediately close underlying UDP socket to unblock any pending network reads/writes
+	if udp != nil {
+		_ = udp.SetDeadline(time.Now())
+		_ = udp.Close()
+	}
 
-		// 3. Abort active stream
-		if stream != nil {
-			stream.Close()
-		}
+	// 3. Abort active stream
+	if stream != nil {
+		stream.Close()
+	}
 
-		// 4. Abort pending CoAP calls
-		if coap != nil {
-			coap.Close()
-		}
+	// 4. Abort pending CoAP calls
+	if coap != nil {
+		coap.Close()
+	}
 
-		// 5. Cleanly terminate DTLS connection in background so it never blocks Close()
-		if conn != nil {
-			go func(cn net.Conn) {
-				_ = cn.SetDeadline(time.Now().Add(200 * time.Millisecond))
-				_ = cn.Close()
-			}(conn)
-		}
-	})
+	// 5. Cleanly terminate DTLS connection in background so it never blocks Close()
+	if conn != nil {
+		go func(cn net.Conn) {
+			_ = cn.SetDeadline(time.Now().Add(200 * time.Millisecond))
+			_ = cn.Close()
+		}(conn)
+	}
 }
 
 // CoAPClient returns the underlying CoAPClient.

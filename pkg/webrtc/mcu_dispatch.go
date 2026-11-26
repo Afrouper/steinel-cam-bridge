@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Afrouper/steinel-cam-bridge/pkg/events"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/logger"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/mcu"
 
@@ -235,18 +236,14 @@ func (b *Bridge) handleDataChannelMessage(data []byte) {
 				return
 			}
 
-			// Check and log for any Motion, PIR, Alarm or Event notifications from camera
-			str := string(data)
-			lowerStr := strings.ToLower(str)
-			if strings.Contains(lowerStr, "alarm") ||
-				strings.Contains(lowerStr, "motion") ||
-				strings.Contains(lowerStr, "pir") ||
-				strings.Contains(lowerStr, "event") ||
-				strings.Contains(lowerStr, "doorbell") {
-				logger.Info("DataChannel", "🚨 Motion / Event notification received from camera: %s", str)
+			// Check and log for any Motion, PIR, Alarm or Event notifications from camera.
+			// Inspect parsed string fields/keys rather than raw JSON substrings to avoid false positives
+			// (e.g. "pir" inside "expired" or "event" inside "prevent").
+			if isMotionPushMessage(root) {
+				logger.Info("DataChannel", "🚨 Motion / Event notification received from camera: %s", string(data))
 				b.signalMotion()
 			} else {
-				logger.Debug("DataChannel", "📩 Received JSON message: %s", str)
+				logger.Debug("DataChannel", "📩 Received JSON message: %s", string(data))
 			}
 
 			return
@@ -262,20 +259,52 @@ func (b *Bridge) handleDataChannelMessage(data []byte) {
 	}
 }
 
+func isMotionPushMessage(v interface{}) bool {
+	switch val := v.(type) {
+	case map[string]interface{}:
+		for k, child := range val {
+			lk := strings.ToLower(k)
+			if lk == "alarm" || lk == "motion" || lk == "pir" || lk == "doorbell" {
+				return true
+			}
+			if isMotionPushMessage(child) {
+				return true
+			}
+		}
+	case []interface{}:
+		for _, child := range val {
+			if isMotionPushMessage(child) {
+				return true
+			}
+		}
+	case string:
+		for _, tok := range strings.FieldsFunc(strings.ToLower(val), func(r rune) bool {
+			return (r < 'a' || r > 'z') && (r < '0' || r > '9')
+		}) {
+			switch tok {
+			case "alarm", "motion", "pir", "event", "doorbell":
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (b *Bridge) onMCUStatus(cfg *mcu.ConfigInfo) {
-	status := b.eventBus.GetStatus()
-	status.LampMode = cfg.Mode
-	status.Lux = cfg.Lux
-	status.PIRActive = cfg.PIRActive
-	status.PIRSensitivity = cfg.PIRSensitivity
-	status.Highlight = cfg.Highlight
-	status.HighlightTime = cfg.HighlightTime
-	status.Lowlight = cfg.Lowlight
-	status.LowlightTime = cfg.LowlightTime
-	status.ColorTemp = cfg.ColorTemp
-	status.PixelChangeDetection = boolToState(cfg.PixelChangeDetection)
-	status.Resolution = b.reportedResolution()
-	b.eventBus.UpdateStatus(status)
+	res := b.reportedResolution()
+	b.eventBus.UpdateStatusFunc(func(status *events.DeviceStatus) {
+		status.LampMode = cfg.Mode
+		status.Lux = cfg.Lux
+		status.PIRActive = cfg.PIRActive
+		status.PIRSensitivity = cfg.PIRSensitivity
+		status.Highlight = cfg.Highlight
+		status.HighlightTime = cfg.HighlightTime
+		status.Lowlight = cfg.Lowlight
+		status.LowlightTime = cfg.LowlightTime
+		status.ColorTemp = cfg.ColorTemp
+		status.PixelChangeDetection = boolToState(cfg.PixelChangeDetection)
+		status.Resolution = res
+	})
 
 	// Bits 0/1 of the "tuxing" nibble are settings ("Pixel Change Detection",
 	// "Image Photosensitive Detection"), not motion. Reading them as motion made
@@ -286,6 +315,15 @@ func (b *Bridge) onMCUStatus(cfg *mcu.ConfigInfo) {
 // motionResetDelay is how long a motion push keeps the motion state on.
 // A variable so tests can shorten it.
 var motionResetDelay = 10 * time.Second
+
+func (b *Bridge) stopMotionTimer() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.motionResetTimer != nil {
+		b.motionResetTimer.Stop()
+		b.motionResetTimer = nil
+	}
+}
 
 // signalMotion reports motion and clears it again after motionResetDelay,
 // unless another push arrives in the meantime. The camera only tells us that

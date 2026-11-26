@@ -140,6 +140,22 @@ func (b *Bus) UpdateStatus(status DeviceStatus) {
 	b.Publish(EventDevice, status)
 }
 
+// UpdateStatusFunc atomically modifies the stored DeviceStatus under the bus lock
+// and publishes the updated snapshot.
+func (b *Bus) UpdateStatusFunc(fn func(*DeviceStatus)) {
+	b.mu.Lock()
+	fn(&b.status)
+	b.status.LastSeen = time.Now()
+	st := b.status
+	listeners := make([]Listener, len(b.listeners))
+	copy(listeners, b.listeners)
+	b.mu.Unlock()
+
+	for _, l := range listeners {
+		l(EventDevice, st)
+	}
+}
+
 func (b *Bus) GetStatus() DeviceStatus {
 	b.mu.RLock()
 	defer b.mu.RUnlock()

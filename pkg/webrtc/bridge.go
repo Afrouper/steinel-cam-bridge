@@ -54,7 +54,7 @@ func NewBridge(client nabto.Driver, stream nabto.StreamDriver, rtspServer rtsp.M
 	if resolution == "" {
 		resolution = "1080p"
 	}
-	if pliInterval == 0 {
+	if pliInterval <= 0 {
 		pliInterval = 3 * time.Second
 	}
 	if eventBus == nil {
@@ -72,11 +72,6 @@ func NewBridge(client nabto.Driver, stream nabto.StreamDriver, rtspServer rtsp.M
 
 	// Initialize SD Card Manager using DataChannel JSON command dispatcher
 	b.sdcardManager = NewSDCardManager(b.sendJSONCmd)
-
-	// Register audio backchannel handler with RTSP server
-	if rtspServer != nil {
-		rtspServer.SetAudioBackchannelHandler(b.WriteAudioBackchannel)
-	}
 
 	return b
 }
@@ -190,12 +185,23 @@ func (b *Bridge) Run(ctx context.Context) error {
 			b.stream.Abort()
 		}
 		b.mu.Lock()
-		if b.pc != nil {
-			_ = b.pc.Close()
+		pc := b.pc
+		b.pc = nil
+		b.dc = nil
+		b.mu.Unlock()
+		if pc != nil {
+			_ = pc.Close()
 		}
+	}()
+	defer func() {
+		close(stopChan)
+		b.stopMotionTimer()
+		b.mu.Lock()
+		b.pc = nil
+		b.dc = nil
+		b.audioSendTrack = nil
 		b.mu.Unlock()
 	}()
-	defer close(stopChan)
 
 	// 1. Request TURN / ICE credentials via Nabto stream
 	iceServers, err := b.exchangeTurnCredentials()
@@ -316,10 +322,13 @@ func (b *Bridge) Run(ctx context.Context) error {
 	})
 
 	dc.OnOpen(func() {
-		logger.Info("DataChannel", "📡 DataChannel 'test' opened. Configuring initial video quality: %s", b.resolution)
+		b.mu.Lock()
+		res := b.resolution
+		b.mu.Unlock()
+		logger.Info("DataChannel", "📡 DataChannel 'test' opened. Configuring initial video quality: %s", res)
 
 		// Request resolution
-		_ = b.SetResolution(b.resolution)
+		_ = b.SetResolution(res)
 
 		// Enable notification setting on camera
 		_ = b.sendJSONCmd("set_notification_setting", map[string]interface{}{"enable": true})
@@ -343,7 +352,7 @@ func (b *Bridge) Run(ctx context.Context) error {
 	})
 
 	// 4. Send initial OFFER
-	if err := b.sendInitialOffer(pc); err != nil {
+	if err := b.sendInitialOffer(sessCtx, pc); err != nil {
 		return err
 	}
 

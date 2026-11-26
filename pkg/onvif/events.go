@@ -1,6 +1,7 @@
 package onvif
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -70,9 +71,22 @@ func (h *EventHandler) AddSource(sourceToken string, bus *events.Bus) {
 	})
 }
 
+func (h *EventHandler) sweepExpiredLocked(now time.Time) {
+	for id, sub := range h.subscriptions {
+		sub.mu.Lock()
+		expired := now.After(sub.ExpiresAt)
+		sub.mu.Unlock()
+		if expired {
+			delete(h.subscriptions, id)
+		}
+	}
+}
+
 func (h *EventHandler) broadcastMotionEvent(sourceToken string, isMotion bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+
+	h.sweepExpiredLocked(time.Now().UTC())
 
 	item := motionEventItem{
 		sourceToken: sourceToken,
@@ -94,6 +108,10 @@ func (h *EventHandler) broadcastMotionEvent(sourceToken string, isMotion bool) {
 }
 
 func (h *EventHandler) Handle(action string, reqXML string, host string, subID string) (string, error) {
+	return h.HandleContext(context.Background(), action, reqXML, host, subID)
+}
+
+func (h *EventHandler) HandleContext(ctx context.Context, action string, reqXML string, host string, subID string) (string, error) {
 	if strings.Contains(action, "GetServiceCapabilities") || strings.Contains(reqXML, "GetServiceCapabilities") {
 		return h.getServiceCapabilities(), nil
 	}
@@ -104,7 +122,7 @@ func (h *EventHandler) Handle(action string, reqXML string, host string, subID s
 		return h.createPullPointSubscription(host), nil
 	}
 	if strings.Contains(action, "PullMessages") || strings.Contains(reqXML, "PullMessages") {
-		return h.pullMessages(subID, reqXML), nil
+		return h.pullMessagesContext(ctx, subID, reqXML), nil
 	}
 	if strings.Contains(action, "Renew") || strings.Contains(reqXML, "Renew") {
 		return h.renew(subID), nil
@@ -169,6 +187,7 @@ func (h *EventHandler) createPullPointSubscription(host string) string {
 	}
 
 	h.mu.Lock()
+	h.sweepExpiredLocked(now)
 	h.subscriptions[subID] = sub
 	h.mu.Unlock()
 
@@ -184,7 +203,12 @@ func (h *EventHandler) createPullPointSubscription(host string) string {
 }
 
 func (h *EventHandler) pullMessages(subID string, reqXML string) string {
+	return h.pullMessagesContext(context.Background(), subID, reqXML)
+}
+
+func (h *EventHandler) pullMessagesContext(ctx context.Context, subID string, reqXML string) string {
 	h.mu.Lock()
+	h.sweepExpiredLocked(time.Now().UTC())
 	sub, exists := h.subscriptions[subID]
 	if !exists {
 		// If only one active subscription exists, bind to it (e.g. client using generic subID)
@@ -216,14 +240,18 @@ func (h *EventHandler) pullMessages(subID string, reqXML string) string {
 	var item motionEventItem
 	hasNewEvent := false
 
+	timer := time.NewTimer(3 * time.Second)
+	defer timer.Stop()
+
 	select {
+	case <-ctx.Done():
 	case it := <-sub.EventChan:
 		item = it
 		hasNewEvent = true
 		sub.mu.Lock()
 		sub.LastMotion[it.sourceToken] = it.isMotion
 		sub.mu.Unlock()
-	case <-time.After(3 * time.Second):
+	case <-timer.C:
 		h.sourcesMu.RLock()
 		sub.mu.Lock()
 		for token, bus := range h.sources {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/Afrouper/steinel-cam-bridge/pkg/events"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/h264x"
 	"github.com/Afrouper/steinel-cam-bridge/pkg/logger"
 )
@@ -90,10 +91,10 @@ func (b *Bridge) reportedResolution() string {
 // publishResolution pushes the reported resolution to the event bus (MQTT / ONVIF state).
 func (b *Bridge) publishResolution() {
 	res := b.reportedResolution()
-	status := b.eventBus.GetStatus()
-	if status.Resolution == res {
+	if b.eventBus.GetStatus().Resolution == res {
 		return
 	}
-	status.Resolution = res
-	b.eventBus.UpdateStatus(status)
+	b.eventBus.UpdateStatusFunc(func(status *events.DeviceStatus) {
+		status.Resolution = res
+	})
 }

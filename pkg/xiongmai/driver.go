@@ -706,7 +706,7 @@ func (d *Driver) Close() error {
 	d.motionMu.Unlock()
 
 	if d.sofiaStream != nil {
-		_ = d.sofiaStream.Stop()
+		_ = d.sofiaStream.Close()
 	}
 	if d.talk != nil {
 		_ = d.talk.StopTalk()

@@ -58,7 +58,7 @@ func (b *Bridge) exchangeTurnCredentials() ([]pion.ICEServer, error) {
 }
 
 // sendInitialOffer creates an SDP offer, waits for ICE candidate gathering (Vanilla ICE), and sends it to the camera.
-func (b *Bridge) sendInitialOffer(pc *pion.PeerConnection) error {
+func (b *Bridge) sendInitialOffer(ctx context.Context, pc *pion.PeerConnection) error {
 	offer, err := pc.CreateOffer(nil)
 	if err != nil {
 		return fmt.Errorf("failed to create offer: %w", err)
@@ -68,7 +68,11 @@ func (b *Bridge) sendInitialOffer(pc *pion.PeerConnection) error {
 	if err := pc.SetLocalDescription(offer); err != nil {
 		return fmt.Errorf("failed to set local description: %w", err)
 	}
-	<-gatherComplete
+	select {
+	case <-gatherComplete:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 
 	cleanSDP := sanitizeSDP(pc.LocalDescription().SDP)
 	offerJSON, _ := json.Marshal(SDPWrapper{Type: "offer", SDP: cleanSDP})
@@ -166,7 +170,11 @@ func (b *Bridge) runSignalingReceiveLoop(ctx context.Context, pc *pion.PeerConne
 				logger.Warn("WebRTC Signaling", "⚠️ SetLocalDescription (Answer) error: %v", err)
 				continue
 			}
-			<-ansGatherComplete
+			select {
+			case <-ansGatherComplete:
+			case <-ctx.Done():
+				return nil
+			}
 			logTransceivers(pc)
 
 			var tracks []MetadataTrack

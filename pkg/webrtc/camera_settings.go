@@ -58,9 +58,9 @@ func (b *Bridge) SetTimestampPosition(position int) error {
 	if err := b.sendJSONCmd("set_time_setting", map[string]interface{}{"action": "OSD", "OSD": position}); err != nil {
 		return err
 	}
-	status := b.eventBus.GetStatus()
-	status.OSDPosition = position
-	b.eventBus.UpdateStatus(status)
+	b.eventBus.UpdateStatusFunc(func(status *events.DeviceStatus) {
+		status.OSDPosition = position
+	})
 	b.refreshCameraInfoSoon()
 	return nil
 }
@@ -75,9 +75,9 @@ func (b *Bridge) SetSpeakerVolume(percent int) error {
 	if err := b.sendJSONCmd("set_volume_setting", map[string]interface{}{"volume": percent}); err != nil {
 		return err
 	}
-	status := b.eventBus.GetStatus()
-	status.SpeakerVolume = percent
-	b.eventBus.UpdateStatus(status)
+	b.eventBus.UpdateStatusFunc(func(status *events.DeviceStatus) {
+		status.SpeakerVolume = percent
+	})
 	b.refreshCameraInfoSoon()
 	return nil
 }
@@ -92,9 +92,9 @@ func (b *Bridge) SetDetectMode(mode string) error {
 	if err := b.sendJSONCmd("set_detect_setting", map[string]interface{}{"action": "mode", "mode": mode}); err != nil {
 		return err
 	}
-	status := b.eventBus.GetStatus()
-	status.DetectMode = mode
-	b.eventBus.UpdateStatus(status)
+	b.eventBus.UpdateStatusFunc(func(status *events.DeviceStatus) {
+		status.DetectMode = mode
+	})
 	b.refreshCameraInfoSoon()
 	return nil
 }

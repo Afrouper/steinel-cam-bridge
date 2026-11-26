@@ -69,9 +69,9 @@ func (b *Bridge) requestCameraInfo() {
 // onDeviceInfo stores the content of a get_device_info reply in the device status.
 // The reply also names the Wi-Fi network; it must never be logged.
 func (b *Bridge) onDeviceInfo(info map[string]interface{}) {
-	status := b.eventBus.GetStatus()
-	applyDeviceInfo(&status, info)
-	b.eventBus.UpdateStatus(status)
+	b.eventBus.UpdateStatusFunc(func(status *events.DeviceStatus) {
+		applyDeviceInfo(status, info)
+	})
 }
 
 // applyDeviceInfo copies the known fields of a get_device_info reply into st.

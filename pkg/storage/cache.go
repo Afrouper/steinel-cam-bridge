@@ -341,20 +341,6 @@ func (c *RecordingCache) MarkFailed(id string, reason string) error {
 
 	c.failedIDs[id] = struct{}{}
 
-	found := false
-	for _, existingID := range c.sortedIDs {
-		if existingID == id {
-			found = true
-			break
-		}
-	}
-	if !found {
-		c.sortedIDs = append(c.sortedIDs, id)
-	}
-
-	c.sortIDsLocked()
-	c.pruneLocked()
-
 	failedPath := filepath.Join(c.dir, id+".failed")
 	content := fmt.Sprintf("failed_at: %s\nreason: %s\n", time.Now().UTC().Format(time.RFC3339), reason)
 	return os.WriteFile(failedPath, []byte(content), 0644)

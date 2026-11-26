@@ -260,6 +260,10 @@ func (s *SofiaStream) Start(ctx context.Context) error {
 		_ = conn.Close()
 		return fmt.Errorf("unexpected Claim response MsgID %d (expected %d)", respHdr.MsgID, MsgMonitorClaimResp)
 	}
+	if respHdr.DataLength > maxSofiaMediaPayload {
+		_ = conn.Close()
+		return fmt.Errorf("OPMonitor Claim response too large: %d bytes", respHdr.DataLength)
+	}
 
 	respBody := make([]byte, respHdr.DataLength)
 	if _, err := io.ReadFull(conn, respBody); err != nil {
@@ -406,7 +410,16 @@ func resyncMediaHeader(rd io.ByteReader, hdrBuf []byte) (*Header, error) {
 // readLoop continuously reads binary Sofia packets from the media socket,
 // reassembles H.264/H.265 video frames, and forwards them to the RTSP server.
 func (s *SofiaStream) readLoop(ctx context.Context, conn net.Conn) {
-	defer s.wg.Done()
+	defer func() {
+		s.running.Store(false)
+		s.mu.Lock()
+		if s.mediaConn == conn {
+			_ = conn.Close()
+			s.mediaConn = nil
+		}
+		s.mu.Unlock()
+		s.wg.Done()
+	}()
 
 	var firstPacketOnce sync.Once
 	rd := bufio.NewReaderSize(conn, 64*1024)
@@ -870,6 +883,15 @@ func (s *SofiaStream) Stop() error {
 
 	logger.Info("Xiongmai Stream", "⏹️ Sofia native video streaming stopped")
 	return nil
+}
+
+// Close stops streaming and releases the audio transcoder's C resources.
+func (s *SofiaStream) Close() error {
+	err := s.Stop()
+	if s.audioTranscoder != nil {
+		s.audioTranscoder.Close()
+	}
+	return err
 }
 
 // IsRunning returns true if the Sofia video stream is actively running.

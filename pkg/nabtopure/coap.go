@@ -199,6 +199,9 @@ func DecodeCoAPMessage(data []byte) (*CoAPMessage, error) {
 
 		deltaNibble := uint16((optByte >> 4) & 0x0F)
 		lenNibble := uint16(optByte & 0x0F)
+		if deltaNibble == 15 || lenNibble == 15 {
+			return nil, fmt.Errorf("invalid CoAP option header byte 0x%02x (reserved nibble 15)", optByte)
+		}
 
 		delta := deltaNibble
 		switch deltaNibble {
@@ -272,6 +275,7 @@ type CoAPClient struct {
 	tokenSeq  atomic.Uint32
 	mu        sync.Mutex
 	pendingMu sync.Mutex
+	closed    bool
 	pending   map[string]chan *CoAPMessage
 }
 
@@ -333,6 +337,7 @@ func NewRequest(method uint8, path string, contentFormat uint16, payload []byte)
 // Close terminates all pending CoAP requests and marks the client as closed.
 func (c *CoAPClient) Close() {
 	c.pendingMu.Lock()
+	c.closed = true
 	for k, ch := range c.pending {
 		close(ch)
 		delete(c.pending, k)
@@ -363,6 +368,10 @@ func (c *CoAPClient) Execute(req *CoAPMessage, timeout time.Duration) (*CoAPMess
 	respChan := make(chan *CoAPMessage, 1)
 
 	c.pendingMu.Lock()
+	if c.closed {
+		c.pendingMu.Unlock()
+		return nil, fmt.Errorf("coap client: connection is closed")
+	}
 	c.pending[tokenKey] = respChan
 	c.pendingMu.Unlock()
 
@@ -392,6 +401,9 @@ func (c *CoAPClient) Execute(req *CoAPMessage, timeout time.Duration) (*CoAPMess
 		return nil, fmt.Errorf("failed to send CoAP packet: %w", err)
 	}
 
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
 	select {
 	case resp, ok := <-respChan:
 		if !ok {
@@ -399,7 +411,7 @@ func (c *CoAPClient) Execute(req *CoAPMessage, timeout time.Duration) (*CoAPMess
 		}
 		logger.Trace("CoAP", "<- CoAP Response status: %s (MsgID: %d, Token: %x)", resp.StatusString(), resp.MessageID, resp.Token)
 		return resp, nil
-	case <-time.After(timeout):
+	case <-timer.C:
 		return nil, fmt.Errorf("CoAP request timed out after %v", timeout)
 	}
 }
@@ -412,16 +424,18 @@ func (c *CoAPClient) HandleIncomingPacket(raw []byte) {
 		return
 	}
 
+	// Deliver while holding pendingMu so Close() cannot close respChan concurrently.
 	c.pendingMu.Lock()
 	respChan, exists := c.pending[string(resp.Token)]
-	c.pendingMu.Unlock()
-
-	if exists {
+	if exists && !c.closed {
 		select {
 		case respChan <- resp:
 		default:
 		}
-	} else {
+	}
+	c.pendingMu.Unlock()
+
+	if !exists {
 		if resp.Code == CodeEmpty {
 			if resp.Type == TypeRST {
 				logger.Warn("CoAP", "⚠️ Received CoAP RST (MessageID: %d)", resp.MessageID)

@@ -525,26 +525,30 @@ func (c *Client) OpenSignalingStream(port uint32) (StreamDriver, error) {
 
 // Stream represents a Nabto Virtual Stream with 4-byte LE length-prefixed framing
 type Stream struct {
-	ctx    *C.NabtoClient
-	stream *C.NabtoClientStream
-	mu     sync.Mutex
+	ctx     *C.NabtoClient
+	stream  *C.NabtoClientStream
+	mu      sync.RWMutex
+	readMu  sync.Mutex
+	writeMu sync.Mutex
 }
 
 func (s *Stream) Abort() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
 	if s.stream != nil {
-		C.nabto_client_stream_abort(s.stream)
+		C.nabto_client_stream_stop(s.stream)
 	}
 }
 
 func (s *Stream) Close() {
+	// Stop any in-flight ReadMsg/WriteMsg immediately before waiting on the exclusive lock.
+	s.Abort()
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if s.stream != nil {
-		C.nabto_client_stream_abort(s.stream)
 		C.nabto_client_stream_free(s.stream)
 		s.stream = nil
 	}
@@ -552,6 +556,16 @@ func (s *Stream) Close() {
 
 // ReadMsg reads a 4-byte LE length-prefixed message from the stream
 func (s *Stream) ReadMsg() ([]byte, error) {
+	s.readMu.Lock()
+	defer s.readMu.Unlock()
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.stream == nil {
+		return nil, io.EOF
+	}
+
 	var lenBuf [4]byte
 	var readLen C.size_t
 
@@ -586,8 +600,15 @@ func (s *Stream) ReadMsg() ([]byte, error) {
 
 // WriteMsg writes a 4-byte LE length-prefixed message to the stream
 func (s *Stream) WriteMsg(payload []byte) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.stream == nil {
+		return io.ErrClosedPipe
+	}
 
 	wire := make([]byte, 4+len(payload))
 	binary.LittleEndian.PutUint32(wire[:4], uint32(len(payload)))

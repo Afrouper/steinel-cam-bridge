@@ -94,7 +94,7 @@ func (m *SDCardManager) ListRecordings(ctx context.Context, start, end time.Time
 			"StreamType":       "0x00000000",
 			"Type":             "h264",
 		},
-		"SessionID": fmt.Sprintf("0x%08x", m.client.sessionID),
+		"SessionID": fmt.Sprintf("0x%08x", m.client.GetSessionID()),
 	}
 
 	payloadBytes, err := json.Marshal(reqPayload)

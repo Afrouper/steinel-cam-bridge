@@ -324,8 +324,11 @@ func (p *CachedRecordingProvider) SyncLatest(ctx context.Context) ([]RecordingIt
 		}(item.ID)
 
 		savedItem, addErr := p.cache.Add(downloadCtx, item, pr)
-		wg.Wait()
+		// Ensure the pipe reader is closed before waiting on the producer so any
+		// early Add error unblocks pw.Write immediately instead of stalling until downloadTimeout.
+		_ = pr.Close()
 		dCancel()
+		wg.Wait()
 
 		if addErr != nil {
 			if errors.Is(streamErr, ErrFeatureDisabled) || errors.Is(addErr, ErrFeatureDisabled) {
@@ -333,8 +336,10 @@ func (p *CachedRecordingProvider) SyncLatest(ctx context.Context) ([]RecordingIt
 				return nil, ErrFeatureDisabled
 			}
 			logger.Warn("CacheProvider", "⚠️ Failed to cache recording %s: %v (streamErr: %v)", item.ID, addErr, streamErr)
-			if permanentlyFailed := p.cache.RecordFailure(item.ID, addErr); permanentlyFailed {
-				logger.Warn("CacheProvider", "🛑 Marking recording %s as permanently failed (.failed marker written to disk). Will not retry.", item.ID)
+			if !errors.Is(addErr, context.Canceled) && !errors.Is(streamErr, context.Canceled) && ctx.Err() == nil {
+				if permanentlyFailed := p.cache.RecordFailure(item.ID, addErr); permanentlyFailed {
+					logger.Warn("CacheProvider", "🛑 Marking recording %s as permanently failed (.failed marker written to disk). Will not retry.", item.ID)
+				}
 			}
 			break
 		}

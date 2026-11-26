@@ -151,6 +151,15 @@ func (c *Client) Connect(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	c.isLoggedIn = false
+	c.serialTransActive = false
+	c.dataEncryptionAES = false
+	c.communicateKey = nil
+	c.notEncryptMsgIDs = nil
+	c.telemetryBuf = ""
+	c.sessionID = 0
+	c.sequence = 0
+
 	logger.Trace("Xiongmai", "🔌 Dialing camera TCP control port on %s...", c.addr)
 	var d net.Dialer
 	conn, err := d.DialContext(ctx, "tcp", c.addr)
@@ -900,12 +909,16 @@ func (c *Client) SetLightState(on bool) error {
 	cmd := BuildSetLightModeCommand(on)
 	logger.Info("Xiongmai", "💡 Setting light state via MCU OPTrans: On=%v (cmd: %q)", on, cmd)
 	err := c.SendMCUCommand(cmd)
-	if err == nil && c.lastMCUConfig != nil {
-		if on {
-			c.lastMCUConfig.Mode = 3
-		} else {
-			c.lastMCUConfig.Mode = 1
+	if err == nil {
+		c.mu.Lock()
+		if c.lastMCUConfig != nil {
+			if on {
+				c.lastMCUConfig.Mode = 3
+			} else {
+				c.lastMCUConfig.Mode = 1
+			}
 		}
+		c.mu.Unlock()
 	}
 	return err
 }
@@ -998,10 +1011,10 @@ func (c *Client) SetLowlightDuration(dur int) error {
 
 // SendKeepAlive sends a heartbeat packet to prevent connection timeout.
 func (c *Client) SendKeepAlive() error {
-	logger.Trace("Xiongmai", "-> Sending KeepAlive ping (SessionID: 0x%08X)", c.sessionID)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	logger.Trace("Xiongmai", "-> Sending KeepAlive ping (SessionID: 0x%08X)", c.sessionID)
 	req := map[string]interface{}{
 		"Name":      "KeepAlive",
 		"SessionID": fmt.Sprintf("0x%08X", c.sessionID),
@@ -1013,6 +1026,19 @@ func (c *Client) SendKeepAlive() error {
 		c.drainPendingTelemetryLocked()
 	}
 	return err
+}
+
+func (c *Client) resetConnStateLocked() {
+	if c.conn != nil {
+		_ = c.conn.Close()
+		c.conn = nil
+	}
+	c.isLoggedIn = false
+	c.serialTransActive = false
+	c.dataEncryptionAES = false
+	c.communicateKey = nil
+	c.notEncryptMsgIDs = nil
+	c.telemetryBuf = ""
 }
 
 // sendRawPacketWithHeaderLocked encodes the Sofia header with custom channel, totalPkt and sessionID,
@@ -1051,29 +1077,30 @@ func (c *Client) sendRawPacketWithHeaderLocked(msgID uint16, channel byte, total
 	if msgID == MsgFileSearchReq || msgID == MsgFileSearchResp {
 		timeout = 25 * time.Second
 	}
-	_ = c.conn.SetDeadline(time.Now().Add(timeout))
+	overallDeadline := time.Now().Add(timeout)
+	_ = c.conn.SetDeadline(overallDeadline)
+	defer func() {
+		if c.conn != nil {
+			_ = c.conn.SetDeadline(time.Time{})
+		}
+	}()
 	if _, err := c.conn.Write(packet); err != nil {
-		_ = c.conn.Close()
-		c.conn = nil
-		c.isLoggedIn = false
+		c.resetConnStateLocked()
 		return nil, nil, fmt.Errorf("write error: %w", err)
 	}
 
 	// Read response header (20 bytes)
 	for {
+		_ = c.conn.SetReadDeadline(overallDeadline)
 		respHdrBuf := make([]byte, HeaderLength)
 		if _, err := io.ReadFull(c.conn, respHdrBuf); err != nil {
-			_ = c.conn.Close()
-			c.conn = nil
-			c.isLoggedIn = false
+			c.resetConnStateLocked()
 			return nil, nil, fmt.Errorf("failed to read response header: %w", err)
 		}
 
 		respHdr, err := DecodeHeader(respHdrBuf)
 		if err != nil {
-			_ = c.conn.Close()
-			c.conn = nil
-			c.isLoggedIn = false
+			c.resetConnStateLocked()
 			return nil, nil, fmt.Errorf("invalid response header: %w", err)
 		}
 
@@ -1081,22 +1108,21 @@ func (c *Client) sendRawPacketWithHeaderLocked(msgID uint16, channel byte, total
 			respHdr.MsgID, respHdr.MsgID, respHdr.Sequence, respHdr.Channel, respHdr.TotalPkt, respHdr.SessionID, respHdr.DataLength)
 
 		if respHdr.DataLength > 65535 {
-			_ = c.conn.Close()
-			c.conn = nil
-			c.isLoggedIn = false
+			c.resetConnStateLocked()
 			return nil, nil, fmt.Errorf("response payload too large: %d bytes", respHdr.DataLength)
 		}
 
-		// Refresh read deadline for the payload data once the header has arrived
-		_ = c.conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+		// Ensure payload read is bounded by overallDeadline (and at least 10s if header just arrived)
+		payloadDeadline := time.Now().Add(10 * time.Second)
+		if overallDeadline.After(payloadDeadline) {
+			payloadDeadline = overallDeadline
+		}
+		_ = c.conn.SetReadDeadline(payloadDeadline)
 		respPayload := make([]byte, respHdr.DataLength)
 		if _, err := io.ReadFull(c.conn, respPayload); err != nil {
-			_ = c.conn.Close()
-			c.conn = nil
-			c.isLoggedIn = false
+			c.resetConnStateLocked()
 			return nil, nil, fmt.Errorf("failed to read response payload: %w", err)
 		}
-		_ = c.conn.SetDeadline(time.Time{})
 
 		// Trim trailing null/newlines
 		cleanPayload := strings.TrimRight(string(respPayload), "\x00\r\n ")
@@ -1407,18 +1433,40 @@ func (c *Client) Close() error {
 
 	if c.conn != nil {
 		if c.isLoggedIn {
+			// Bound logout write/read so Close() never stalls on an unresponsive camera.
+			_ = c.conn.SetDeadline(time.Now().Add(1 * time.Second))
 			req := map[string]interface{}{
 				"Name":      "OPUserLogout",
 				"SessionID": fmt.Sprintf("0x%08X", c.sessionID),
 			}
 			payload, _ := json.Marshal(req)
-			_, _ = c.sendPacketLocked(MsgLogoutReq, payload)
-			c.isLoggedIn = false
-			c.serialTransActive = false
+			channel := byte(0)
+			if c.shouldEncrypt(MsgLogoutReq) {
+				channel = 0x01
+				if encrypted, err := encryptAES128CBC(c.communicateKey, payload); err == nil {
+					payload = []byte(base64.StdEncoding.EncodeToString(encrypted))
+				}
+			} else if c.dataEncryptionAES {
+				channel = 0x01
+			}
+			c.sequence++
+			hdr := Header{
+				Magic:      HeaderMagic,
+				Channel:    channel,
+				SessionID:  c.sessionID,
+				Sequence:   c.sequence,
+				MsgID:      MsgLogoutReq,
+				DataLength: uint32(len(payload) + 1),
+			}
+			_, _ = c.conn.Write(append(hdr.Encode(), append(payload, 0x00)...))
 		}
 		err := c.conn.Close()
 		c.conn = nil
+		c.isLoggedIn = false
 		c.serialTransActive = false
+		c.dataEncryptionAES = false
+		c.communicateKey = nil
+		c.notEncryptMsgIDs = nil
 		c.telemetryBuf = ""
 		return err
 	}

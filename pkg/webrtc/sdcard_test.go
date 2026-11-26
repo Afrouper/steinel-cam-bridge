@@ -139,6 +139,14 @@ func TestSDCardStreamVideo(t *testing.T) {
 	assert.Equal(t, "test_video.mp4", startName)
 	assert.Equal(t, int64(1024), startSize)
 	assert.Equal(t, "hello-video-chunk-1-hello-video-chunk-2", buf.String())
+
+	// Duplicate "end" must not panic with close of closed channel
+	assert.NotPanics(t, func() {
+		sdm.HandleJSONMessage(map[string]interface{}{
+			"resp":   "get_event_video",
+			"action": "end",
+		})
+	})
 }
 
 func TestSDCardConcurrencyLock(t *testing.T) {

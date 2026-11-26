@@ -1,8 +1,11 @@
 package onvif
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
+	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +19,8 @@ import (
 
 	"github.com/google/uuid"
 )
+
+const maxSOAPBodyBytes = 1 << 20 // 1 MiB limit for SOAP requests
 
 type Server struct {
 	port              int
@@ -124,8 +129,10 @@ func NewServer(
 	mux.HandleFunc("/api/sdcard/events/", s.withBasicAuth(s.handleAPISDCardItem))
 
 	s.httpServer = &http.Server{
-		Addr:    fmt.Sprintf(":%d", port),
-		Handler: mux,
+		Addr:              fmt.Sprintf(":%d", port),
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
 	return s
@@ -216,34 +223,77 @@ func (s *Server) SetTimeFunc(f func(t time.Time, tz string) error) {
 	}
 }
 
-func (s *Server) findChannel(nameOrPath string) *CameraChannel {
+func (s *Server) findChannel(nameOrPath string) (CameraChannel, bool) {
 	s.channelsMu.RLock()
 	defer s.channelsMu.RUnlock()
-	for i := range s.channels {
-		ch := &s.channels[i]
+	for _, ch := range s.channels {
 		if strings.EqualFold(ch.Path, nameOrPath) || strings.EqualFold(ch.Name, nameOrPath) {
-			return ch
+			return ch, true
 		}
 	}
-	return nil
+	return CameraChannel{}, false
+}
+
+var preAuthActionSet = map[string]bool{
+	"GetSystemDateAndTime":   true,
+	"GetCapabilities":        true,
+	"GetServices":            true,
+	"GetServiceCapabilities": true,
+	"GetEndpointReference":   true,
+	"GetScopes":              true,
+	"GetDiscoveryMode":       true,
+	"GetWsdlUrl":             true,
+}
+
+// extractSOAPOperation parses the SOAP XML (Envelope or bare operation element) and returns
+// the local element name of the operation inside Body (or the root element if no Envelope is used).
+func extractSOAPOperation(reqStr string) string {
+	dec := xml.NewDecoder(strings.NewReader(reqStr))
+	inEnvelope := false
+	inBody := false
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			return ""
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		if !inEnvelope {
+			if se.Name.Local == "Envelope" {
+				inEnvelope = true
+				continue
+			}
+			// Bare XML operation fragment without SOAP Envelope
+			return se.Name.Local
+		}
+		if !inBody {
+			if se.Name.Local == "Body" {
+				inBody = true
+			}
+			continue
+		}
+		// First start element inside <Body> is the SOAP operation
+		return se.Name.Local
+	}
+}
+
+func extractActionName(action string) string {
+	action = strings.Trim(strings.TrimSpace(action), `"`)
+	if idx := strings.LastIndexAny(action, "/#"); idx >= 0 {
+		action = action[idx+1:]
+	}
+	return strings.TrimSpace(action)
 }
 
 // isPreAuthAction checks if the SOAP request is an ONVIF Core Spec PRE_AUTH operation.
 func isPreAuthAction(action, reqStr string) bool {
-	preAuthActions := []string{
-		"GetSystemDateAndTime",
-		"GetCapabilities",
-		"GetServices",
-		"GetServiceCapabilities",
-		"GetEndpointReference",
-		"GetScopes",
-		"GetDiscoveryMode",
-		"GetWsdlUrl",
+	if bodyOp := extractSOAPOperation(reqStr); bodyOp != "" {
+		return preAuthActionSet[bodyOp]
 	}
-	for _, a := range preAuthActions {
-		if strings.Contains(action, a) || strings.Contains(reqStr, a) {
-			return true
-		}
+	if actOp := extractActionName(action); actOp != "" {
+		return preAuthActionSet[actOp]
 	}
 	return false
 }
@@ -310,8 +360,14 @@ func (s *Server) authenticateSOAP(w http.ResponseWriter, r *http.Request, action
 }
 
 func (s *Server) handleSOAP(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxSOAPBodyBytes)
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			http.Error(w, "Request Entity Too Large", http.StatusRequestEntityTooLarge)
+			return
+		}
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return
 	}
@@ -336,7 +392,7 @@ func (s *Server) handleSOAP(w http.ResponseWriter, r *http.Request) {
 	case strings.HasSuffix(path, "media_service"):
 		innerResp, handleErr = s.mediaHandler.Handle(action, reqStr, host)
 	case strings.HasSuffix(path, "event_service"):
-		innerResp, handleErr = s.eventHandler.Handle(action, reqStr, host, subID)
+		innerResp, handleErr = s.eventHandler.HandleContext(r.Context(), action, reqStr, host, subID)
 	case strings.HasSuffix(path, "deviceio_service"):
 		innerResp, handleErr = s.deviceIO.Handle(action, reqStr)
 	case strings.HasSuffix(path, "search_service"):
@@ -352,7 +408,7 @@ func (s *Server) handleSOAP(w http.ResponseWriter, r *http.Request) {
 		} else if strings.Contains(reqStr, "GetProfiles") || strings.Contains(reqStr, "GetStreamUri") {
 			innerResp, handleErr = s.mediaHandler.Handle(action, reqStr, host)
 		} else if strings.Contains(reqStr, "PullMessages") || strings.Contains(reqStr, "CreatePullPointSubscription") {
-			innerResp, handleErr = s.eventHandler.Handle(action, reqStr, host, subID)
+			innerResp, handleErr = s.eventHandler.HandleContext(r.Context(), action, reqStr, host, subID)
 		} else if strings.Contains(reqStr, "FindRecordings") || strings.Contains(reqStr, "GetRecordingSummary") || strings.Contains(reqStr, "GetRecordingSearchResults") {
 			innerResp, handleErr = s.searchHandler.Handle(action, reqStr, host)
 		} else if strings.Contains(reqStr, "GetReplayUri") || strings.Contains(reqStr, "GetReplayConfiguration") {
@@ -391,6 +447,12 @@ func wrapSOAPResponse(innerXML string) string {
 </s:Envelope>`, msgID, innerXML)
 }
 
+func xmlEscape(s string) string {
+	var buf bytes.Buffer
+	_ = xml.EscapeText(&buf, []byte(s))
+	return buf.String()
+}
+
 func wrapSOAPFault(action string, err error) string {
 	errMsg := "Action not supported"
 	if err != nil {
@@ -404,5 +466,5 @@ func wrapSOAPFault(action string, err error) string {
       <s:Reason><s:Text xml:lang="en">%s: %s</s:Text></s:Reason>
     </s:Fault>
   </s:Body>
-</s:Envelope>`, action, errMsg)
+</s:Envelope>`, xmlEscape(action), xmlEscape(errMsg))
 }

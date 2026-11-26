@@ -161,23 +161,33 @@ func (b *Bridge) RequestKeyframe() {
 // runPLILoop periodically sends Picture Loss Indications (PLIs) to ensure keyframe availability for incoming clients.
 func (b *Bridge) runPLILoop(ctx context.Context) {
 	// Fast initial burst of PLIs to request immediate keyframe
-	time.Sleep(500 * time.Millisecond)
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(500 * time.Millisecond):
+	}
 	for i := 0; i < 4; i++ {
+		if ctx.Err() != nil {
+			return
+		}
+		ssrc := atomic.LoadUint32(&b.videoSSRC)
+		if ssrc == 0 {
+			ssrc = 1
+		}
+		b.mu.Lock()
+		pc := b.pc
+		b.mu.Unlock()
+		if pc != nil {
+			_ = pc.WriteRTCP([]rtcp.Packet{
+				&rtcp.PictureLossIndication{
+					MediaSSRC: ssrc,
+				},
+			})
+		}
 		select {
 		case <-ctx.Done():
 			return
-		default:
-			b.mu.Lock()
-			pc := b.pc
-			b.mu.Unlock()
-			if pc != nil {
-				_ = pc.WriteRTCP([]rtcp.Packet{
-					&rtcp.PictureLossIndication{
-						MediaSSRC: 1,
-					},
-				})
-			}
-			time.Sleep(250 * time.Millisecond)
+		case <-time.After(250 * time.Millisecond):
 		}
 	}
 
