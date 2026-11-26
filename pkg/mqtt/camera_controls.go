@@ -176,15 +176,15 @@ func (c *Client) handleCameraControlsCommand(topic, payload, baseTopic string, c
 	switch {
 	case strings.HasSuffix(topic, "/pixel_change/set"):
 		on := isOn(payload)
-		if cb.SetPixelChangeDetection != nil {
-			_ = cb.SetPixelChangeDetection(on)
+		if cb.SetPixelChangeDetection != nil && !runCommand(topic, payload, func() error { return cb.SetPixelChangeDetection(on) }) {
+			return true
 		}
 		c.publishOptimistic(baseTopic, "pixel_change/state", onOff(boolState(on)))
 
 	case strings.HasSuffix(topic, "/draw_frame/set"):
 		on := isOn(payload)
-		if cb.SetDrawFrame != nil {
-			_ = cb.SetDrawFrame(on)
+		if cb.SetDrawFrame != nil && !runCommand(topic, payload, func() error { return cb.SetDrawFrame(on) }) {
+			return true
 		}
 		c.publishOptimistic(baseTopic, "draw_frame/state", onOff(boolState(on)))
 
@@ -193,8 +193,8 @@ func (c *Client) handleCameraControlsCommand(topic, payload, baseTopic string, c
 		if !ok {
 			return true
 		}
-		if cb.SetAIPersonSensitivity != nil {
-			_ = cb.SetAIPersonSensitivity(level)
+		if cb.SetAIPersonSensitivity != nil && !runCommand(topic, payload, func() error { return cb.SetAIPersonSensitivity(level) }) {
+			return true
 		}
 		c.publishOptimistic(baseTopic, "ai_person/state", aiPersonNames[level])
 
@@ -203,8 +203,8 @@ func (c *Client) handleCameraControlsCommand(topic, payload, baseTopic string, c
 		if !ok {
 			return true
 		}
-		if cb.SetRecordMode != nil {
-			_ = cb.SetRecordMode(mode)
+		if cb.SetRecordMode != nil && !runCommand(topic, payload, func() error { return cb.SetRecordMode(mode) }) {
+			return true
 		}
 		c.publishOptimistic(baseTopic, "record_mode/state", recordModeNames[mode])
 

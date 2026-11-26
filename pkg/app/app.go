@@ -241,31 +241,29 @@ func New(cfg *config.Config, appVersion string) (*App, error) {
 				camPID = cam.Nabto.ProductID
 			}
 			callbacks := mqtt.Callbacks{
-				SetLampMode:       camBridgeMgr.SetLampState,
-				SetHighlight:      camBridgeMgr.SetHighlight,
-				SetHighlightTime:  camBridgeMgr.SetHighlightTime,
-				SetLowlight:       camBridgeMgr.SetLowlight,
-				SetLowlightTime:   camBridgeMgr.SetLowlightTime,
-				SetPIRSensitivity: camBridgeMgr.SetPIRSensitivity,
-				SetLuxThreshold:   camBridgeMgr.SetLuxThreshold,
-				SetSiren:          camBridgeMgr.SetSiren,
-				SetResolution:     camBridgeMgr.SetResolution,
-				ReconnectSession:  camBridgeMgr.ReconnectSession,
+				SetLampMode:          camBridgeMgr.SetLampState,
+				SetHighlight:         camBridgeMgr.SetHighlight,
+				SetHighlightTime:     camBridgeMgr.SetHighlightTime,
+				SetLowlight:          camBridgeMgr.SetLowlight,
+				SetLowlightTime:      camBridgeMgr.SetLowlightTime,
+				SetPIRSensitivity:    camBridgeMgr.SetPIRSensitivity,
+				SetLuxThreshold:      camBridgeMgr.SetLuxThreshold,
+				SetSiren:             camBridgeMgr.SetSiren,
+				SetResolution:        camBridgeMgr.SetResolution,
+				ReconnectSession:     camBridgeMgr.ReconnectSession,
+				CameraInfo:           true,
+				SetTimestampPosition: camBridgeMgr.SetTimestampPosition,
+				SetSpeakerVolume:     camBridgeMgr.SetSpeakerVolume,
+				SetDetectMode:        camBridgeMgr.SetDetectMode,
+				SetRecordMode:        camBridgeMgr.SetRecordMode,
+				RebootCamera:         camBridgeMgr.Reboot,
 			}
 			if !isL620 {
-				// The L 625 reports Wi-Fi signal, SD card usage and firmware
-				// version via get_device_info.
-				callbacks.CameraInfo = true
-				// Its camera-side settings can be read and changed as well.
-				callbacks.SetTimestampPosition = camBridgeMgr.SetTimestampPosition
-				callbacks.SetSpeakerVolume = camBridgeMgr.SetSpeakerVolume
-				callbacks.SetDetectMode = camBridgeMgr.SetDetectMode
+				callbacks.WifiSignal = true
 				callbacks.SetPixelChangeDetection = camBridgeMgr.SetPixelChangeDetection
 				callbacks.SetDrawFrame = camBridgeMgr.SetDrawFrame
 				callbacks.SetAIPersonSensitivity = camBridgeMgr.SetAIPersonSensitivity
-				callbacks.SetRecordMode = camBridgeMgr.SetRecordMode
 				callbacks.InstallUpdate = camBridgeMgr.InstallUpdate
-				callbacks.RebootCamera = camBridgeMgr.Reboot
 			}
 			mqttClient.RegisterCamera(mqtt.CameraDevice{
 				Path:      cam.Path,

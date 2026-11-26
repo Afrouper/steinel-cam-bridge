@@ -7,25 +7,31 @@ import (
 	"github.com/Afrouper/steinel-cam-bridge/pkg/events"
 )
 
-// Diagnostic sensors for values the camera reports about itself (L 625,
-// get_device_info): Wi-Fi signal, SD card usage and firmware version. They
-// are only announced for cameras whose driver sets Callbacks.CameraInfo.
+// Diagnostic sensors for values the camera reports about itself:
+// SD card usage and firmware version (Callbacks.CameraInfo) as well as
+// Wi-Fi signal strength (Callbacks.WifiSignal).
 
 // publishCameraInfoDiscovery announces the diagnostic sensors.
 func (c *Client) publishCameraInfoDiscovery(dev *CameraDevice, publishEntity func(component, objectID string, config map[string]interface{})) {
-	if !dev.Callbacks.CameraInfo {
+	cb := dev.Callbacks
+	if !cb.CameraInfo && !cb.WifiSignal {
 		return
 	}
 	topic := func(sub string) string { return fmt.Sprintf("%s/%s", dev.baseTopic, sub) }
 
-	publishEntity("sensor", "wifi_signal", map[string]interface{}{
-		"name":                "WLAN-Signal",
-		"unit_of_measurement": "%",
-		"state_class":         "measurement",
-		"icon":                "mdi:wifi",
-		"entity_category":     "diagnostic",
-		"state_topic":         topic("wifi_signal/state"),
-	})
+	if cb.WifiSignal {
+		publishEntity("sensor", "wifi_signal", map[string]interface{}{
+			"name":                "WLAN-Signal",
+			"unit_of_measurement": "%",
+			"state_class":         "measurement",
+			"icon":                "mdi:wifi",
+			"entity_category":     "diagnostic",
+			"state_topic":         topic("wifi_signal/state"),
+		})
+	}
+	if !cb.CameraInfo {
+		return
+	}
 	publishEntity("sensor", "sd_free", map[string]interface{}{
 		"name":                        "SD-Karte frei",
 		"unit_of_measurement":         "GB",
@@ -80,9 +86,12 @@ func sdGigabytes(mebibytes int) float64 {
 }
 
 // publishCameraInfoState publishes the diagnostic values that are known.
-func (c *Client) publishCameraInfoState(st events.DeviceStatus, pub func(subTopic, val string)) {
-	if st.WifiSignal > 0 {
+func (c *Client) publishCameraInfoState(cb Callbacks, st events.DeviceStatus, pub func(subTopic, val string)) {
+	if cb.WifiSignal && st.WifiSignal > 0 {
 		pub("wifi_signal/state", strconv.Itoa(st.WifiSignal))
+	}
+	if !cb.CameraInfo {
+		return
 	}
 	if st.SDTotalMB > 0 {
 		pub("sd_free/state", strconv.FormatFloat(sdGigabytes(st.SDFreeMB), 'f', 1, 64))

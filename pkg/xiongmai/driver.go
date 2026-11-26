@@ -206,15 +206,8 @@ func (d *Driver) applyMCUConfig(mcuCfg *MCUConfig) {
 		return
 	}
 	st := d.eventBus.GetStatus()
-	switch mcuCfg.Mode {
-	case 3: // 'd' -> Continuous Light (Dauerlicht)
-		st.LampMode = 1
-	case 1: // 'b' -> Sensor Automatik
-		st.LampMode = 2
-	default:
-		st.LampMode = 0
-	}
-	st.PIRActive = (mcuCfg.Distance > 0 && mcuCfg.Mode != 0)
+	st.LampMode = MCUModeToLampMode(mcuCfg.Mode)
+	st.PIRActive = (mcuCfg.Distance > 0 && mcuCfg.Mode != MCUModeOff)
 
 	if mcuCfg.Highlight > 0 {
 		st.Highlight = mcuCfg.Highlight
@@ -286,15 +279,66 @@ func (d *Driver) syncInitialStateLocked() {
 
 	st := d.eventBus.GetStatus()
 	st.Resolution = d.resolution
-	st.FirmwareVer = "Xiongmai-Sofia"
+	if st.FirmwareVer == "" {
+		st.FirmwareVer = "Xiongmai-Sofia"
+	}
 	d.eventBus.UpdateStatus(st)
+
+	sofiaSt, statusErr := d.client.QueryDeviceStatus()
+	if statusErr != nil {
+		logger.Debug("Xiongmai Driver", "Sofia device status query incomplete: %v", statusErr)
+	}
+	if sofiaSt != nil {
+		d.applySofiaDeviceStatus(sofiaSt)
+	}
 
 	// Query MCU Config via OPTrans (which also queries light on/off state via mode)
 	if mcuCfg, err := d.client.QueryMCUConfig(); err == nil && mcuCfg != nil {
-		d.applyMCUConfig(mcuCfg)
+		d.client.runSerializedTelemetry(func(_ *MCUConfig, alreadyApplied bool) {
+			if !alreadyApplied {
+				d.applyMCUConfig(mcuCfg)
+			}
+		})
 		logger.Debug("Xiongmai Driver", "💡 Synced MCU Config: LightOn=%v, Bright=%d%%, Lux=%d, Dist=%dm, Delay=%ds, Lowlight=%d%% (%s)",
 			mcuCfg.IsLightOn(), mcuCfg.Highlight, mcuCfg.TwilightLux, mcuCfg.Distance, mcuCfg.HighlightDelaySec, mcuCfg.Lowlight, mcuCfg.LowlightDuration)
 	}
+}
+
+func (d *Driver) applySofiaDeviceStatus(sofiaSt *SofiaDeviceStatus) {
+	if d.eventBus == nil || sofiaSt == nil {
+		return
+	}
+	st := d.eventBus.GetStatus()
+	if sofiaSt.FirmwareVer != "" {
+		st.FirmwareVer = sofiaSt.FirmwareVer
+	}
+	if sofiaSt.SDTotalMB > 0 {
+		st.SDTotalMB = sofiaSt.SDTotalMB
+		st.SDFreeMB = sofiaSt.SDFreeMB
+	}
+	if sofiaSt.SDStatus != "" {
+		st.SDStatus = sofiaSt.SDStatus
+	}
+	if sofiaSt.SpeakerVolume >= 0 {
+		st.SpeakerVolume = sofiaSt.SpeakerVolume
+	}
+	if sofiaSt.OSDPosition >= 0 {
+		st.OSDPosition = sofiaSt.OSDPosition
+	}
+	if sofiaSt.DetectMode != "" {
+		st.DetectMode = sofiaSt.DetectMode
+	}
+	if sofiaSt.RecordMode > 0 {
+		st.RecordMode = sofiaSt.RecordMode
+	}
+	if sofiaSt.SirenKnown {
+		if sofiaSt.SirenEnabled {
+			st.SirenEnabled = 1
+		} else {
+			st.SirenEnabled = 0
+		}
+	}
+	d.eventBus.UpdateStatus(st)
 }
 
 func (d *Driver) superviseSofiaLoop(ctx context.Context) {
@@ -391,9 +435,7 @@ func (d *Driver) OnAudioBackchannelPacket(pkt *rtp.Packet) {
 func (d *Driver) GetMQTTCallbacks() mqtt.Callbacks {
 	return mqtt.Callbacks{
 		SetLampMode: func(mode string) error {
-			modeLower := strings.ToLower(mode)
-			on := modeLower == "on" || modeLower == "1" || modeLower == "dauerlicht"
-			return d.SetLamp(on)
+			return d.SetLampMode(mode)
 		},
 		SetHighlight: func(percent int) error {
 			return d.SetDim(percent)
@@ -405,7 +447,7 @@ func (d *Driver) GetMQTTCallbacks() mqtt.Callbacks {
 			return d.SetNightlight(percent)
 		},
 		SetLowlightTime: func(timeVal int) error {
-			return d.SetNightlightDuration(fmt.Sprintf("%dh", timeVal/60))
+			return d.SetLowlightTime(timeVal)
 		},
 		SetPIRSensitivity: func(percent int) error {
 			var dist int
@@ -421,7 +463,15 @@ func (d *Driver) GetMQTTCallbacks() mqtt.Callbacks {
 		SetLuxThreshold: func(lux int) error {
 			return d.SetTwilight(lux)
 		},
-		ReconnectSession: d.ReconnectSession,
+		SetSiren:             d.SetSiren,
+		SetResolution:        d.SetResolution,
+		ReconnectSession:     d.ReconnectSession,
+		CameraInfo:           true,
+		SetTimestampPosition: d.SetTimestampPosition,
+		SetSpeakerVolume:     d.SetSpeakerVolume,
+		SetDetectMode:        d.SetDetectMode,
+		SetRecordMode:        d.SetRecordMode,
+		RebootCamera:         d.Reboot,
 	}
 }
 
@@ -448,20 +498,43 @@ func (d *Driver) SetTime(t time.Time) error {
 	return errors.New("camera driver not connected")
 }
 
-// SetLamp turns the main light on or off.
-func (d *Driver) SetLamp(on bool) error {
-	logger.Trace("Xiongmai Driver", "SetLamp: on=%v", on)
-	err := d.client.SetLightState(on)
+// SetLampMode switches the lamp operating mode ("on"/"dauerlicht", "off"/"auto"/"sensor", or "aus").
+func (d *Driver) SetLampMode(mode string) error {
+	logger.Trace("Xiongmai Driver", "SetLampMode: mode=%q", mode)
+	if d.client == nil {
+		return errors.New("camera driver not connected")
+	}
+	_, expectedMCUMode, err := BuildSetLampModeCommand(mode)
+	if err != nil {
+		return err
+	}
+	err = d.client.SetLightMode(mode)
 	if err == nil && d.eventBus != nil {
-		st := d.eventBus.GetStatus()
-		if on {
-			st.LampMode = 1 // Dauerlicht (Mode 3, 'd')
-		} else {
-			st.LampMode = 2 // Sensor Automatik (Mode 1, 'b')
-		}
-		d.eventBus.UpdateStatus(st)
+		d.client.runSerializedTelemetry(func(cfg *MCUConfig, alreadyApplied bool) {
+			if cfg != nil {
+				if !alreadyApplied {
+					d.applyMCUConfig(cfg)
+				}
+				return
+			}
+			st := d.eventBus.GetStatus()
+			st.LampMode = MCUModeToLampMode(expectedMCUMode)
+			if expectedMCUMode == MCUModeOff {
+				st.PIRActive = false
+			}
+			d.eventBus.UpdateStatus(st)
+		})
 	}
 	return err
+}
+
+// SetLamp turns the main light on or off (sensor auto).
+func (d *Driver) SetLamp(on bool) error {
+	logger.Trace("Xiongmai Driver", "SetLamp: on=%v", on)
+	if on {
+		return d.SetLampMode("on")
+	}
+	return d.SetLampMode("off")
 }
 
 // SetDim sets the main light dimming level (10-100%).
@@ -560,6 +633,115 @@ func (d *Driver) SetNightlightDuration(val string) error {
 		d.eventBus.UpdateStatus(st)
 	}
 	return err
+}
+
+// SetLowlightTime sets the nightlight duration from hours (0-12), minutes (>12), or seconds (>720).
+func (d *Driver) SetLowlightTime(timeVal int) error {
+	hours := timeVal
+	if timeVal > 720 {
+		hours = (timeVal + 1800) / 3600
+	} else if timeVal > 12 {
+		hours = (timeVal + 30) / 60
+	}
+	if hours <= 0 {
+		return d.SetNightlightDuration("off")
+	}
+	if hours >= 12 {
+		return d.SetNightlightDuration("all_night")
+	}
+	return d.SetNightlightDuration(fmt.Sprintf("%dh", hours))
+}
+
+// SetSpeakerVolume sets the camera speaker output volume (0-100%).
+func (d *Driver) SetSpeakerVolume(percent int) error {
+	if d.client == nil {
+		return errors.New("camera driver not connected")
+	}
+	if percent < 0 {
+		percent = 0
+	} else if percent > 100 {
+		percent = 100
+	}
+	err := d.client.SetSpeakerVolume(percent)
+	if err == nil && d.eventBus != nil {
+		st := d.eventBus.GetStatus()
+		st.SpeakerVolume = percent
+		d.eventBus.UpdateStatus(st)
+	}
+	return err
+}
+
+// SetTimestampPosition switches the timestamp overlay off (0) or moves it to a corner (1-4).
+func (d *Driver) SetTimestampPosition(position int) error {
+	if d.client == nil {
+		return errors.New("camera driver not connected")
+	}
+	err := d.client.SetTimestampPosition(position)
+	if err == nil && d.eventBus != nil {
+		st := d.eventBus.GetStatus()
+		st.OSDPosition = position
+		d.eventBus.UpdateStatus(st)
+	}
+	return err
+}
+
+// SetDetectMode enables ("ai") or disables ("off") camera-side motion detection.
+func (d *Driver) SetDetectMode(mode string) error {
+	if d.client == nil {
+		return errors.New("camera driver not connected")
+	}
+	err := d.client.SetDetectMode(mode)
+	if err == nil && d.eventBus != nil {
+		st := d.eventBus.GetStatus()
+		switch strings.ToLower(strings.TrimSpace(mode)) {
+		case "ai", "on", "true", "1":
+			st.DetectMode = "ai"
+		default:
+			st.DetectMode = "off"
+		}
+		d.eventBus.UpdateStatus(st)
+	}
+	return err
+}
+
+// SetRecordMode configures the SD card recording mode (4 = off, 2 or 3 = motion).
+func (d *Driver) SetRecordMode(mode int) error {
+	if d.client == nil {
+		return errors.New("camera driver not connected")
+	}
+	err := d.client.SetRecordMode(mode)
+	if err == nil && d.eventBus != nil {
+		st := d.eventBus.GetStatus()
+		st.RecordMode = mode
+		d.eventBus.UpdateStatus(st)
+	}
+	return err
+}
+
+// SetSiren enables or disables the camera's motion alarm voice/buzzer output.
+func (d *Driver) SetSiren(on bool) error {
+	if d.client == nil {
+		return errors.New("camera driver not connected")
+	}
+	err := d.client.SetSiren(on)
+	if err == nil && d.eventBus != nil {
+		st := d.eventBus.GetStatus()
+		if on {
+			st.SirenEnabled = 1
+		} else {
+			st.SirenEnabled = 0
+		}
+		d.eventBus.UpdateStatus(st)
+	}
+	return err
+}
+
+// Reboot sends a restart command to the camera.
+func (d *Driver) Reboot() error {
+	if d.client == nil {
+		return errors.New("camera driver not connected")
+	}
+	return d.client.Reboot()
 }
 
 // SetResolution switches between 1080p/720p (stream 0 / "Main") and 360p (stream 1 / "Extra1") for the Steinel L 620 CAM.
