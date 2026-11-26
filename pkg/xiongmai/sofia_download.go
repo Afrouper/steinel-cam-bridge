@@ -3,6 +3,7 @@ package xiongmai
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,11 +17,12 @@ import (
 	"github.com/Afrouper/steinel-cam-bridge/pkg/storage"
 )
 
-// SofiaDownloader handles downloading recorded H.264 video files from a Xiongmai camera
-// over the Sofia protocol (Port 34567) using OPPlayBack (MsgID 1420 / 1424).
-// Follows Single Responsibility Principle by encapsulating all download-specific
-// socket communication and Xiongmai media demuxing, while delegating container
-// muxing to storage.VideoMuxer.
+// maxSofiaDownloadFrameBytes bounds a single Xiongmai record frame inside an OPPlayBack stream.
+const maxSofiaDownloadFrameBytes = 2 * 1024 * 1024
+
+// SofiaDownloader downloads recorded H.264/HEVC video files from a Xiongmai camera
+// over the Sofia protocol (Port 34567) using OPPlayBack (MsgID 1420 / 1424) and
+// remuxes the elementary video stream into an MP4 container via storage.VideoMuxer.
 type SofiaDownloader struct {
 	cameraIP      string
 	port          int
@@ -64,8 +66,8 @@ func (d *SofiaDownloader) SetMuxer(m storage.VideoMuxer) {
 	d.muxer = m
 }
 
-// Download fetches the requested recording from the camera, demuxes Xiongmai H.264 packets,
-// converts the stream into an MP4 container, and streams the result into w.
+// Download fetches the requested recording from the camera, demuxes the Xiongmai media stream,
+// remuxes the video into an MP4 container, and writes the result to w.
 func (d *SofiaDownloader) Download(ctx context.Context, rec *storage.RecordingItem, w io.Writer, onStart func(name string, size int64)) error {
 	if rec == nil {
 		return errors.New("recording item is nil")
@@ -217,26 +219,32 @@ func (d *SofiaDownloader) Download(ctx context.Context, rec *storage.RecordingIt
 		}
 	}
 
-	if onStart != nil {
-		onStart(rec.FileName, rec.FileSizeBytes)
-	}
-
-	// Create temporary file to buffer demuxed Annex-B H.264 elementary stream
-	tmpH264, err := os.CreateTemp("", "l620_rec_*.h264")
+	tmpRaw, err := os.CreateTemp("", "l620_rec_*.raw")
 	if err != nil {
-		return fmt.Errorf("failed to create temp h264 file: %w", err)
+		return fmt.Errorf("failed to create temp video file: %w", err)
 	}
-	tmpH264Path := tmpH264.Name()
+	tmpRawPath := tmpRaw.Name()
 	defer func() {
-		_ = tmpH264.Close()
-		_ = os.Remove(tmpH264Path)
+		_ = tmpRaw.Close()
+		_ = os.Remove(tmpRawPath)
 	}()
 
-	// Ensure we send Stop when finished
 	defer d.sendStop(sessionID, sessionHex, rec.FileName)
 
-	// Step 3: Stream and demux Xiongmai binary video packets
-	totalBytesWritten := int64(0)
+	demuxer := newSofiaDownloadDemuxer(tmpRaw)
+	var tmpAudio *os.File
+	var tmpAudioPath string
+	if storage.IncludeAudioFromContext(ctx) {
+		if f, aErr := os.CreateTemp("", "l620_rec_*.alaw"); aErr == nil {
+			tmpAudio = f
+			tmpAudioPath = f.Name()
+			demuxer.SetAudioOutput(tmpAudio)
+			defer func() {
+				_ = tmpAudio.Close()
+				_ = os.Remove(tmpAudioPath)
+			}()
+		}
+	}
 	packetCount := 0
 	hdrBuf := make([]byte, HeaderLength)
 
@@ -274,7 +282,7 @@ func (d *SofiaDownloader) Download(ctx context.Context, rec *storage.RecordingIt
 
 		if time.Now().After(deadline) {
 			logger.Warn("Xiongmai Download", "⚠️ Download timeout reached for %s (received %d packets, %d bytes)",
-				rec.ID, packetCount, totalBytesWritten)
+				rec.ID, packetCount, demuxer.BytesWritten())
 			break
 		}
 
@@ -298,7 +306,7 @@ func (d *SofiaDownloader) Download(ctx context.Context, rec *storage.RecordingIt
 			break
 		}
 
-		if hdr.DataLength > 2*1024*1024 { // 2MB sanity boundary
+		if hdr.DataLength > maxSofiaDownloadFrameBytes { // 2MB sanity boundary
 			logger.Warn("Xiongmai Download", "⚠️ Oversized packet length %d, stopping", hdr.DataLength)
 			break
 		}
@@ -313,57 +321,326 @@ func (d *SofiaDownloader) Download(ctx context.Context, rec *storage.RecordingIt
 		// Handle Media Packets (MsgID 1422 MsgPlayData, 1426 MsgPlayClaimData, or 1412 MsgMonitorData)
 		if hdr.MsgID == MsgPlayData || hdr.MsgID == MsgPlayClaimData || hdr.MsgID == MsgMonitorData {
 			packetCount++
-			written := d.demuxAndWriteH264(payload, tmpH264)
-			totalBytesWritten += int64(written)
+			if err := demuxer.WriteChunk(payload); err != nil {
+				return fmt.Errorf("failed to demux video chunk for %s: %w", rec.ID, err)
+			}
 		} else {
 			logger.Trace("Xiongmai Download", "Ignored non-media packet during download: MsgID=%d, Len=%d", hdr.MsgID, hdr.DataLength)
 		}
 	}
 
-	_ = tmpH264.Sync()
+	if err := demuxer.Flush(); err != nil {
+		return fmt.Errorf("failed to flush demuxed video for %s: %w", rec.ID, err)
+	}
+	_ = tmpRaw.Sync()
+	if tmpAudio != nil {
+		_ = tmpAudio.Sync()
+	}
 
+	totalBytesWritten := demuxer.BytesWritten()
 	if totalBytesWritten == 0 {
 		return fmt.Errorf("received 0 bytes of video data from camera for %s", rec.ID)
 	}
 
-	logger.Info("Xiongmai Download", "✅ Downloaded %d bytes of H.264 video (%d packets) for %s",
-		totalBytesWritten, packetCount, rec.ID)
-
-	// Step 4: Convert Annex-B H.264 to standard MP4 container
-	return d.convertAndStream(ctx, tmpH264Path, w)
-}
-
-func (d *SofiaDownloader) demuxAndWriteH264(payload []byte, dest io.Writer) int {
-	if len(payload) >= 4 {
-		marker := payload[0:4]
-
-		if bytes.Equal(marker, MarkerIFrame) {
-			// I-Frame: skip 16-byte Xiongmai record header
-			if len(payload) > 16 {
-				n, _ := dest.Write(payload[16:])
-				return n
-			}
-			return 0
-		}
-
-		if bytes.Equal(marker, MarkerPFrame) {
-			// P-Frame: skip 8-byte Xiongmai record header
-			if len(payload) > 8 {
-				n, _ := dest.Write(payload[8:])
-				return n
-			}
-			return 0
-		}
-
-		if bytes.Equal(marker, MarkerAudio) || bytes.Equal(marker, MarkerMeta) {
-			// Audio frame or metadata/sync frame: skip to prevent H.264 elementary stream corruption
-			return 0
-		}
+	detectedCodec := demuxer.Codec()
+	if detectedCodec == "" {
+		detectedCodec = videoCodecH264
+	}
+	detectedFPS := demuxer.FPS()
+	if detectedFPS == 0 && d.client != nil {
+		detectedFPS = d.client.GetVideoFPS("Main")
 	}
 
-	// Continuation chunk of current video frame
-	n, _ := dest.Write(payload)
-	return n
+	logger.Info("Xiongmai Download", "✅ Downloaded %d bytes of %s video (%d packets, %d FPS, audio: %d bytes) for %s",
+		totalBytesWritten, strings.ToUpper(detectedCodec), packetCount, detectedFPS, demuxer.AudioBytesWritten(), rec.ID)
+
+	muxOpts := storage.MuxOptions{
+		Codec: detectedCodec,
+		FPS:   detectedFPS,
+	}
+	if tmpAudioPath != "" && demuxer.AudioBytesWritten() > 0 {
+		muxOpts.AudioPath = tmpAudioPath
+	}
+	return d.convertAndStream(ctx, tmpRawPath, rec.FileName, muxOpts, w, onStart)
+}
+
+// sofiaDownloadDemuxer extracts Annex-B H.264/HEVC video frames from chunked Xiongmai
+// OPPlayBack streams while discarding metadata (0xF9) records and either stripping or
+// demuxing interleaved 8 kHz G.711 A-law audio (0xFA) records when an audio output is set.
+type sofiaDownloadDemuxer struct {
+	dest        io.Writer
+	audioDest   io.Writer
+	buf         []byte
+	seenMarker  bool
+	codec       string
+	fps         int
+	bytesOut    int64
+	audioOut    int64
+	framesVideo int
+}
+
+func newSofiaDownloadDemuxer(dest io.Writer) *sofiaDownloadDemuxer {
+	return &sofiaDownloadDemuxer{dest: dest}
+}
+
+func (dm *sofiaDownloadDemuxer) SetAudioOutput(w io.Writer) { dm.audioDest = w }
+func (dm *sofiaDownloadDemuxer) BytesWritten() int64        { return dm.bytesOut }
+func (dm *sofiaDownloadDemuxer) AudioBytesWritten() int64   { return dm.audioOut }
+func (dm *sofiaDownloadDemuxer) Codec() string              { return dm.codec }
+func (dm *sofiaDownloadDemuxer) FPS() int                   { return dm.fps }
+
+func (dm *sofiaDownloadDemuxer) WriteChunk(chunk []byte) error {
+	if len(chunk) == 0 {
+		return nil
+	}
+	dm.buf = append(dm.buf, chunk...)
+	return dm.drain(false)
+}
+
+func (dm *sofiaDownloadDemuxer) Flush() error {
+	return dm.drain(true)
+}
+
+// findNextXiongmaiMarker returns the byte offset of the next 4-byte Xiongmai record start code
+// (00 00 01 FC/FE/FD/FA/F9) in data, or -1 if none is present.
+func findNextXiongmaiMarker(data []byte) int {
+	pos := 0
+	for pos+4 <= len(data) {
+		idx := bytes.Index(data[pos:], []byte{0x00, 0x00, 0x01})
+		if idx < 0 {
+			return -1
+		}
+		abs := pos + idx
+		if abs+4 > len(data) {
+			return -1
+		}
+		switch data[abs+3] {
+		case 0xFC, 0xFE, 0xFD, 0xFA, 0xF9:
+			return abs
+		}
+		pos = abs + 3
+	}
+	return -1
+}
+
+func (dm *sofiaDownloadDemuxer) writeVideo(data []byte, codecByte byte) error {
+	if len(data) == 0 {
+		return nil
+	}
+	if dm.codec == "" {
+		if detected := detectSofiaVideoCodec(codecByte, data); detected != "" {
+			dm.codec = detected
+		}
+	}
+	n, err := dm.dest.Write(data)
+	dm.bytesOut += int64(n)
+	if err != nil {
+		return err
+	}
+	dm.framesVideo++
+	return nil
+}
+
+func (dm *sofiaDownloadDemuxer) drain(eof bool) error {
+	consumed := 0
+	defer func() {
+		if consumed > 0 {
+			remaining := copy(dm.buf, dm.buf[consumed:])
+			if remaining == 0 && cap(dm.buf) > 256*1024 {
+				dm.buf = nil
+			} else {
+				dm.buf = dm.buf[:remaining]
+			}
+		}
+	}()
+
+	for consumed < len(dm.buf) {
+		rem := dm.buf[consumed:]
+		idx := findNextXiongmaiMarker(rem)
+		if idx < 0 {
+			if !dm.seenMarker {
+				if eof {
+					if err := dm.writeVideo(rem, 0); err != nil {
+						return err
+					}
+					consumed = len(dm.buf)
+				} else if len(rem) > 3 {
+					flushLen := len(rem) - 3
+					if err := dm.writeVideo(rem[:flushLen], 0); err != nil {
+						return err
+					}
+					consumed += flushLen
+				}
+			} else if eof {
+				consumed = len(dm.buf)
+			} else if len(rem) > 3 {
+				consumed += len(rem) - 3
+			}
+			return nil
+		}
+
+		if idx > 0 {
+			if !dm.seenMarker {
+				if err := dm.writeVideo(rem[:idx], 0); err != nil {
+					return err
+				}
+			}
+			consumed += idx
+			rem = dm.buf[consumed:]
+		}
+
+		dm.seenMarker = true
+		if len(rem) < 4 {
+			return nil
+		}
+
+		switch rem[3] {
+		case 0xFC, 0xFE: // I-Frame (16-byte header: byte 4 codec, byte 5 FPS, bytes 12..16 uint32 LE length)
+			if len(rem) < 16 {
+				if eof {
+					consumed = len(dm.buf)
+				}
+				return nil
+			}
+			codecByte := rem[4]
+			fpsByte := rem[5]
+			if dm.fps == 0 && fpsByte >= 1 && fpsByte <= 60 {
+				dm.fps = int(fpsByte)
+			}
+			rawLen := binary.LittleEndian.Uint32(rem[12:16])
+			if rawLen > 0 && rawLen <= maxSofiaDownloadFrameBytes {
+				frameLen := int(rawLen)
+				if len(rem) < 16+frameLen {
+					if eof {
+						if err := dm.writeVideo(rem[16:], codecByte); err != nil {
+							return err
+						}
+						consumed = len(dm.buf)
+					}
+					return nil
+				}
+				if err := dm.writeVideo(rem[16:16+frameLen], codecByte); err != nil {
+					return err
+				}
+				consumed += 16 + frameLen
+			} else {
+				next := findNextXiongmaiMarker(rem[16:])
+				if next < 0 {
+					if !eof {
+						return nil
+					}
+					if err := dm.writeVideo(rem[16:], codecByte); err != nil {
+						return err
+					}
+					consumed = len(dm.buf)
+					return nil
+				}
+				if err := dm.writeVideo(rem[16:16+next], codecByte); err != nil {
+					return err
+				}
+				consumed += 16 + next
+			}
+
+		case 0xFD: // P-Frame (8-byte header: bytes 4..8 uint32 LE length)
+			if len(rem) < 8 {
+				if eof {
+					consumed = len(dm.buf)
+				}
+				return nil
+			}
+			rawLen := binary.LittleEndian.Uint32(rem[4:8])
+			if rawLen > 0 && rawLen <= maxSofiaDownloadFrameBytes {
+				frameLen := int(rawLen)
+				if len(rem) < 8+frameLen {
+					if eof {
+						if err := dm.writeVideo(rem[8:], 0); err != nil {
+							return err
+						}
+						consumed = len(dm.buf)
+					}
+					return nil
+				}
+				if err := dm.writeVideo(rem[8:8+frameLen], 0); err != nil {
+					return err
+				}
+				consumed += 8 + frameLen
+			} else {
+				next := findNextXiongmaiMarker(rem[8:])
+				if next < 0 {
+					if !eof {
+						return nil
+					}
+					if err := dm.writeVideo(rem[8:], 0); err != nil {
+						return err
+					}
+					consumed = len(dm.buf)
+					return nil
+				}
+				if err := dm.writeVideo(rem[8:8+next], 0); err != nil {
+					return err
+				}
+				consumed += 8 + next
+			}
+
+		case 0xFA, 0xF9: // Audio (0xFA) or metadata (0xF9) record (8-byte header: bytes 6..8 uint16 LE length)
+			if len(rem) < 8 {
+				if eof {
+					consumed = len(dm.buf)
+				}
+				return nil
+			}
+			isAudio := rem[3] == 0xFA
+			frameLen := int(binary.LittleEndian.Uint16(rem[6:8]))
+			if frameLen > 0 {
+				if len(rem) < 8+frameLen {
+					if eof {
+						if isAudio && dm.audioDest != nil {
+							n, err := dm.audioDest.Write(rem[8:])
+							dm.audioOut += int64(n)
+							if err != nil {
+								return err
+							}
+						}
+						consumed = len(dm.buf)
+					}
+					return nil
+				}
+				if isAudio && dm.audioDest != nil {
+					n, err := dm.audioDest.Write(rem[8 : 8+frameLen])
+					dm.audioOut += int64(n)
+					if err != nil {
+						return err
+					}
+				}
+				consumed += 8 + frameLen
+			} else {
+				next := findNextXiongmaiMarker(rem[8:])
+				if next < 0 {
+					if !eof {
+						return nil
+					}
+					if isAudio && dm.audioDest != nil {
+						n, err := dm.audioDest.Write(rem[8:])
+						dm.audioOut += int64(n)
+						if err != nil {
+							return err
+						}
+					}
+					consumed = len(dm.buf)
+					return nil
+				}
+				if isAudio && dm.audioDest != nil {
+					n, err := dm.audioDest.Write(rem[8 : 8+next])
+					dm.audioOut += int64(n)
+					if err != nil {
+						return err
+					}
+				}
+				consumed += 8 + next
+			}
+		}
+	}
+	return nil
 }
 
 func (d *SofiaDownloader) sendStop(sessionID uint32, sessionHex, fileName string) {
@@ -386,15 +663,26 @@ func (d *SofiaDownloader) sendStop(sessionID uint32, sessionHex, fileName string
 	}
 }
 
-func (d *SofiaDownloader) convertAndStream(ctx context.Context, h264Path string, w io.Writer) error {
-	if d.muxer == nil || !d.muxer.IsAvailable() {
-		// Fallback: If muxer is not available, stream the H.264 elementary stream directly to w
-		f, err := os.Open(h264Path)
+func (d *SofiaDownloader) convertAndStream(ctx context.Context, rawPath, fileName string, opts storage.MuxOptions, w io.Writer, onStart func(name string, size int64)) error {
+	streamFile := func(path string) (int64, error) {
+		f, err := os.Open(path)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		defer func() { _ = f.Close() }()
-		_, err = io.Copy(w, f)
+
+		var size int64
+		if info, statErr := f.Stat(); statErr == nil {
+			size = info.Size()
+		}
+		if onStart != nil {
+			onStart(fileName, size)
+		}
+		return io.Copy(w, f)
+	}
+
+	if d.muxer == nil || !d.muxer.IsAvailable() {
+		_, err := streamFile(rawPath)
 		return err
 	}
 
@@ -406,31 +694,18 @@ func (d *SofiaDownloader) convertAndStream(ctx context.Context, h264Path string,
 	_ = tmpMP4.Close()
 	defer func() { _ = os.Remove(tmpMP4Path) }()
 
-	// Delegate MP4 remuxing to storage.VideoMuxer
-	if err := d.muxer.MuxH264ToMP4(ctx, h264Path, tmpMP4Path); err != nil {
-		logger.Warn("Xiongmai Download", "⚠️ Remuxing H.264 -> MP4 failed (%v), falling back to raw copy", err)
-		// Fallback to raw copy if muxing failed
-		f, errRaw := os.Open(h264Path)
-		if errRaw != nil {
-			return errRaw
-		}
-		defer func() { _ = f.Close() }()
-		_, err = io.Copy(w, f)
-		return err
+	if err := d.muxer.MuxToMP4(ctx, rawPath, tmpMP4Path, opts); err != nil {
+		logger.Warn("Xiongmai Download", "⚠️ Remuxing %s -> MP4 failed (%v), falling back to raw copy", strings.ToUpper(opts.Codec), err)
+		_, copyErr := streamFile(rawPath)
+		return copyErr
 	}
 
-	// Stream converted MP4 to destination writer
-	mp4File, err := os.Open(tmpMP4Path)
-	if err != nil {
-		return fmt.Errorf("failed to open converted MP4 file: %w", err)
-	}
-	defer func() { _ = mp4File.Close() }()
-
-	written, err := io.Copy(w, mp4File)
+	written, err := streamFile(tmpMP4Path)
 	if err != nil {
 		return fmt.Errorf("failed to write MP4 to destination: %w", err)
 	}
 
-	logger.Debug("Xiongmai Download", "🎬 Successfully muxed and streamed %d bytes of MP4 video", written)
+	logger.Debug("Xiongmai Download", "🎬 Successfully muxed (%s, %d FPS) and streamed %d bytes of MP4 video",
+		strings.ToUpper(opts.Codec), opts.FPS, written)
 	return nil
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -28,6 +29,7 @@ type SDCardManager struct {
 	cameraUser    string
 	cameraPwd     string
 	mu            sync.RWMutex
+	transferMu    sync.Mutex
 	rateLimitKBps int
 }
 
@@ -80,8 +82,8 @@ func (m *SDCardManager) ListRecordings(ctx context.Context, start, end time.Time
 		end = time.Now()
 	}
 
-	beginStr := start.Format("2006-01-02 15:04:05")
-	endStr := end.Format("2006-01-02 15:04:05")
+	beginStr := start.Local().Format("2006-01-02 15:04:05")
+	endStr := end.Local().Format("2006-01-02 15:04:05")
 
 	reqPayload := map[string]interface{}{
 		"Name": "OPFileQuery",
@@ -94,7 +96,7 @@ func (m *SDCardManager) ListRecordings(ctx context.Context, start, end time.Time
 			"StreamType":       "0x00000000",
 			"Type":             "h264",
 		},
-		"SessionID": fmt.Sprintf("0x%08x", m.client.sessionID),
+		"SessionID": fmt.Sprintf("0x%08x", m.client.GetSessionID()),
 	}
 
 	payloadBytes, err := json.Marshal(reqPayload)
@@ -151,20 +153,49 @@ func (m *SDCardManager) ListRecordings(ctx context.Context, start, end time.Time
 		return recordings[i].StartTime.After(recordings[j].StartTime)
 	})
 
-	logger.Trace("Xiongmai SDCard", "OPFileQuery [%s - %s]: found %d recordings", beginStr, endStr, len(recordings))
+	total := len(recordings)
+	if limit > 0 {
+		if page < 0 {
+			page = 0
+		}
+		if total == 0 || page > (total-1)/limit {
+			recordings = []storage.RecordingItem{}
+		} else {
+			offset := page * limit
+			endIdx := offset + limit
+			if endIdx > total || endIdx < offset {
+				endIdx = total
+			}
+			recordings = recordings[offset:endIdx]
+		}
+	}
+
+	logger.Trace("Xiongmai SDCard", "OPFileQuery [%s - %s]: found %d recordings (returning %d)", beginStr, endStr, total, len(recordings))
 
 	return &storage.RecordingListResponse{
 		Count: len(recordings),
-		Total: len(recordings),
+		Total: total,
 		List:  recordings,
 	}, nil
 }
 
 // GetRecording implements storage.RecordingProvider
 func (m *SDCardManager) GetRecording(ctx context.Context, id string) (*storage.RecordingItem, error) {
-	resp, err := m.ListRecordings(ctx, time.Time{}, time.Time{}, 0, 100, "")
+	var start, end time.Time
+	if ts, err := strconv.ParseInt(id, 10, 64); err == nil && ts > 0 {
+		t := time.Unix(ts, 0)
+		start = t.Add(-2 * time.Minute)
+		end = t.Add(2 * time.Minute)
+	}
+
+	resp, err := m.ListRecordings(ctx, start, end, 0, 100, "")
 	if err != nil {
 		return nil, err
+	}
+
+	if id == "latest" && len(resp.List) > 0 {
+		latest := resp.List[0]
+		return &latest, nil
 	}
 
 	for _, r := range resp.List {
@@ -185,6 +216,11 @@ func (m *SDCardManager) StreamThumbnail(ctx context.Context, id string, w io.Wri
 
 // StreamVideo implements storage.RecordingProvider
 func (m *SDCardManager) StreamVideo(ctx context.Context, id string, w io.Writer, onStart func(name string, size int64)) error {
+	if !m.transferMu.TryLock() {
+		return storage.ErrStorageBusy
+	}
+	defer m.transferMu.Unlock()
+
 	rec, err := m.GetRecording(ctx, id)
 	if err != nil {
 		return err

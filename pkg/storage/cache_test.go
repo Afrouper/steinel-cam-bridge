@@ -3,6 +3,7 @@ package storage
 import (
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -344,4 +345,60 @@ func TestRecordingCache_LatestResolution(t *testing.T) {
 	tPath, ok := cache.GetThumbnailPath("latest")
 	require.True(t, ok)
 	assert.Contains(t, tPath, "6002.jpg")
+}
+
+type stubStreamUpstream struct {
+	streamCalls      int
+	lastIncludeAudio bool
+}
+
+func (s *stubStreamUpstream) ListRecordings(context.Context, time.Time, time.Time, int, int, string) (*RecordingListResponse, error) {
+	return &RecordingListResponse{}, nil
+}
+
+func (s *stubStreamUpstream) GetRecording(context.Context, string) (*RecordingItem, error) {
+	return nil, ErrStorageNotFound
+}
+
+func (s *stubStreamUpstream) StreamThumbnail(context.Context, string, io.Writer) error {
+	return ErrFeatureDisabled
+}
+
+func (s *stubStreamUpstream) StreamVideo(ctx context.Context, _ string, w io.Writer, onStart func(name string, size int64)) error {
+	s.streamCalls++
+	s.lastIncludeAudio = IncludeAudioFromContext(ctx)
+	data := []byte("upstream-video-only")
+	if onStart != nil {
+		onStart("upstream.mp4", int64(len(data)))
+	}
+	_, err := w.Write(data)
+	return err
+}
+
+func TestCachedRecordingProvider_StreamVideo_AudioDefaultAndOptOut(t *testing.T) {
+	tempDir := t.TempDir()
+	cache := NewRecordingCache(tempDir, 5, NewMockExtractor())
+	_, err := cache.Add(context.Background(), RecordingItem{
+		ID:        "7001",
+		StartTime: time.Now().UTC(),
+	}, bytes.NewReader([]byte("cached-mp4-with-audio")))
+	require.NoError(t, err)
+
+	upstream := &stubStreamUpstream{}
+	prov := NewCachedRecordingProvider(cache, func() RecordingProvider { return upstream })
+
+	// Default context (audio=true) and explicit audio=true both hit the cache.
+	for _, ctx := range []context.Context{context.Background(), WithIncludeAudio(context.Background(), true)} {
+		var buf bytes.Buffer
+		require.NoError(t, prov.StreamVideo(ctx, "7001", &buf, nil))
+		assert.Equal(t, "cached-mp4-with-audio", buf.String())
+		assert.Equal(t, 0, upstream.streamCalls)
+	}
+
+	// Explicit audio opt-out (audio=false) bypasses the cache to upstream.
+	var optOutBuf bytes.Buffer
+	require.NoError(t, prov.StreamVideo(WithIncludeAudio(context.Background(), false), "7001", &optOutBuf, nil))
+	assert.Equal(t, "upstream-video-only", optOutBuf.String())
+	assert.Equal(t, 1, upstream.streamCalls)
+	assert.False(t, upstream.lastIncludeAudio)
 }
