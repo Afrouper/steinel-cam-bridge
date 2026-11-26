@@ -18,6 +18,7 @@ const LevelTrace slog.Level = -8
 var (
 	currentLevel = new(slog.LevelVar)
 	rootLogger   *slog.Logger
+	rootMu       sync.RWMutex
 )
 
 func init() {
@@ -86,8 +87,11 @@ func Init(levelStr string, format string) {
 		handler = newConsoleHandler(os.Stdout, currentLevel)
 	}
 
-	rootLogger = slog.New(handler)
-	slog.SetDefault(rootLogger)
+	l := slog.New(handler)
+	rootMu.Lock()
+	rootLogger = l
+	rootMu.Unlock()
+	slog.SetDefault(l)
 }
 
 // SetLevel dynamically adjusts the active log level at runtime.
@@ -123,7 +127,10 @@ func IsDebug() bool {
 // For returns a sub-logger tagged with a specific component name.
 // E.g.: logger.For("RTSP") -> output will include "[RTSP]".
 func For(component string) *slog.Logger {
-	return rootLogger.With("component", component)
+	rootMu.RLock()
+	l := rootLogger
+	rootMu.RUnlock()
+	return l.With("component", component)
 }
 
 // logf formats and outputs a log record if the given level is enabled.
@@ -196,7 +203,7 @@ func FormatBinary(data []byte, maxBytes ...int) string {
 type consoleHandler struct {
 	out   io.Writer
 	level slog.Leveler
-	mu    sync.Mutex
+	mu    *sync.Mutex
 	attrs []slog.Attr
 }
 
@@ -204,6 +211,7 @@ func newConsoleHandler(out io.Writer, level slog.Leveler) *consoleHandler {
 	return &consoleHandler{
 		out:   out,
 		level: level,
+		mu:    new(sync.Mutex),
 	}
 }
 
@@ -272,6 +280,7 @@ func (h *consoleHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	return &consoleHandler{
 		out:   h.out,
 		level: h.level,
+		mu:    h.mu,
 		attrs: newAttrs,
 	}
 }

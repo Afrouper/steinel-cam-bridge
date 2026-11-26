@@ -126,7 +126,11 @@ func downloadAndExtractSO(targetDir, targetSO, versionFile, sdkVersion, nabtoArc
 	}
 
 	fi, err := os.Stat(tmpSO)
-	if err != nil || fi.Size() < minSOSizeBytes {
+	if err != nil {
+		_ = os.Remove(tmpSO)
+		return fmt.Errorf("failed to stat downloaded library: %w", err)
+	}
+	if fi.Size() < minSOSizeBytes {
 		_ = os.Remove(tmpSO)
 		return fmt.Errorf("downloaded library is invalid or corrupt (size: %d bytes)", fi.Size())
 	}
@@ -186,7 +190,7 @@ func extractSOFromReader(r io.Reader, destPath, nabtoArch string) error {
 			return fmt.Errorf("tar read error: %w", err)
 		}
 
-		if strings.HasSuffix(header.Name, targetSuffix) {
+		if (header.Typeflag == tar.TypeReg || header.Typeflag == 0) && strings.HasSuffix(header.Name, targetSuffix) {
 			out, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
 			if err != nil {
 				return fmt.Errorf("cannot create target file %s: %w", destPath, err)

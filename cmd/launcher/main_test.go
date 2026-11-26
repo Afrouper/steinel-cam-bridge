@@ -152,3 +152,32 @@ func TestExtractSOFromReader(t *testing.T) {
 		t.Errorf("expected '%s', got '%s'", string(dummyPayload), string(content))
 	}
 }
+
+func TestExtractSOFromReader_SkipsSymlink(t *testing.T) {
+	tmpDir := t.TempDir()
+	destPath := filepath.Join(tmpDir, "extracted.so")
+
+	var buf bytes.Buffer
+	gw := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gw)
+
+	symHeader := &tar.Header{
+		Name:     "nabto-client-sdk-releases-5.15.4/lib/linux-x86_64/libnabto_client.so",
+		Typeflag: tar.TypeSymlink,
+		Linkname: "/etc/passwd",
+		Mode:     0777,
+	}
+	if err := tw.WriteHeader(symHeader); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := extractSOFromReader(&buf, destPath, "linux-x86_64"); err == nil {
+		t.Fatalf("expected extractSOFromReader to reject symlink-only archive")
+	}
+}

@@ -490,31 +490,25 @@ func (st *Stream) sendJoinBurst(sess *gortsplib.ServerSession) {
 
 	st.video.mu.Lock()
 	burst := st.video.joinBurst(time.Now())
+	st.video.mu.Unlock()
 	if len(burst) == 0 {
-		st.video.mu.Unlock()
 		return
 	}
 	for _, pkt := range burst {
 		_ = sess.WritePacketRTP(vMedia, pkt)
 	}
 	logger.Debug("RTSP", "⚡ Instant start: sent %d cached packets to new client on '%s'", len(burst), st.pathName)
-	// The session only receives live packets once OnPlay has returned. Keep the
-	// video path blocked for that moment so no packet falls into the gap. This
-	// is on purpose and independent of the burst, which is a copy.
-	go func() {
-		time.Sleep(joinBurstSettleWindow)
-		st.video.mu.Unlock()
-	}()
 }
 
 // WriteAACFrame encodes and writes an AAC frame to all clients connected to this stream.
 func (st *Stream) WriteAACFrame(au []byte, pts time.Duration) {
 	st.mu.Lock()
 	sStream := st.serverStream
+	aMedia := st.audioMedia
 	enc := st.aacRTPEncoder
 	st.mu.Unlock()
 
-	if sStream == nil || enc == nil || len(au) == 0 || st.audioMedia == nil {
+	if sStream == nil || enc == nil || len(au) == 0 || aMedia == nil {
 		return
 	}
 
@@ -526,7 +520,7 @@ func (st *Stream) WriteAACFrame(au []byte, pts time.Duration) {
 	ts := uint32((pts * 16) / time.Millisecond)
 	for _, pkt := range pkts {
 		pkt.Timestamp = ts
-		_ = sStream.WritePacketRTP(st.audioMedia, pkt)
+		_ = sStream.WritePacketRTP(aMedia, pkt)
 	}
 }
 
@@ -534,13 +528,14 @@ func (st *Stream) WriteAACFrame(au []byte, pts time.Duration) {
 func (st *Stream) WriteAudioPacket(pkt *rtp.Packet) {
 	st.mu.RLock()
 	sStream := st.serverStream
+	aMedia := st.audioMedia
 	st.mu.RUnlock()
 
-	if sStream == nil || st.audioMedia == nil {
+	if sStream == nil || aMedia == nil {
 		return
 	}
 	pkt.PayloadType = 0
-	_ = sStream.WritePacketRTP(st.audioMedia, pkt)
+	_ = sStream.WritePacketRTP(aMedia, pkt)
 }
 
 // SetH264Parameters dynamically updates the SPS and PPS parameter sets for the H.264 video track.

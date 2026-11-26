@@ -418,7 +418,7 @@ func TestValidateDigestAuthWithReason_Diagnostics(t *testing.T) {
 	assert.Contains(t, reason, "response hash mismatch")
 	assert.Contains(t, reason, `User: "admin"`)
 	assert.Contains(t, reason, `Realm: "Steinel ONVIF Bridge"`)
-	assert.Contains(t, reason, "Server HA1:")
+	assert.NotContains(t, reason, "Server HA1:")
 	assert.Contains(t, reason, "Tested Candidates:")
 	assert.Contains(t, reason, `POST:http://192.168.88.88:8000/onvif/device_service`)
 }
@@ -463,5 +463,33 @@ func TestServer_PRE_AUTH_Exemptions(t *testing.T) {
 
 		assert.Equal(t, http.StatusUnauthorized, w.Code)
 		assert.Contains(t, w.Body.String(), "ter:NotAuthorized")
+	})
+
+	// Smuggled PRE_AUTH substring in XML comment or element text MUST NOT bypass auth
+	t.Run("BypassAttempt_PreAuthSubstringInCommentAndBody", func(t *testing.T) {
+		smuggled := `<?xml version="1.0" encoding="UTF-8"?>
+<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope" xmlns:tds="http://www.onvif.org/ver10/device/wsdl">
+  <!-- GetCapabilities -->
+  <s:Body>
+    <tds:SystemReboot><Reason>GetCapabilities</Reason></tds:SystemReboot>
+  </s:Body>
+</s:Envelope>`
+		req := httptest.NewRequest(http.MethodPost, "/onvif/device_service", strings.NewReader(smuggled))
+		req.Header.Set("SOAPAction", `"http://www.onvif.org/ver10/device/wsdl/GetCapabilities"`)
+		w := httptest.NewRecorder()
+		srv.handleSOAP(w, req)
+
+		assert.Equal(t, http.StatusUnauthorized, w.Code)
+		assert.Contains(t, w.Body.String(), "ter:NotAuthorized")
+	})
+
+	// Oversized SOAP body MUST be rejected with 413 Request Entity Too Large
+	t.Run("OversizedSOAPBodyRejected", func(t *testing.T) {
+		huge := `<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body>` + strings.Repeat("A", maxSOAPBodyBytes+64) + `</s:Body></s:Envelope>`
+		req := httptest.NewRequest(http.MethodPost, "/onvif/device_service", strings.NewReader(huge))
+		w := httptest.NewRecorder()
+		srv.handleSOAP(w, req)
+
+		assert.Equal(t, http.StatusRequestEntityTooLarge, w.Code)
 	})
 }

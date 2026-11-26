@@ -65,16 +65,16 @@ func (b *Bridge) requestDetectionSettings() {
 
 // onDetectData stores the content of a get_detect_data reply.
 func (b *Bridge) onDetectData(info map[string]interface{}) {
-	status := b.eventBus.GetStatus()
-	applyDetectData(&status, info)
-	b.eventBus.UpdateStatus(status)
+	b.eventBus.UpdateStatusFunc(func(status *events.DeviceStatus) {
+		applyDetectData(status, info)
+	})
 }
 
 // onRecordSetting stores the content of a get_record_setting reply.
 func (b *Bridge) onRecordSetting(info map[string]interface{}) {
-	status := b.eventBus.GetStatus()
-	applyRecordSetting(&status, info)
-	b.eventBus.UpdateStatus(status)
+	b.eventBus.UpdateStatusFunc(func(status *events.DeviceStatus) {
+		applyRecordSetting(status, info)
+	})
 }
 
 func applyDetectData(st *events.DeviceStatus, info map[string]interface{}) {
@@ -102,9 +102,9 @@ func (b *Bridge) SetPixelChangeDetection(on bool) error {
 	if err := b.SendCommand("tran_ctl", map[string]interface{}{"data": b64}); err != nil {
 		return err
 	}
-	status := b.eventBus.GetStatus()
-	status.PixelChangeDetection = boolToState(on)
-	b.eventBus.UpdateStatus(status)
+	b.eventBus.UpdateStatusFunc(func(status *events.DeviceStatus) {
+		status.PixelChangeDetection = boolToState(on)
+	})
 	return nil
 }
 
@@ -115,9 +115,9 @@ func (b *Bridge) SetDrawFrame(on bool) error {
 	if err := b.sendJSONCmd("set_detect_data", map[string]interface{}{"action": "draw_frame", "draw_frame": val}); err != nil {
 		return err
 	}
-	status := b.eventBus.GetStatus()
-	status.DrawFrame = val
-	b.eventBus.UpdateStatus(status)
+	b.eventBus.UpdateStatusFunc(func(status *events.DeviceStatus) {
+		status.DrawFrame = val
+	})
 	b.refreshDetectionSoon()
 	return nil
 }

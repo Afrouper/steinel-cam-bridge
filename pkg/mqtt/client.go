@@ -502,25 +502,30 @@ func (c *Client) Start(_ context.Context) error {
 		return fmt.Errorf("MQTT connection error: %w", token.Error())
 	}
 
-	// Hook into Event Bus
-	c.eventBus.Subscribe(func(evt events.EventType, data interface{}) {
-		c.mu.RLock()
-		cl := c.client
-		c.mu.RUnlock()
+	// Hook into primary Event Bus only when no explicit cameras replaced the placeholder
+	c.camerasMu.RLock()
+	_, hasPrimary := c.cameras["primary"]
+	c.camerasMu.RUnlock()
+	if hasPrimary {
+		c.eventBus.Subscribe(func(evt events.EventType, data interface{}) {
+			c.mu.RLock()
+			cl := c.client
+			c.mu.RUnlock()
 
-		if cl != nil && cl.IsConnected() {
-			switch evt {
-			case events.EventMotion:
-				if m, ok := data.(events.MotionEvent); ok {
-					c.publishMotion(m.IsMotion)
-				}
-			case events.EventDevice:
-				if st, ok := data.(events.DeviceStatus); ok {
-					c.publishStatus(st)
+			if cl != nil && cl.IsConnected() {
+				switch evt {
+				case events.EventMotion:
+					if m, ok := data.(events.MotionEvent); ok {
+						c.publishMotion(m.IsMotion)
+					}
+				case events.EventDevice:
+					if st, ok := data.(events.DeviceStatus); ok {
+						c.publishStatus(st)
+					}
 				}
 			}
-		}
-	})
+		})
+	}
 
 	return nil
 }
@@ -542,7 +547,7 @@ func (c *Client) Close() {
 		c.camerasMu.RUnlock()
 
 		for _, topic := range availTopics {
-			cl.Publish(topic, 1, true, "offline").Wait()
+			cl.Publish(topic, 1, true, "offline").WaitTimeout(2 * time.Second)
 		}
 		cl.Disconnect(250)
 	}

@@ -514,6 +514,7 @@ func (ing *RTSPIngest) runSession(ctx context.Context) error {
 					client.Close()
 					return
 				case <-ing.closeChan:
+					client.Close()
 					return
 				case <-time.After(5 * time.Second):
 					if !firstPacketReceived.Load() {
@@ -534,6 +535,7 @@ func (ing *RTSPIngest) runSession(ctx context.Context) error {
 						client.Close()
 						return
 					case <-ing.closeChan:
+						client.Close()
 						return
 					case <-ticker.C:
 						last := lastPacketTime.Load()

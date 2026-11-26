@@ -283,7 +283,7 @@ func (d *SofiaDownloader) Download(ctx context.Context, rec *storage.RecordingIt
 		if time.Now().After(deadline) {
 			logger.Warn("Xiongmai Download", "⚠️ Download timeout reached for %s (received %d packets, %d bytes)",
 				rec.ID, packetCount, demuxer.BytesWritten())
-			break
+			return fmt.Errorf("download timeout reached for %s after %v", rec.ID, downloadTimeout)
 		}
 
 		_ = conn.SetReadDeadline(time.Now().Add(20 * time.Second))
@@ -297,7 +297,7 @@ func (d *SofiaDownloader) Download(ctx context.Context, rec *storage.RecordingIt
 
 		hdr, err := DecodeHeader(hdrBuf)
 		if err != nil {
-			continue
+			return fmt.Errorf("invalid Sofia header during download of %s: %w", rec.ID, err)
 		}
 
 		// Check for EOF packet (MsgID 1423 MsgPlayEOF or zero length after packets received)
