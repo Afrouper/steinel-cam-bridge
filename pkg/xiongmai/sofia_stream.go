@@ -35,6 +35,7 @@ type SofiaStream struct {
 	client          *Client
 	rtspServer      VideoWriter
 	mediaConn       net.Conn
+	connMu          sync.Mutex
 	streamStartTime time.Time
 	lastPacketTime  atomic.Int64
 	running         atomic.Bool
@@ -333,7 +334,9 @@ func (s *SofiaStream) Start(ctx context.Context) error {
 		}
 	}
 
+	s.connMu.Lock()
 	s.mediaConn = conn
+	s.connMu.Unlock()
 	s.stopChan = make(chan struct{})
 	s.tsMu.Lock()
 	if s.streamStartTime.IsZero() {
@@ -412,12 +415,12 @@ func resyncMediaHeader(rd io.ByteReader, hdrBuf []byte) (*Header, error) {
 func (s *SofiaStream) readLoop(ctx context.Context, conn net.Conn) {
 	defer func() {
 		s.running.Store(false)
-		s.mu.Lock()
+		s.connMu.Lock()
 		if s.mediaConn == conn {
 			_ = conn.Close()
 			s.mediaConn = nil
 		}
-		s.mu.Unlock()
+		s.connMu.Unlock()
 		s.wg.Done()
 	}()
 
@@ -835,6 +838,7 @@ func (s *SofiaStream) Stop() error {
 	defer s.mu.Unlock()
 
 	if !s.running.CompareAndSwap(true, false) {
+		s.wg.Wait()
 		return nil
 	}
 
@@ -842,10 +846,12 @@ func (s *SofiaStream) Stop() error {
 		close(s.stopChan)
 	}
 
+	s.connMu.Lock()
 	if s.mediaConn != nil {
 		_ = s.mediaConn.Close()
 		s.mediaConn = nil
 	}
+	s.connMu.Unlock()
 
 	// Send encrypted OPMonitor Stop on control socket
 	if s.client != nil && s.client.IsLoggedIn() {
