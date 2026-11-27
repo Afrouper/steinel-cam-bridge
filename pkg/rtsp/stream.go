@@ -243,9 +243,8 @@ func (st *Stream) runHoldLoop(stop <-chan struct{}) {
 			st.mu.RLock()
 			sStream := st.serverStream
 			vMedia := st.videoMedia
-			vCodec := st.videoCodec
 			st.mu.RUnlock()
-			if sStream == nil || vCodec != VideoCodecH264 {
+			if sStream == nil {
 				continue
 			}
 			st.video.mu.Lock()
@@ -347,14 +346,10 @@ func (st *Stream) SetVideoCodec(codec string) bool {
 	if st.gortspServer != nil {
 		st.serverStream = gortsplib.NewServerStream(st.gortspServer, st.session)
 	}
-	st.mu.Unlock()
-
 	st.video.mu.Lock()
-	st.video.dropGOP()
-	st.video.haveSrc = false
-	st.video.holdActive = false
-	st.video.holdTimedOut = false
+	st.video.setCodec(codec, time.Now())
 	st.video.mu.Unlock()
+	st.mu.Unlock()
 
 	if oldStream != nil {
 		// Disconnects clients that negotiated the old codec; they reconnect with the new SDP.
@@ -432,31 +427,39 @@ func (st *Stream) WriteVideoPacket(pkt *rtp.Packet) {
 	st.mu.RLock()
 	sStream := st.serverStream
 	vMedia := st.videoMedia
-	vFormat := st.videoFormat
 	vCodec := st.videoCodec
 	st.mu.RUnlock()
 
-	if sStream == nil {
-		return
-	}
-
-	// The H.264 continuity pipe inspects RFC 6184 headers; bypass it for H.265 tracks.
-	if vCodec == VideoCodecH265 {
-		pkt.PayloadType = 96
-		_ = sStream.WritePacketRTP(vMedia, pkt)
+	if sStream == nil || pkt == nil || vMedia == nil {
 		return
 	}
 
 	st.video.mu.Lock()
-	defer st.video.mu.Unlock()
 	out := st.video.ingest(pkt, time.Now())
+	var (
+		vps, sps, pps []byte
+		gotParams     bool
+	)
+	if out != nil {
+		if vCodec == VideoCodecH265 {
+			vps, sps, pps, gotParams = st.video.takeH265Params()
+		} else {
+			sps, pps, gotParams = st.video.takeParams()
+		}
+	}
+	st.video.mu.Unlock()
+
 	if out == nil {
 		return
 	}
-	if sps, pps, ok := st.video.takeParams(); ok && vFormat != nil {
-		// Advertise the parameter sets in the SDP so clients can set up their
-		// decoder before the first keyframe arrives.
-		vFormat.SafeSetParams(sps, pps)
+	if gotParams {
+		// Advertise the parameter sets in the SDP so clients (Scrypted, HomeKit,
+		// Home Assistant, VLC, Frigate) can initialize their H.264/H.265 decoder immediately.
+		if vCodec == VideoCodecH265 {
+			st.SetH265Parameters(vps, sps, pps)
+		} else {
+			st.SetH264Parameters(sps, pps)
+		}
 	}
 	_ = sStream.WritePacketRTP(vMedia, out)
 }
@@ -465,16 +468,15 @@ func (st *Stream) WriteVideoPacket(pkt *rtp.Packet) {
 // about to start playing, so it can show a picture without waiting for the
 // camera's next keyframe. It must be called from within the OnPlay callback:
 // gortsplib queues the packets and flushes them right after the PLAY response.
-func (st *Stream) sendJoinBurst(sess *gortsplib.ServerSession) {
+func (st *Stream) sendJoinBurst(sess *gortsplib.ServerSession) bool {
 	if tr := sess.SetuppedTransport(); tr == nil || *tr == gortsplib.TransportUDPMulticast {
-		return
+		return false
 	}
 	st.mu.RLock()
 	vMedia := st.videoMedia
-	vCodec := st.videoCodec
 	st.mu.RUnlock()
-	if vCodec != VideoCodecH264 || vMedia == nil {
-		return
+	if vMedia == nil {
+		return false
 	}
 
 	hasVideo := false
@@ -485,19 +487,20 @@ func (st *Stream) sendJoinBurst(sess *gortsplib.ServerSession) {
 		}
 	}
 	if !hasVideo {
-		return
+		return false
 	}
 
 	st.video.mu.Lock()
 	burst := st.video.joinBurst(time.Now())
 	st.video.mu.Unlock()
 	if len(burst) == 0 {
-		return
+		return false
 	}
 	for _, pkt := range burst {
 		_ = sess.WritePacketRTP(vMedia, pkt)
 	}
 	logger.Debug("RTSP", "⚡ Instant start: sent %d cached packets to new client on '%s'", len(burst), st.pathName)
+	return true
 }
 
 // WriteAACFrame encodes and writes an AAC frame to all clients connected to this stream.
@@ -556,13 +559,16 @@ func (st *Stream) SetH264Parameters(sps, pps []byte) {
 // handlePlay tracks an active client session and triggers the OnPlay callback.
 func (st *Stream) handlePlay(path string, sess *gortsplib.ServerSession) {
 	if sess != nil {
-		if _, loaded := st.playingSessions.LoadOrStore(sess, struct{}{}); !loaded {
-			count := st.activeClients.Add(1)
-			logger.Debug("RTSP", "▶️ Client connected and playing stream (%s, active clients: %d)", path, count)
-			if count == 1 {
-				logger.Info("RTSP", "▶️ Stream active (client connected: %s)", path)
-			}
-			st.sendJoinBurst(sess)
+		if _, loaded := st.playingSessions.LoadOrStore(sess, struct{}{}); loaded {
+			return
+		}
+		count := st.activeClients.Add(1)
+		logger.Debug("RTSP", "▶️ Client connected and playing stream (%s, active clients: %d)", path, count)
+		if count == 1 {
+			logger.Info("RTSP", "▶️ Stream active (client connected: %s)", path)
+		}
+		if st.sendJoinBurst(sess) {
+			return
 		}
 	}
 

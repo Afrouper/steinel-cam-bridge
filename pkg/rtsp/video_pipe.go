@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/Afrouper/steinel-cam-bridge/pkg/h264x"
+	"github.com/Afrouper/steinel-cam-bridge/pkg/h265x"
 	"github.com/pion/rtp"
 )
 
@@ -13,31 +14,41 @@ const (
 
 	// A camera session restart is assumed when packets pause this long or the
 	// RTP sequence/timestamp jumps implausibly.
-	discontinuityGap      = 2 * time.Second
-	discontinuitySeqJump  = 3000
-	discontinuityTSJump   = 10 * videoClockRate
-	keyframeGateTimeout   = 5 * time.Second
-	maxGOPPackets         = 2500
-	maxGOPBytes           = 16 << 20
-	maxKeyUnitPackets     = 1200
-	liveWindow            = time.Second
-	holdFrameInterval     = time.Second
-	holdTickInterval      = 250 * time.Millisecond
-	joinBurstSettleWindow = 3 * time.Millisecond
+	discontinuityGap       = 2 * time.Second
+	discontinuitySeqJump   = 3000
+	discontinuityTSJump    = 10 * videoClockRate
+	keyframeGateTimeout    = 5 * time.Second
+	maxGOPPackets          = 2500
+	maxGOPBytes            = 16 << 20
+	maxKeyUnitPackets      = 1200
+	liveWindow             = time.Second
+	codecSwitchGraceWindow = 3 * time.Second
+	holdFrameInterval      = time.Second
+	holdTickInterval       = 250 * time.Millisecond
+	joinBurstSettleWindow  = 3 * time.Millisecond
 )
+
+type pipePacketInfo struct {
+	keyStart bool
+	keyFrame bool // IDR (H.264) or IRAP (H.265)
+	vps      []byte
+	sps      []byte
+	pps      []byte
+}
 
 // videoPipe sits between the camera ingest and the RTSP clients. It
 //   - rewrites SSRC / sequence numbers / timestamps so the outgoing stream stays
-//     continuous across camera session restarts,
+//     continuous across camera session restarts (both H.264 and H.265),
 //   - remembers the current group of pictures so a new viewer can be served an
 //     instantly decodable picture (instant start),
 //   - can repeat the last keyframe while the camera is away (hold last frame),
-//   - extracts SPS / PPS and the real picture size.
+//   - extracts VPS / SPS / PPS and the real picture size.
 //
 // All methods must be called with mu held unless stated otherwise.
 type videoPipe struct {
 	mu sync.Mutex
 
+	codec        string
 	instantStart bool
 	holdMax      time.Duration
 
@@ -48,49 +59,96 @@ type videoPipe struct {
 	lastOutAt  time.Time
 
 	// source tracking
-	haveSrc    bool
-	lastSrcSeq uint16
-	lastSrcTS  uint32
-	lastSrcAt  time.Time
-	seqOff     uint16
-	tsOff      uint32
+	haveSrc     bool
+	lastSrcSSRC uint32
+	lastSrcSeq  uint16
+	lastSrcTS   uint32
+	lastSrcAt   time.Time
+	seqOff      uint16
+	tsOff       uint32
 
 	// keyframe gate after a discontinuity
 	gated     bool
 	gateSince time.Time
 
 	// group-of-pictures cache (packets already rewritten for output)
-	gop          []*rtp.Packet
-	gopBytes     int
-	gopValid     bool
-	keyUnitLen   int
-	keyUnitDone  bool
-	keyUnitIDR   bool
-	holdStarted  time.Time
-	holdActive   bool
-	holdTimedOut bool // holdMax is over, wait for live video before holding again
-	holdFrames   uint64
-	joinBursts   uint64
-	restarts     uint64
-	sps, pps     []byte
-	paramsDirty  bool
-	width        int
-	height       int
-	sizeSince    time.Time
-	lastLiveAt   time.Time
-	onHoldChange func(active bool)
+	gop           []*rtp.Packet
+	gopBytes      int
+	gopValid      bool
+	keyUnitLen    int
+	keyUnitDone   bool
+	keyUnitIDR    bool
+	holdStarted   time.Time
+	holdActive    bool
+	holdTimedOut  bool // holdMax is over, wait for live video before holding again
+	holdFrames    uint64
+	joinBursts    uint64
+	restarts      uint64
+	vps           []byte
+	sps, pps      []byte
+	paramsDirty   bool
+	width         int
+	height        int
+	sizeSince     time.Time
+	lastLiveAt    time.Time
+	codecSwitchAt time.Time
+	onHoldChange  func(active bool)
 	// onHoldTimeout is called once when holding ends because holdMax is over.
 	onHoldTimeout func()
 }
 
 func newVideoPipe() *videoPipe {
-	return &videoPipe{instantStart: true}
+	return &videoPipe{
+		codec:        VideoCodecH264,
+		instantStart: true,
+	}
+}
+
+func (p *videoPipe) setCodec(codec string, now time.Time) {
+	if codec != VideoCodecH265 {
+		codec = VideoCodecH264
+	}
+	p.codec = codec
+	p.codecSwitchAt = now
+	p.dropGOP()
+	p.haveSrc = false
+	p.gated = false
+	p.gateSince = time.Time{}
+	p.holdActive = false
+	p.holdTimedOut = false
+	p.vps = nil
+	p.sps = nil
+	p.pps = nil
+	p.paramsDirty = false
+	p.width = 0
+	p.height = 0
+	p.sizeSince = time.Time{}
+}
+
+func (p *videoPipe) inspectPacket(payload []byte) pipePacketInfo {
+	if p.codec == VideoCodecH265 {
+		info := h265x.Inspect(payload)
+		return pipePacketInfo{
+			keyStart: info.KeyStart(),
+			keyFrame: info.IRAP,
+			vps:      info.VPS,
+			sps:      info.SPS,
+			pps:      info.PPS,
+		}
+	}
+	info := h264x.Inspect(payload)
+	return pipePacketInfo{
+		keyStart: info.KeyStart(),
+		keyFrame: info.IDR,
+		sps:      info.SPS,
+		pps:      info.PPS,
+	}
 }
 
 // ingest takes a packet from the camera and returns the packet to forward to
 // the clients, or nil if the packet must be dropped (keyframe gate).
 func (p *videoPipe) ingest(pkt *rtp.Packet, now time.Time) *rtp.Packet {
-	info := h264x.Inspect(pkt.Payload)
+	info := p.inspectPacket(pkt.Payload)
 	p.noteParams(info, now)
 
 	if !p.gated && p.isDiscontinuity(pkt, now) {
@@ -105,13 +163,14 @@ func (p *videoPipe) ingest(pkt *rtp.Packet, now time.Time) *rtp.Packet {
 	}
 
 	p.haveSrc = true
+	p.lastSrcSSRC = pkt.SSRC
 	p.lastSrcSeq = pkt.SequenceNumber
 	p.lastSrcTS = pkt.Timestamp
 	p.lastSrcAt = now
 
 	if p.gated {
 		switch {
-		case info.KeyStart():
+		case info.keyStart:
 		case now.Sub(p.gateSince) > keyframeGateTimeout:
 			// Never starve the clients: give up waiting and pass the stream through.
 		default:
@@ -142,7 +201,7 @@ func (p *videoPipe) ingest(pkt *rtp.Packet, now time.Time) *rtp.Packet {
 		}
 	}
 
-	p.remember(out, info)
+	p.remember(out, info, now)
 	return out
 }
 
@@ -154,7 +213,7 @@ func (p *videoPipe) isDiscontinuity(pkt *rtp.Packet, now time.Time) bool {
 		// First packet ever, or hold frames have advanced the outgoing stream.
 		return true
 	}
-	if now.Sub(p.lastSrcAt) > discontinuityGap {
+	if pkt.SSRC != p.lastSrcSSRC {
 		return true
 	}
 	if d := pkt.SequenceNumber - p.lastSrcSeq; d > discontinuitySeqJump && d < 0xFFFF-discontinuitySeqJump {
@@ -162,6 +221,17 @@ func (p *videoPipe) isDiscontinuity(pkt *rtp.Packet, now time.Time) bool {
 	}
 	d := int32(pkt.Timestamp - p.lastSrcTS)
 	if d > discontinuityTSJump || d < -discontinuityTSJump {
+		return true
+	}
+	if now.Sub(p.lastSrcAt) > discontinuityGap {
+		// Over lossless TCP (Sofia OPMonitor / RTSP interleaved), a large 1080p keyframe
+		// on a low-bitrate CBR encoder (e.g. 130 KB at 460 kbps) or brief Wi-Fi buffering
+		// can pause frame delivery for >2s without losing a single RTP packet. When SSRC,
+		// contiguous SequenceNumber, and bounded forward timestamp delta all confirm the
+		// exact same unbroken stream, keep forwarding P-frames instead of gating for 5s.
+		if pkt.SequenceNumber == p.lastSrcSeq+1 && d >= 0 {
+			return false
+		}
 		return true
 	}
 	return false
@@ -183,22 +253,35 @@ func (p *videoPipe) rebase(pkt *rtp.Packet, now time.Time) {
 	p.tsOff = nextTS - pkt.Timestamp
 }
 
-func (p *videoPipe) noteParams(info h264x.PacketInfo, now time.Time) {
-	if info.SPS != nil && !bytesEqual(info.SPS, p.sps) {
-		p.sps = info.SPS
+func (p *videoPipe) noteParams(info pipePacketInfo, now time.Time) {
+	if p.codec == VideoCodecH265 && info.vps != nil && !bytesEqual(info.vps, p.vps) {
+		p.vps = info.vps
 		p.paramsDirty = true
-		if w, h, err := h264x.ParseSize(info.SPS); err == nil && (w != p.width || h != p.height) {
+	}
+	if info.sps != nil && !bytesEqual(info.sps, p.sps) {
+		p.sps = info.sps
+		p.paramsDirty = true
+		var (
+			w, h int
+			err  error
+		)
+		if p.codec == VideoCodecH265 {
+			w, h, err = h265x.ParseSize(info.sps)
+		} else {
+			w, h, err = h264x.ParseSize(info.sps)
+		}
+		if err == nil && (w != p.width || h != p.height) {
 			p.width, p.height = w, h
 			p.sizeSince = now
 		}
 	}
-	if info.PPS != nil && !bytesEqual(info.PPS, p.pps) {
-		p.pps = info.PPS
+	if info.pps != nil && !bytesEqual(info.pps, p.pps) {
+		p.pps = info.pps
 		p.paramsDirty = true
 	}
 }
 
-// takeParams returns SPS/PPS once after they changed.
+// takeParams returns H.264 SPS/PPS once after they changed.
 func (p *videoPipe) takeParams() (sps, pps []byte, ok bool) {
 	if !p.paramsDirty || p.sps == nil || p.pps == nil {
 		return nil, nil, false
@@ -207,7 +290,17 @@ func (p *videoPipe) takeParams() (sps, pps []byte, ok bool) {
 	return p.sps, p.pps, true
 }
 
+// takeH265Params returns H.265 VPS/SPS/PPS once after they changed.
+func (p *videoPipe) takeH265Params() (vps, sps, pps []byte, ok bool) {
+	if !p.paramsDirty || p.vps == nil || p.sps == nil || p.pps == nil {
+		return nil, nil, nil, false
+	}
+	p.paramsDirty = false
+	return p.vps, p.sps, p.pps, true
+}
+
 func (p *videoPipe) dropGOP() {
+	clear(p.gop)
 	p.gop = p.gop[:0]
 	p.gopBytes = 0
 	p.gopValid = false
@@ -216,14 +309,31 @@ func (p *videoPipe) dropGOP() {
 	p.keyUnitIDR = false
 }
 
-// remember appends an outgoing packet to the GOP cache, starting a new cache
-// at every keyframe.
-func (p *videoPipe) remember(out *rtp.Packet, info h264x.PacketInfo) {
-	if info.KeyStart() && (!p.gopValid || p.keyUnitDone) {
+// remember appends an outgoing packet to the GOP cache when instantStart,
+// post-codec-switch grace, or hold-last-frame requires it.
+func (p *videoPipe) remember(out *rtp.Packet, info pipePacketInfo, now time.Time) {
+	inCodecSwitchGrace := !p.codecSwitchAt.IsZero() && now.Sub(p.codecSwitchAt) <= codecSwitchGraceWindow
+	needFullGOP := p.instantStart || inCodecSwitchGrace
+	needKeyUnitOnly := !needFullGOP && p.holdMax > 0
+
+	if !needFullGOP && !needKeyUnitOnly {
+		if len(p.gop) > 0 {
+			p.dropGOP()
+			p.gop = nil
+		}
+		return
+	}
+
+	if info.keyStart && (!p.gopValid || p.keyUnitDone) {
 		p.dropGOP()
 		p.gopValid = true
 	}
 	if !p.gopValid {
+		return
+	}
+	if needKeyUnitOnly && p.keyUnitDone {
+		// Hold-last-frame only replays the key unit; skip trailing P-frames and mark
+		// the cache non-contiguous so only holdFrame uses it.
 		return
 	}
 
@@ -231,12 +341,15 @@ func (p *videoPipe) remember(out *rtp.Packet, info h264x.PacketInfo) {
 	p.gopBytes += len(out.Payload)
 
 	if !p.keyUnitDone {
-		if info.IDR {
+		if info.keyFrame {
 			p.keyUnitIDR = true
 		}
 		if p.keyUnitIDR && out.Marker {
 			p.keyUnitDone = true
 			p.keyUnitLen = len(p.gop)
+			if needKeyUnitOnly {
+				p.gopValid = false
+			}
 		} else if len(p.gop) > maxKeyUnitPackets {
 			p.dropGOP()
 			return
@@ -260,13 +373,18 @@ func (p *videoPipe) remember(out *rtp.Packet, info h264x.PacketInfo) {
 
 // joinBurst returns the packets a freshly joined viewer needs to decode a
 // picture immediately, or nil if the stream is not live right now.
+// Even when instantStart is disabled, a one-shot grace burst is granted right
+// after SetVideoCodec replaced the RTSP ServerStream so the client forced to
+// reconnect does not wait a full GOP for the camera's second keyframe.
 func (p *videoPipe) joinBurst(now time.Time) []*rtp.Packet {
-	if !p.instantStart || !p.gopValid || !p.keyUnitDone || len(p.gop) == 0 {
+	inCodecSwitchGrace := !p.codecSwitchAt.IsZero() && now.Sub(p.codecSwitchAt) <= codecSwitchGraceWindow
+	if (!p.instantStart && !inCodecSwitchGrace) || !p.gopValid || !p.keyUnitDone || len(p.gop) == 0 {
 		return nil
 	}
 	if now.Sub(p.lastLiveAt) > liveWindow {
 		return nil
 	}
+	p.codecSwitchAt = time.Time{}
 	p.joinBursts++
 	// A copy of the slice, so the caller does not depend on mu while it sends.
 	return append([]*rtp.Packet(nil), p.gop...)
