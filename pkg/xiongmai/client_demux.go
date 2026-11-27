@@ -94,7 +94,7 @@ func newControlDemux(client *Client, conn net.Conn) *controlDemux {
 func (c *Client) attachDemuxLocked(conn net.Conn) *controlDemux {
 	rawConn := unwrapDemuxConn(conn)
 	if c.demux != nil && c.demux.conn != rawConn {
-		c.demux.shutdown()
+		_ = c.demux.shutdown()
 	}
 	d := newControlDemux(c, rawConn)
 	c.demux = d
@@ -109,7 +109,7 @@ func (c *Client) ensureDemuxLocked() (*controlDemux, error) {
 	rawConn := unwrapDemuxConn(c.conn)
 	if c.demux == nil || c.demux.conn != rawConn {
 		if c.demux != nil {
-			c.demux.shutdown()
+			_ = c.demux.shutdown()
 		}
 		d := newControlDemux(c, rawConn)
 		c.demux = d
