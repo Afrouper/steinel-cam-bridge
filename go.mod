@@ -13,7 +13,7 @@ require (
 	github.com/pion/webrtc/v4 v4.2.26
 	github.com/stretchr/testify v1.12.1
 	github.com/zaf/g711 v1.4.0
-	golang.org/x/time v0.14.0
+	golang.org/x/time v0.16.0
 )
 
 require (
