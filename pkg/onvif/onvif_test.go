@@ -1015,9 +1015,9 @@ func TestMediaHandler_DynamicVideoCodec(t *testing.T) {
 		opts, err = mh.Handle("GetVideoEncoderConfigurationOptions", reqOptions, "192.168.1.50:8000")
 		must.NoError(err)
 		assertValidXML(t, opts)
+		is.Contains(opts, "<tt:H264>", "H.264 options must always remain advertised for NVR / Scrypted compatibility")
 		is.Contains(opts, "<tt:H265>")
 		is.Contains(opts, "<tt:H265ProfilesSupported>Main</tt:H265ProfilesSupported>")
-		is.NotContains(opts, "<tt:H264>")
 	})
 
 	t.Run("multi-camera channels report independent codecs including prefix-similar paths", func(t *testing.T) {
@@ -1083,31 +1083,29 @@ func TestMediaHandler_DynamicVideoCodec(t *testing.T) {
 		optsTests := []struct {
 			name        string
 			reqXML      string
-			wantBlock   string
+			wantBlocks  []string
 			forbidBlock string
 		}{
 			{
 				name:        "profile token cam selects h264",
 				reqXML:      `<trt:GetVideoEncoderConfigurationOptions><trt:ProfileToken>Profile_cam_Main</trt:ProfileToken></trt:GetVideoEncoderConfigurationOptions>`,
-				wantBlock:   "<tt:H264>",
+				wantBlocks:  []string{"<tt:H264>"},
 				forbidBlock: "<tt:H265>",
 			},
 			{
-				name:        "profile token cam2 selects h265 despite cam prefix",
-				reqXML:      `<trt:GetVideoEncoderConfigurationOptions><trt:ProfileToken>Profile_cam2_Main</trt:ProfileToken></trt:GetVideoEncoderConfigurationOptions>`,
-				wantBlock:   "<tt:H265>",
-				forbidBlock: "<tt:H264>",
+				name:       "profile token cam2 advertises both h264 and h265 despite cam prefix",
+				reqXML:     `<trt:GetVideoEncoderConfigurationOptions><trt:ProfileToken>Profile_cam2_Main</trt:ProfileToken></trt:GetVideoEncoderConfigurationOptions>`,
+				wantBlocks: []string{"<tt:H264>", "<tt:H265>"},
 			},
 			{
-				name:        "config token cam2 selects h265",
-				reqXML:      `<trt:GetVideoEncoderConfigurationOptions><trt:ConfigurationToken>VideoEncoderConfig_cam2_Main</trt:ConfigurationToken></trt:GetVideoEncoderConfigurationOptions>`,
-				wantBlock:   "<tt:H265>",
-				forbidBlock: "<tt:H264>",
+				name:       "config token cam2 advertises both h264 and h265",
+				reqXML:     `<trt:GetVideoEncoderConfigurationOptions><trt:ConfigurationToken>VideoEncoderConfig_cam2_Main</trt:ConfigurationToken></trt:GetVideoEncoderConfigurationOptions>`,
+				wantBlocks: []string{"<tt:H264>", "<tt:H265>"},
 			},
 			{
 				name:        "config token VideoEncoderConfig_Main falls back to primary h264",
 				reqXML:      `<trt:GetVideoEncoderConfigurationOptions><trt:ConfigurationToken>VideoEncoderConfig_Main</trt:ConfigurationToken></trt:GetVideoEncoderConfigurationOptions>`,
-				wantBlock:   "<tt:H264>",
+				wantBlocks:  []string{"<tt:H264>"},
 				forbidBlock: "<tt:H265>",
 			},
 		}
@@ -1121,9 +1119,92 @@ func TestMediaHandler_DynamicVideoCodec(t *testing.T) {
 				resp, err := mh.Handle("GetVideoEncoderConfigurationOptions", tt.reqXML, "192.168.1.50:8000")
 				subMust.NoError(err)
 				assertValidXML(t, resp)
-				subIs.Contains(resp, tt.wantBlock)
-				subIs.NotContains(resp, tt.forbidBlock)
+				for _, want := range tt.wantBlocks {
+					subIs.Contains(resp, want)
+				}
+				if tt.forbidBlock != "" {
+					subIs.NotContains(resp, tt.forbidBlock)
+				}
 			})
 		}
 	})
+}
+
+func TestMediaHandler_ScryptedAutoconfigureAndOSDs(t *testing.T) {
+	t.Parallel()
+	is := assert.New(t)
+	must := require.New(t)
+
+	bus := events.NewBus()
+	var appliedResolutions []string
+	changeRes := func(res string) error {
+		appliedResolutions = append(appliedResolutions, res)
+		return nil
+	}
+
+	mh := NewMediaHandler(8554, "steinel", "aac", 8000, changeRes, bus)
+	mh.SetChannels([]CameraChannel{
+		{
+			Index:          1,
+			Name:           "Einfahrt",
+			Path:           "steinel",
+			AudioCodec:     "aac",
+			Resolution:     "1080p",
+			VideoCodecFunc: func() string { return "h265" },
+			ChangeResFunc:  changeRes,
+			EventBus:       bus,
+		},
+	})
+
+	// 1. GetServiceCapabilities (called by Scrypted canConfigureEncoding)
+	caps, err := mh.Handle("", `<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body><GetServiceCapabilities xmlns="http://www.onvif.org/ver10/media/wsdl" /></s:Body></s:Envelope>`, "127.0.0.1:8000")
+	must.NoError(err)
+	assertValidXML(t, caps)
+	is.Contains(caps, "<trt:ProfileCapabilities")
+
+	// 2. node-onvif SetVideoEncoderConfiguration uses spaces around '=' in token = "..."
+	setMainXML := `<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body><SetVideoEncoderConfiguration xmlns="http://www.onvif.org/ver10/media/wsdl"><Configuration token = "VideoEncoderConfig_Main"><Resolution xmlns="http://www.onvif.org/ver10/schema"><Width>1920</Width><Height>1080</Height></Resolution></Configuration><ForcePersistence>true</ForcePersistence></SetVideoEncoderConfiguration></s:Body></s:Envelope>`
+	setMainResp, err := mh.Handle("", setMainXML, "127.0.0.1:8000")
+	must.NoError(err)
+	assertValidXML(t, setMainResp)
+	is.Contains(setMainResp, "SetVideoEncoderConfigurationResponse")
+
+	// 3. Subsequent Profile_Sub autoconfigure pass (640x360) must NOT clobber 1080p main stream
+	setSubXML := `<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body><SetVideoEncoderConfiguration xmlns="http://www.onvif.org/ver10/media/wsdl"><Configuration token = "VideoEncoderConfig_Sub"><Resolution xmlns="http://www.onvif.org/ver10/schema"><Width>640</Width><Height>360</Height></Resolution></Configuration><ForcePersistence>true</ForcePersistence></SetVideoEncoderConfiguration></s:Body></s:Envelope>`
+	setSubResp, err := mh.Handle("", setSubXML, "127.0.0.1:8000")
+	must.NoError(err)
+	assertValidXML(t, setSubResp)
+	is.Equal([]string{"1080p"}, appliedResolutions, "Profile_Sub SetVideoEncoderConfiguration must not downgrade main stream to 360p")
+	is.Equal("1080p", bus.GetStatus().Resolution)
+
+	// 4. GetVideoEncoderConfiguration (follow-up readback by node-onvif after SetVideoEncoderConfiguration)
+	getVecMain, err := mh.Handle("", `<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body><GetVideoEncoderConfiguration xmlns="http://www.onvif.org/ver10/media/wsdl"><ConfigurationToken>VideoEncoderConfig_Main</ConfigurationToken></GetVideoEncoderConfiguration></s:Body></s:Envelope>`, "127.0.0.1:8000")
+	must.NoError(err)
+	assertValidXML(t, getVecMain)
+	is.Contains(getVecMain, `<trt:Configuration token="VideoEncoderConfig_Main">`)
+	is.Contains(getVecMain, "<tt:Width>1920</tt:Width>")
+
+	getVecSub, err := mh.Handle("", `<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body><GetVideoEncoderConfiguration xmlns="http://www.onvif.org/ver10/media/wsdl"><ConfigurationToken>VideoEncoderConfig_Sub</ConfigurationToken></GetVideoEncoderConfiguration></s:Body></s:Envelope>`, "127.0.0.1:8000")
+	must.NoError(err)
+	assertValidXML(t, getVecSub)
+	is.Contains(getVecSub, `<trt:Configuration token="VideoEncoderConfig_Sub">`)
+	is.Contains(getVecSub, "<tt:Width>640</tt:Width>")
+
+	// 5. SetAudioEncoderConfiguration + GetAudioEncoderConfiguration (called by Scrypted autoconfigureCodecs)
+	setAecResp, err := mh.Handle("", `<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body><SetAudioEncoderConfiguration xmlns="http://www.onvif.org/ver10/media/wsdl"><Configuration token = "AudioEncoderConfig_1"><Encoding xmlns="http://www.onvif.org/ver10/schema">G711</Encoding></Configuration></SetAudioEncoderConfiguration></s:Body></s:Envelope>`, "127.0.0.1:8000")
+	must.NoError(err)
+	assertValidXML(t, setAecResp)
+	is.Contains(setAecResp, "SetAudioEncoderConfigurationResponse")
+
+	getAecResp, err := mh.Handle("", `<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body><GetAudioEncoderConfiguration xmlns="http://www.onvif.org/ver10/media/wsdl"><ConfigurationToken>AudioEncoderConfig_1</ConfigurationToken></GetAudioEncoderConfiguration></s:Body></s:Envelope>`, "127.0.0.1:8000")
+	must.NoError(err)
+	assertValidXML(t, getAecResp)
+	is.Contains(getAecResp, `<trt:Configuration token="AudioEncoderConfig_1">`)
+
+	// 6. GetOSDs (called by Scrypted getVideoTextOverlays)
+	osdsResp, err := mh.Handle("", `<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body><GetOSDs xmlns="http://www.onvif.org/ver10/media/wsdl" ></GetOSDs></s:Body></s:Envelope>`, "127.0.0.1:8000")
+	must.NoError(err)
+	assertValidXML(t, osdsResp)
+	is.Contains(osdsResp, `<trt:OSDs token="OSD_1">`)
+	is.Contains(osdsResp, "<tt:Type>DateAndTime</tt:Type>")
 }

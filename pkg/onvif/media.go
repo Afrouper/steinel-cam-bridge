@@ -130,57 +130,124 @@ func extractXMLTag(xmlStr, tag string) string {
 }
 
 func extractXMLAttr(xmlStr, tag, attr string) string {
-	pattern := fmt.Sprintf(`(?i)<(?:[a-zA-Z0-9_\-]+:)?%s(?:\s+[^>]*?)?\s+%s="([^"]+)"`, tag, attr)
-	if re, err := regexp.Compile(pattern); err == nil {
-		if match := re.FindStringSubmatch(xmlStr); len(match) > 1 {
-			return strings.TrimSpace(match[1])
-		}
+	re := getXMLAttrRegex(tag, attr)
+	if match := re.FindStringSubmatch(xmlStr); len(match) > 1 {
+		return strings.TrimSpace(match[1])
 	}
 	return ""
 }
 
+func getXMLAttrRegex(tag, attr string) *regexp.Regexp {
+	key := tag + "\x00" + attr
+	xmlTagRegexCacheMu.RLock()
+	re, ok := xmlTagRegexCache[key]
+	xmlTagRegexCacheMu.RUnlock()
+	if ok {
+		return re
+	}
+
+	xmlTagRegexCacheMu.Lock()
+	defer xmlTagRegexCacheMu.Unlock()
+	if re, ok = xmlTagRegexCache[key]; ok {
+		return re
+	}
+	pattern := fmt.Sprintf(`(?i)<(?:[a-zA-Z0-9_\-]+:)?%s(?:\s+[^>]*?)?\s+%s\s*=\s*"([^"]+)"`, tag, attr)
+	re = regexp.MustCompile(pattern)
+	xmlTagRegexCache[key] = re
+	return re
+}
+
 func (h *MediaHandler) Handle(action string, reqXML string, host string) (string, error) {
-	if strings.Contains(action, "GetProfiles") || strings.Contains(reqXML, "GetProfiles") {
+	op := extractSOAPOperation(reqXML)
+	if op == "" {
+		op = extractActionName(action)
+	}
+
+	switch op {
+	case "GetServiceCapabilities":
+		return h.getServiceCapabilities(), nil
+	case "GetProfiles":
 		return h.getProfiles(), nil
-	}
-	if strings.Contains(action, "GetProfile") || strings.Contains(reqXML, "GetProfile") {
+	case "GetProfile":
 		return h.getProfile(reqXML), nil
-	}
-	if strings.Contains(action, "GetStreamUri") || strings.Contains(reqXML, "GetStreamUri") {
+	case "GetStreamUri":
 		return h.getStreamUri(host, reqXML), nil
-	}
-	if strings.Contains(action, "GetSnapshotUri") || strings.Contains(reqXML, "GetSnapshotUri") {
+	case "GetSnapshotUri":
 		return h.getSnapshotUri(host, reqXML), nil
-	}
-	if strings.Contains(action, "GetVideoSourceConfigurations") || strings.Contains(reqXML, "GetVideoSourceConfigurations") ||
-		strings.Contains(action, "GetVideoSourceConfiguration") || strings.Contains(reqXML, "GetVideoSourceConfiguration") {
-		return h.getVideoSourceConfigurations(), nil
-	}
-	if strings.Contains(action, "GetAudioSourceConfigurations") || strings.Contains(reqXML, "GetAudioSourceConfigurations") ||
-		strings.Contains(action, "GetAudioSourceConfiguration") || strings.Contains(reqXML, "GetAudioSourceConfiguration") {
-		return h.getAudioSourceConfigurations(), nil
-	}
-	if strings.Contains(action, "GetAudioOutputConfigurations") || strings.Contains(reqXML, "GetAudioOutputConfigurations") ||
-		strings.Contains(action, "GetAudioOutputConfiguration") || strings.Contains(reqXML, "GetAudioOutputConfiguration") {
-		return h.getAudioOutputConfigurations(), nil
-	}
-	if strings.Contains(action, "GetVideoEncoderConfigurationOptions") || strings.Contains(reqXML, "GetVideoEncoderConfigurationOptions") {
-		return h.getVideoEncoderConfigurationOptions(reqXML), nil
-	}
-	if strings.Contains(action, "SetVideoEncoderConfiguration") || strings.Contains(reqXML, "SetVideoEncoderConfiguration") {
-		return h.setVideoEncoderConfiguration(reqXML), nil
-	}
-	if strings.Contains(action, "GetAudioSources") || strings.Contains(reqXML, "GetAudioSources") {
-		return h.getAudioSources(), nil
-	}
-	if strings.Contains(action, "GetAudioOutputs") || strings.Contains(reqXML, "GetAudioOutputs") {
-		return h.getAudioOutputs(), nil
-	}
-	if strings.Contains(action, "GetAudioEncoderConfigurationOptions") || strings.Contains(reqXML, "GetAudioEncoderConfigurationOptions") {
-		return h.getAudioEncoderConfigurationOptions(), nil
-	}
-	if strings.Contains(action, "GetVideoSources") || strings.Contains(reqXML, "GetVideoSources") {
+	case "GetVideoSources":
 		return h.getVideoSources(), nil
+	case "GetVideoSourceConfigurations", "GetVideoSourceConfiguration":
+		return h.getVideoSourceConfigurations(), nil
+	case "GetVideoEncoderConfigurationOptions":
+		return h.getVideoEncoderConfigurationOptions(reqXML), nil
+	case "GetVideoEncoderConfigurations":
+		return h.getVideoEncoderConfigurations(), nil
+	case "GetVideoEncoderConfiguration":
+		return h.getVideoEncoderConfiguration(reqXML), nil
+	case "SetVideoEncoderConfiguration":
+		return h.setVideoEncoderConfiguration(reqXML), nil
+	case "GetAudioSources":
+		return h.getAudioSources(), nil
+	case "GetAudioSourceConfigurations", "GetAudioSourceConfiguration":
+		return h.getAudioSourceConfigurations(), nil
+	case "GetAudioEncoderConfigurationOptions":
+		return h.getAudioEncoderConfigurationOptions(), nil
+	case "GetAudioEncoderConfigurations":
+		return h.getAudioEncoderConfigurations(), nil
+	case "GetAudioEncoderConfiguration":
+		return h.getAudioEncoderConfiguration(reqXML), nil
+	case "SetAudioEncoderConfiguration":
+		return h.setAudioEncoderConfiguration(reqXML), nil
+	case "GetAudioOutputs":
+		return h.getAudioOutputs(), nil
+	case "GetAudioOutputConfigurations", "GetAudioOutputConfiguration":
+		return h.getAudioOutputConfigurations(), nil
+	case "GetOSDs":
+		return h.getOSDs(reqXML), nil
+	}
+
+	// Substring fallback for bare action names when reqXML is empty (e.g. unit tests).
+	switch {
+	case strings.Contains(action, "GetServiceCapabilities"):
+		return h.getServiceCapabilities(), nil
+	case strings.Contains(action, "GetProfiles"):
+		return h.getProfiles(), nil
+	case strings.Contains(action, "GetProfile"):
+		return h.getProfile(reqXML), nil
+	case strings.Contains(action, "GetStreamUri"):
+		return h.getStreamUri(host, reqXML), nil
+	case strings.Contains(action, "GetSnapshotUri"):
+		return h.getSnapshotUri(host, reqXML), nil
+	case strings.Contains(action, "GetVideoSourceConfiguration"):
+		return h.getVideoSourceConfigurations(), nil
+	case strings.Contains(action, "GetAudioSourceConfiguration"):
+		return h.getAudioSourceConfigurations(), nil
+	case strings.Contains(action, "GetAudioOutputConfiguration"):
+		return h.getAudioOutputConfigurations(), nil
+	case strings.Contains(action, "GetVideoEncoderConfigurationOptions"):
+		return h.getVideoEncoderConfigurationOptions(reqXML), nil
+	case strings.Contains(action, "GetVideoEncoderConfigurations"):
+		return h.getVideoEncoderConfigurations(), nil
+	case strings.Contains(action, "GetVideoEncoderConfiguration"):
+		return h.getVideoEncoderConfiguration(reqXML), nil
+	case strings.Contains(action, "SetVideoEncoderConfiguration"):
+		return h.setVideoEncoderConfiguration(reqXML), nil
+	case strings.Contains(action, "GetAudioSources"):
+		return h.getAudioSources(), nil
+	case strings.Contains(action, "GetAudioOutputs"):
+		return h.getAudioOutputs(), nil
+	case strings.Contains(action, "GetAudioEncoderConfigurationOptions"):
+		return h.getAudioEncoderConfigurationOptions(), nil
+	case strings.Contains(action, "GetAudioEncoderConfigurations"):
+		return h.getAudioEncoderConfigurations(), nil
+	case strings.Contains(action, "GetAudioEncoderConfiguration"):
+		return h.getAudioEncoderConfiguration(reqXML), nil
+	case strings.Contains(action, "SetAudioEncoderConfiguration"):
+		return h.setAudioEncoderConfiguration(reqXML), nil
+	case strings.Contains(action, "GetVideoSources"):
+		return h.getVideoSources(), nil
+	case strings.Contains(action, "GetOSDs"):
+		return h.getOSDs(reqXML), nil
 	}
 	return `<trt:UnknownActionResponse xmlns:trt="http://www.onvif.org/ver10/media/wsdl"/>`, nil
 }
@@ -539,39 +606,58 @@ func (h *MediaHandler) getVideoEncoderConfigurationOptions(reqXML string) string
 	configToken := extractXMLTag(reqXML, "ConfigurationToken")
 	targetCh := h.resolveChannelForTokens(profileToken, configToken, reqXML)
 
-	codecTag := "H264"
-	profilesXML := `<tt:H264ProfilesSupported>High</tt:H264ProfilesSupported>
-      <tt:H264ProfilesSupported>Main</tt:H264ProfilesSupported>
-      <tt:H264ProfilesSupported>Baseline</tt:H264ProfilesSupported>`
+	// Always retain <tt:H264> options even when the active camera stream is H.265:
+	// ONVIF Media v10 clients such as Scrypted (@scrypted/onvif) read resolutionsAvailable,
+	// frameRateRange, and govLengthRange from options.H264 during codec autoconfiguration.
+	const commonRangesXML = `      <tt:ResolutionsAvailable><tt:Width>1920</tt:Width><tt:Height>1080</tt:Height></tt:ResolutionsAvailable>
+      <tt:ResolutionsAvailable><tt:Width>1280</tt:Width><tt:Height>720</tt:Height></tt:ResolutionsAvailable>
+      <tt:ResolutionsAvailable><tt:Width>640</tt:Width><tt:Height>360</tt:Height></tt:ResolutionsAvailable>
+      <tt:GovLengthRange><tt:Min>15</tt:Min><tt:Max>60</tt:Max></tt:GovLengthRange>
+      <tt:FrameRateRange><tt:Min>1</tt:Min><tt:Max>15</tt:Max></tt:FrameRateRange>`
+
+	h265Block := ""
 	if resolveChannelVideoCodec(targetCh) == videoCodecH265 {
-		codecTag = "H265"
-		profilesXML = `<tt:H265ProfilesSupported>Main</tt:H265ProfilesSupported>`
+		h265Block = fmt.Sprintf(`
+    <tt:H265>
+%s
+      <tt:H265ProfilesSupported>Main</tt:H265ProfilesSupported>
+    </tt:H265>`, commonRangesXML)
 	}
 
 	return fmt.Sprintf(`<trt:GetVideoEncoderConfigurationOptionsResponse xmlns:trt="%s" xmlns:tt="%s">
   <trt:Options>
     <tt:QualityRange><tt:Min>1</tt:Min><tt:Max>5</tt:Max></tt:QualityRange>
-    <tt:%s>
-      <tt:ResolutionsAvailable><tt:Width>1920</tt:Width><tt:Height>1080</tt:Height></tt:ResolutionsAvailable>
-      <tt:ResolutionsAvailable><tt:Width>1280</tt:Width><tt:Height>720</tt:Height></tt:ResolutionsAvailable>
-      <tt:ResolutionsAvailable><tt:Width>640</tt:Width><tt:Height>360</tt:Height></tt:ResolutionsAvailable>
-      <tt:GovLengthRange><tt:Min>15</tt:Min><tt:Max>60</tt:Max></tt:GovLengthRange>
-      <tt:FrameRateRange><tt:Min>1</tt:Min><tt:Max>15</tt:Max></tt:FrameRateRange>
-      %s
-    </tt:%s>
+    <tt:H264>
+%s
+      <tt:H264ProfilesSupported>High</tt:H264ProfilesSupported>
+      <tt:H264ProfilesSupported>Main</tt:H264ProfilesSupported>
+      <tt:H264ProfilesSupported>Baseline</tt:H264ProfilesSupported>
+    </tt:H264>%s
   </trt:Options>
-</trt:GetVideoEncoderConfigurationOptionsResponse>`, NS_TRT, NS_TT, codecTag, profilesXML, codecTag)
+</trt:GetVideoEncoderConfigurationOptionsResponse>`, NS_TRT, NS_TT, commonRangesXML, h265Block)
 }
+
+var xmlWidthTagRe = regexp.MustCompile(`<(?:\w+:)?Width>\s*(\d+)\s*</(?:\w+:)?Width>`)
 
 func (h *MediaHandler) setVideoEncoderConfiguration(reqXML string) string {
 	targetRes := "1080p"
-	if strings.Contains(reqXML, "<Width>1280</Width>") || strings.Contains(reqXML, "<Width>720</Width>") {
-		targetRes = "720p"
-	} else if strings.Contains(reqXML, "<Width>640</Width>") || strings.Contains(reqXML, "<Width>360</Width>") {
-		targetRes = "360p"
+	if m := xmlWidthTagRe.FindStringSubmatch(reqXML); len(m) == 2 {
+		switch m[1] {
+		case "1280", "720":
+			targetRes = "720p"
+		case "640", "360", "704":
+			targetRes = "360p"
+		}
 	}
 
 	token := extractXMLAttr(reqXML, "Configuration", "token")
+	if isSubProfileOrConfigToken(token) {
+		// Dedicated sub-stream profiles (Profile_Sub / VideoEncoderConfig_Sub) are already
+		// fixed at 360p. Acknowledge without overwriting the camera's Main stream resolution
+		// (prevents Scrypted's autoconfigureCodecs pass on Profile_Sub from clobbering 1080p).
+		logger.Debug("ONVIF", "ℹ️ Received SetVideoEncoderConfiguration for sub-stream token '%s' (%s) -> keeping main stream resolution intact", token, targetRes)
+		return fmt.Sprintf(`<trt:SetVideoEncoderConfigurationResponse xmlns:trt="%s"/>`, NS_TRT)
+	}
 	logger.Info("ONVIF", "🔄 Received SetVideoEncoderConfiguration -> applying %s (token: %s)", targetRes, token)
 
 	targetCh := h.resolveChannelForTokens("", token, reqXML)

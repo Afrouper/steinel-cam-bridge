@@ -1,6 +1,7 @@
 package xiongmai
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
@@ -75,7 +76,7 @@ func TestSofiaStreamLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = l.Close() }()
 
-	port := l.Addr().(*net.TCPAddr).Port
+	port := mustTCPPort(t, l)
 
 	var claimReceived atomic.Bool
 	var startReceived atomic.Bool
@@ -283,7 +284,7 @@ func TestSofiaStreamLifecycle(t *testing.T) {
 
 	// 1. Establish control client connection
 	client := NewClient("127.0.0.1", port, "admin", "testpwd")
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	err = client.Connect(ctx)
@@ -417,7 +418,7 @@ func TestSofiaStreamLifecycle_EncryptedAES(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = l.Close() }()
 
-	port := l.Addr().(*net.TCPAddr).Port
+	port := mustTCPPort(t, l)
 
 	var capturedCommKey []byte
 	var claimReceived atomic.Bool
@@ -645,7 +646,7 @@ func TestSofiaStreamLifecycle_EncryptedAES(t *testing.T) {
 	}()
 
 	client := NewClient("127.0.0.1", port, "admin", "testpwd")
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	err = client.Connect(ctx)
@@ -910,4 +911,1027 @@ func TestSofiaStream_AudioSurvivesOnDemandStop(t *testing.T) {
 	frames := writer.aacFrames
 	writer.mu.Unlock()
 	assert.Greater(t, frames, 0, "AAC audio transcoder must remain functional across on-demand Stop() cycles")
+}
+
+func buildTestH264IFramePacket(sessionID, seq uint32) []byte {
+	spsNalu := []byte{0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0x00, 0x1f, 0x96, 0x35, 0x40}
+	ppsNalu := []byte{0x00, 0x00, 0x00, 0x01, 0x68, 0xce, 0x3c, 0x80}
+	idrNalu := []byte{0x00, 0x00, 0x00, 0x01, 0x65, 0x88, 0x84, 0x00, 0x10, 0xff}
+
+	var iFrameData []byte
+	iFrameData = append(iFrameData, spsNalu...)
+	iFrameData = append(iFrameData, ppsNalu...)
+	iFrameData = append(iFrameData, idrNalu...)
+
+	var iFramePayload []byte
+	iFramePayload = append(iFramePayload, MarkerIFrame...)
+	iFramePayload = append(iFramePayload, make([]byte, 12)...)
+	binary.LittleEndian.PutUint32(iFramePayload[12:16], uint32(len(iFrameData)))
+	iFramePayload = append(iFramePayload, iFrameData...)
+
+	hdr := Header{
+		Magic:      HeaderMagic,
+		Channel:    1,
+		SessionID:  sessionID,
+		Sequence:   seq,
+		MsgID:      MsgMonitorData,
+		DataLength: uint32(len(iFramePayload)),
+	}
+	return append(hdr.Encode(), iFramePayload...)
+}
+
+type recordingOnDemandRTSPServer struct {
+	mockOnDemandRTSPServer
+	videoPackets atomic.Int64
+}
+
+func (m *recordingOnDemandRTSPServer) WriteVideoPacket(_ *rtp.Packet) {
+	m.videoPackets.Add(1)
+}
+
+func mustTCPPort(t *testing.T, l net.Listener) int {
+	t.Helper()
+	tcpAddr, ok := l.Addr().(*net.TCPAddr)
+	require.True(t, ok)
+	return tcpAddr.Port
+}
+
+func TestSofiaStream_ReadLoopExitClearsRunningAndAllowsRestart(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer func() { _ = l.Close() }()
+
+	port := mustTCPPort(t, l)
+
+	var claimCount atomic.Int32
+	var startCount atomic.Int32
+	var stopCount atomic.Int32
+	var mediaMu sync.Mutex
+	var latestMediaConn net.Conn
+
+	go func() {
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer func() { _ = c.Close() }()
+				hdrBuf := make([]byte, HeaderLength)
+				for {
+					if _, err := io.ReadFull(c, hdrBuf); err != nil {
+						return
+					}
+					hdr, err := DecodeHeader(hdrBuf)
+					if err != nil {
+						return
+					}
+					payload := make([]byte, hdr.DataLength)
+					if _, err := io.ReadFull(c, payload); err != nil {
+						return
+					}
+					cleanPayload := strings.TrimRight(string(payload), "\x00\r\n ")
+
+					switch hdr.MsgID {
+					case MsgLoginReq:
+						respData, _ := json.Marshal(LoginResp{
+							Name:          "OPUserLogin",
+							Ret:           100,
+							SessionID:     "0x0000007b",
+							AliveInterval: 20,
+							DeviceType:    "IPC",
+						})
+						respTerm := append(respData, 0x00)
+						rHdr := Header{Magic: HeaderMagic, SessionID: 0x7b, Sequence: hdr.Sequence, MsgID: MsgLoginResp, DataLength: uint32(len(respTerm))}
+						_, _ = c.Write(append(rHdr.Encode(), respTerm...))
+
+					case MsgMonitorClaimReq:
+						if strings.Contains(cleanPayload, `"Action1":"Start"`) {
+							claimCount.Add(1)
+							mediaMu.Lock()
+							latestMediaConn = c
+							mediaMu.Unlock()
+						}
+
+						respTerm := []byte(`{"Name":"OPMonitor","Ret":100}` + "\x00")
+						rHdr := Header{Magic: HeaderMagic, SessionID: 0x7b, Sequence: hdr.Sequence, MsgID: MsgMonitorClaimResp, DataLength: uint32(len(respTerm))}
+						_, _ = c.Write(append(rHdr.Encode(), respTerm...))
+
+					case MsgMonitorStartReq:
+						isStop := strings.Contains(cleanPayload, `"Action":"Stop"`)
+						isStart := strings.Contains(cleanPayload, `"Action":"Start"`)
+						if isStop {
+							stopCount.Add(1)
+						}
+
+						respTerm := []byte(`{"Name":"OPMonitor","Ret":100}` + "\x00")
+						rHdr := Header{Magic: HeaderMagic, Channel: hdr.Channel, SessionID: 0x7b, Sequence: hdr.Sequence, MsgID: MsgMonitorStartResp, DataLength: uint32(len(respTerm))}
+						_, _ = c.Write(append(rHdr.Encode(), respTerm...))
+
+						if isStart {
+							sessionNum := startCount.Add(1)
+							mediaMu.Lock()
+							mConn := latestMediaConn
+							mediaMu.Unlock()
+							if mConn != nil {
+								go func(mc net.Conn, seq uint32, drop bool) {
+									time.Sleep(20 * time.Millisecond)
+									_, _ = mc.Write(buildTestH264IFramePacket(0x7b, seq))
+									if drop {
+										time.Sleep(20 * time.Millisecond)
+										_ = mc.Close()
+									}
+								}(mConn, uint32(sessionNum), sessionNum == 1)
+							}
+						}
+
+					default:
+						respTerm := []byte(`{"Ret":100}` + "\x00")
+						rHdr := Header{Magic: HeaderMagic, Channel: hdr.Channel, SessionID: hdr.SessionID, Sequence: hdr.Sequence, MsgID: hdr.MsgID + 1, DataLength: uint32(len(respTerm))}
+						_, _ = c.Write(append(rHdr.Encode(), respTerm...))
+					}
+				}
+			}(conn)
+		}
+	}()
+
+	client := NewClient("127.0.0.1", port, "admin", "testpwd")
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, client.Connect(ctx))
+	defer func() { _ = client.Close() }()
+
+	mockStream := &mockMediaStream{}
+	sofiaStream := NewSofiaStream("127.0.0.1", port, client, mockStream)
+
+	// Session 1: starts, delivers an I-frame, then the camera closes the media socket abruptly.
+	require.NoError(t, sofiaStream.Start(ctx))
+	require.Eventually(t, func() bool {
+		return len(mockStream.getPackets()) >= 1
+	}, 2*time.Second, 20*time.Millisecond, "expected initial I-frame packets before drop")
+
+	// readLoop must clear running state automatically and notify camera via OPMonitor Stop.
+	require.Eventually(t, func() bool {
+		return !sofiaStream.IsRunning()
+	}, 2*time.Second, 20*time.Millisecond, "SofiaStream must clear running state when readLoop exits unexpectedly")
+	require.Eventually(t, func() bool {
+		return stopCount.Load() >= 1
+	}, 2*time.Second, 20*time.Millisecond, "unexpected readLoop exit must send OPMonitor Stop on control socket")
+
+	packetsBeforeRestart := len(mockStream.getPackets())
+
+	// Session 2: restarting must succeed and deliver fresh video packets.
+	require.NoError(t, sofiaStream.Start(ctx))
+	assert.True(t, sofiaStream.IsRunning())
+	assert.Equal(t, int32(2), claimCount.Load())
+
+	require.Eventually(t, func() bool {
+		return len(mockStream.getPackets()) > packetsBeforeRestart
+	}, 2*time.Second, 20*time.Millisecond, "restarted SofiaStream must deliver new video packets")
+
+	require.NoError(t, sofiaStream.Stop())
+	assert.False(t, sofiaStream.IsRunning())
+}
+
+func TestDriver_OnDemandAutoRecoversAfterSofiaMediaDrop(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer func() { _ = l.Close() }()
+
+	port := mustTCPPort(t, l)
+
+	var claimCount atomic.Int32
+	var startCount atomic.Int32
+	var mediaMu sync.Mutex
+	var latestMediaConn net.Conn
+
+	go func() {
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer func() { _ = c.Close() }()
+				hdrBuf := make([]byte, HeaderLength)
+				for {
+					if _, err := io.ReadFull(c, hdrBuf); err != nil {
+						return
+					}
+					hdr, err := DecodeHeader(hdrBuf)
+					if err != nil {
+						return
+					}
+					payload := make([]byte, hdr.DataLength)
+					if _, err := io.ReadFull(c, payload); err != nil {
+						return
+					}
+					cleanPayload := strings.TrimRight(string(payload), "\x00\r\n ")
+
+					switch hdr.MsgID {
+					case MsgLoginReq:
+						respData, _ := json.Marshal(LoginResp{Ret: 100, SessionID: "0x0A"})
+						respTerm := append(respData, 0x0A, 0x00)
+						rHdr := Header{Magic: HeaderMagic, SessionID: 0x0A, Sequence: hdr.Sequence, MsgID: MsgLoginResp, DataLength: uint32(len(respTerm))}
+						_, _ = c.Write(append(rHdr.Encode(), respTerm...))
+
+					case MsgTransStartReq:
+						respData, _ := json.Marshal(map[string]interface{}{"Ret": 100, "SessionID": "0x0000000A"})
+						respTerm := append(respData, 0x0A, 0x00)
+						rHdr := Header{Magic: HeaderMagic, SessionID: 0x0A, Sequence: hdr.Sequence, MsgID: MsgTransStartResp, DataLength: uint32(len(respTerm))}
+						_, _ = c.Write(append(rHdr.Encode(), respTerm...))
+
+					case MsgMonitorClaimReq:
+						if strings.Contains(cleanPayload, `"Action1":"Start"`) {
+							claimCount.Add(1)
+							mediaMu.Lock()
+							latestMediaConn = c
+							mediaMu.Unlock()
+						}
+
+						respTerm := []byte(`{"Name":"OPMonitor","Ret":100}` + "\x00")
+						rHdr := Header{Magic: HeaderMagic, SessionID: 0x0A, Sequence: hdr.Sequence, MsgID: MsgMonitorClaimResp, DataLength: uint32(len(respTerm))}
+						_, _ = c.Write(append(rHdr.Encode(), respTerm...))
+
+					case MsgMonitorStartReq:
+						respTerm := []byte(`{"Name":"OPMonitor","Ret":100}` + "\x00")
+						rHdr := Header{Magic: HeaderMagic, SessionID: 0x0A, Sequence: hdr.Sequence, MsgID: MsgMonitorStartResp, DataLength: uint32(len(respTerm))}
+						_, _ = c.Write(append(rHdr.Encode(), respTerm...))
+
+						if strings.Contains(cleanPayload, `"Action":"Start"`) {
+							sessionNum := startCount.Add(1)
+							mediaMu.Lock()
+							mConn := latestMediaConn
+							mediaMu.Unlock()
+							if mConn != nil {
+								go func(mc net.Conn, seq uint32, drop bool) {
+									time.Sleep(20 * time.Millisecond)
+									_, _ = mc.Write(buildTestH264IFramePacket(0x0A, seq))
+									if drop {
+										time.Sleep(20 * time.Millisecond)
+										_ = mc.Close()
+									}
+								}(mConn, uint32(sessionNum), sessionNum == 1)
+							}
+						}
+
+					default:
+						respTerm := []byte(`{"Ret":100}` + "\x00")
+						rHdr := Header{Magic: HeaderMagic, SessionID: 0x0A, Sequence: hdr.Sequence, MsgID: hdr.MsgID + 1, DataLength: uint32(len(respTerm))}
+						_, _ = c.Write(append(rHdr.Encode(), respTerm...))
+					}
+				}
+			}(conn)
+		}
+	}()
+
+	mockStream := &recordingOnDemandRTSPServer{}
+	// Continuously active RTSP client (Frigate 24/7 pattern — never drops to 0).
+	mockStream.clients.Store(1)
+
+	d := NewDriver("127.0.0.1", "admin", "", "1080p", mockStream, nil)
+	d.client.addr = fmt.Sprintf("127.0.0.1:%d", port)
+	d.sofiaStream.port = port
+	defer func() { _ = d.Close() }()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 6*time.Second)
+	defer cancel()
+
+	require.NoError(t, d.Start(ctx))
+
+	// Media socket #1 drops right after sending its I-frame. superviseOnDemandLoop must
+	// automatically detect the dead stream and restart it on media socket #2.
+	require.Eventually(t, func() bool {
+		return claimCount.Load() >= 2 && mockStream.videoPackets.Load() >= 2 && d.sofiaStream.IsRunning()
+	}, 4*time.Second, 50*time.Millisecond, "on-demand supervisor must auto-recover SofiaStream after media socket drop")
+}
+
+func TestDriver_SetResolutionKeepsSofiaStreamRunning(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer func() { _ = l.Close() }()
+
+	port := mustTCPPort(t, l)
+
+	var mediaMu sync.Mutex
+	var latestMediaConn net.Conn
+	startedConns := make(chan net.Conn, 4)
+
+	go func() {
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer func() { _ = c.Close() }()
+				hdrBuf := make([]byte, HeaderLength)
+				for {
+					if _, err := io.ReadFull(c, hdrBuf); err != nil {
+						return
+					}
+					hdr, err := DecodeHeader(hdrBuf)
+					if err != nil {
+						return
+					}
+					payload := make([]byte, hdr.DataLength)
+					if _, err := io.ReadFull(c, payload); err != nil {
+						return
+					}
+					cleanPayload := strings.TrimRight(string(payload), "\x00\r\n ")
+
+					switch hdr.MsgID {
+					case MsgLoginReq:
+						respData, _ := json.Marshal(LoginResp{Ret: 100, SessionID: "0x0A"})
+						respTerm := append(respData, 0x0A, 0x00)
+						rHdr := Header{Magic: HeaderMagic, SessionID: 0x0A, Sequence: hdr.Sequence, MsgID: MsgLoginResp, DataLength: uint32(len(respTerm))}
+						_, _ = c.Write(append(rHdr.Encode(), respTerm...))
+
+					case MsgTransStartReq:
+						respData, _ := json.Marshal(map[string]interface{}{"Ret": 100, "SessionID": "0x0000000A"})
+						respTerm := append(respData, 0x0A, 0x00)
+						rHdr := Header{Magic: HeaderMagic, SessionID: 0x0A, Sequence: hdr.Sequence, MsgID: MsgTransStartResp, DataLength: uint32(len(respTerm))}
+						_, _ = c.Write(append(rHdr.Encode(), respTerm...))
+
+					case MsgMonitorClaimReq:
+						if strings.Contains(cleanPayload, `"Action1":"Start"`) {
+							mediaMu.Lock()
+							latestMediaConn = c
+							mediaMu.Unlock()
+						}
+
+						respTerm := []byte(`{"Name":"OPMonitor","Ret":100}` + "\x00")
+						rHdr := Header{Magic: HeaderMagic, SessionID: 0x0A, Sequence: hdr.Sequence, MsgID: MsgMonitorClaimResp, DataLength: uint32(len(respTerm))}
+						_, _ = c.Write(append(rHdr.Encode(), respTerm...))
+
+					case MsgMonitorStartReq:
+						respTerm := []byte(`{"Name":"OPMonitor","Ret":100}` + "\x00")
+						rHdr := Header{Magic: HeaderMagic, SessionID: 0x0A, Sequence: hdr.Sequence, MsgID: MsgMonitorStartResp, DataLength: uint32(len(respTerm))}
+						_, _ = c.Write(append(rHdr.Encode(), respTerm...))
+
+						if strings.Contains(cleanPayload, `"Action":"Start"`) {
+							mediaMu.Lock()
+							mConn := latestMediaConn
+							mediaMu.Unlock()
+							if mConn != nil {
+								startedConns <- mConn
+							}
+						}
+
+					default:
+						respTerm := []byte(`{"Ret":100}` + "\x00")
+						rHdr := Header{Magic: HeaderMagic, SessionID: 0x0A, Sequence: hdr.Sequence, MsgID: hdr.MsgID + 1, DataLength: uint32(len(respTerm))}
+						_, _ = c.Write(append(rHdr.Encode(), respTerm...))
+					}
+				}
+			}(conn)
+		}
+	}()
+
+	mockStream := &recordingOnDemandRTSPServer{}
+	mockStream.clients.Store(1)
+
+	d := NewDriver("127.0.0.1", "admin", "", "1080p", mockStream, nil)
+	d.client.addr = fmt.Sprintf("127.0.0.1:%d", port)
+	d.sofiaStream.port = port
+	defer func() { _ = d.Close() }()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	require.NoError(t, d.Start(ctx))
+	select {
+	case <-startedConns:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for initial Sofia media stream start")
+	}
+	require.True(t, d.sofiaStream.IsRunning())
+
+	// Switch resolution: the restarted readLoop must use the driver's long-lived context,
+	// not a short-lived context canceled when SetResolution returns.
+	require.NoError(t, d.SetResolution("360p"))
+
+	var switchedConn net.Conn
+	select {
+	case switchedConn = <-startedConns:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for switched Sofia media stream start")
+	}
+
+	// Allow readLoop to execute its initial select check after SetResolution returned.
+	time.Sleep(50 * time.Millisecond)
+	require.True(t, d.sofiaStream.IsRunning(), "SofiaStream must remain running after SetResolution returns")
+
+	_, err = switchedConn.Write(buildTestH264IFramePacket(0x0A, 2))
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		return mockStream.videoPackets.Load() >= 1 && d.sofiaStream.IsRunning()
+	}, 2*time.Second, 20*time.Millisecond, "restarted SofiaStream after SetResolution must continue receiving frames")
+}
+
+func TestSofiaStream_AudioOnlySilenceTriggersRecovery(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer func() { _ = l.Close() }()
+
+	port := mustTCPPort(t, l)
+
+	var stopCount atomic.Int32
+	var mediaMu sync.Mutex
+	var latestMediaConn net.Conn
+
+	go func() {
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer func() { _ = c.Close() }()
+				hdrBuf := make([]byte, HeaderLength)
+				for {
+					if _, err := io.ReadFull(c, hdrBuf); err != nil {
+						return
+					}
+					hdr, err := DecodeHeader(hdrBuf)
+					if err != nil {
+						return
+					}
+					payload := make([]byte, hdr.DataLength)
+					if _, err := io.ReadFull(c, payload); err != nil {
+						return
+					}
+					cleanPayload := strings.TrimRight(string(payload), "\x00\r\n ")
+
+					switch hdr.MsgID {
+					case MsgLoginReq:
+						respData, _ := json.Marshal(LoginResp{Ret: 100, SessionID: "0x0000007b"})
+						respTerm := append(respData, 0x00)
+						rHdr := Header{Magic: HeaderMagic, SessionID: 0x7b, Sequence: hdr.Sequence, MsgID: MsgLoginResp, DataLength: uint32(len(respTerm))}
+						_, _ = c.Write(append(rHdr.Encode(), respTerm...))
+
+					case MsgMonitorClaimReq:
+						if strings.Contains(cleanPayload, `"Action1":"Start"`) {
+							mediaMu.Lock()
+							latestMediaConn = c
+							mediaMu.Unlock()
+						}
+						respTerm := []byte(`{"Name":"OPMonitor","Ret":100}` + "\x00")
+						rHdr := Header{Magic: HeaderMagic, SessionID: 0x7b, Sequence: hdr.Sequence, MsgID: MsgMonitorClaimResp, DataLength: uint32(len(respTerm))}
+						_, _ = c.Write(append(rHdr.Encode(), respTerm...))
+
+					case MsgMonitorStartReq:
+						if strings.Contains(cleanPayload, `"Action":"Stop"`) {
+							stopCount.Add(1)
+						}
+						respTerm := []byte(`{"Name":"OPMonitor","Ret":100}` + "\x00")
+						rHdr := Header{Magic: HeaderMagic, Channel: hdr.Channel, SessionID: 0x7b, Sequence: hdr.Sequence, MsgID: MsgMonitorStartResp, DataLength: uint32(len(respTerm))}
+						_, _ = c.Write(append(rHdr.Encode(), respTerm...))
+
+						if strings.Contains(cleanPayload, `"Action":"Start"`) {
+							mediaMu.Lock()
+							mConn := latestMediaConn
+							mediaMu.Unlock()
+							if mConn != nil {
+								// Stream ONLY audio packets (0xFA) every 20ms so socket reads never time out,
+								// simulating an audio-only / metadata-only zombie stream with zero video frames.
+								go func(mc net.Conn) {
+									audioRecord := append([]byte(nil), MarkerAudio...)
+									audioRecord = append(audioRecord, 0x0E, 0x02, 0x10, 0x00)
+									audioRecord = append(audioRecord, make([]byte, 16)...)
+									for seq := uint32(1); seq <= 50; seq++ {
+										vHdr := Header{
+											Magic:      HeaderMagic,
+											Channel:    1,
+											SessionID:  0x7b,
+											Sequence:   seq,
+											MsgID:      MsgMonitorData,
+											DataLength: uint32(len(audioRecord)),
+										}
+										if _, wErr := mc.Write(append(vHdr.Encode(), audioRecord...)); wErr != nil {
+											return
+										}
+										time.Sleep(20 * time.Millisecond)
+									}
+								}(mConn)
+							}
+						}
+
+					default:
+						respTerm := []byte(`{"Ret":100}` + "\x00")
+						rHdr := Header{Magic: HeaderMagic, Channel: hdr.Channel, SessionID: hdr.SessionID, Sequence: hdr.Sequence, MsgID: hdr.MsgID + 1, DataLength: uint32(len(respTerm))}
+						_, _ = c.Write(append(rHdr.Encode(), respTerm...))
+					}
+				}
+			}(conn)
+		}
+	}()
+
+	client := NewClient("127.0.0.1", port, "admin", "testpwd")
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, client.Connect(ctx))
+	defer func() { _ = client.Close() }()
+
+	mockStream := &mockMediaStream{}
+	sofiaStream := NewSofiaStream("127.0.0.1", port, client, mockStream)
+	sofiaStream.mu.Lock()
+	sofiaStream.videoSilenceTimeout = 150 * time.Millisecond
+	sofiaStream.mu.Unlock()
+
+	require.NoError(t, sofiaStream.Start(ctx))
+	require.True(t, sofiaStream.IsRunning())
+
+	require.Eventually(t, func() bool {
+		return !sofiaStream.IsRunning() && stopCount.Load() >= 1
+	}, 2*time.Second, 20*time.Millisecond, "audio-only stream without video frames must trigger silence watchdog and OPMonitor Stop")
+}
+
+func TestSofiaStream_StartRejectsNonZeroErrorRet(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer func() { _ = l.Close() }()
+
+	port := mustTCPPort(t, l)
+
+	go func() {
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer func() { _ = c.Close() }()
+				hdrBuf := make([]byte, HeaderLength)
+				for {
+					if _, err := io.ReadFull(c, hdrBuf); err != nil {
+						return
+					}
+					hdr, err := DecodeHeader(hdrBuf)
+					if err != nil {
+						return
+					}
+					payload := make([]byte, hdr.DataLength)
+					if _, err := io.ReadFull(c, payload); err != nil {
+						return
+					}
+
+					switch hdr.MsgID {
+					case MsgLoginReq:
+						respData, _ := json.Marshal(LoginResp{Ret: 100, SessionID: "0x0000007b"})
+						respTerm := append(respData, 0x00)
+						rHdr := Header{Magic: HeaderMagic, SessionID: 0x7b, Sequence: hdr.Sequence, MsgID: MsgLoginResp, DataLength: uint32(len(respTerm))}
+						_, _ = c.Write(append(rHdr.Encode(), respTerm...))
+
+					case MsgMonitorClaimReq:
+						respTerm := []byte(`{"Name":"OPMonitor","Ret":100}` + "\x00")
+						rHdr := Header{Magic: HeaderMagic, SessionID: 0x7b, Sequence: hdr.Sequence, MsgID: MsgMonitorClaimResp, DataLength: uint32(len(respTerm))}
+						_, _ = c.Write(append(rHdr.Encode(), respTerm...))
+
+					case MsgMonitorStartReq:
+						// Reject OPMonitor Start with Ret=127 (max stream connections reached)
+						respTerm := []byte(`{"Name":"OPMonitor","Ret":127}` + "\x00")
+						rHdr := Header{Magic: HeaderMagic, Channel: hdr.Channel, SessionID: 0x7b, Sequence: hdr.Sequence, MsgID: MsgMonitorStartResp, DataLength: uint32(len(respTerm))}
+						_, _ = c.Write(append(rHdr.Encode(), respTerm...))
+
+					default:
+						respTerm := []byte(`{"Ret":100}` + "\x00")
+						rHdr := Header{Magic: HeaderMagic, Channel: hdr.Channel, SessionID: hdr.SessionID, Sequence: hdr.Sequence, MsgID: hdr.MsgID + 1, DataLength: uint32(len(respTerm))}
+						_, _ = c.Write(append(rHdr.Encode(), respTerm...))
+					}
+				}
+			}(conn)
+		}
+	}()
+
+	client := NewClient("127.0.0.1", port, "admin", "testpwd")
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, client.Connect(ctx))
+	defer func() { _ = client.Close() }()
+
+	sofiaStream := NewSofiaStream("127.0.0.1", port, client, &mockMediaStream{})
+	err = sofiaStream.Start(ctx)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "ret=127")
+	assert.False(t, sofiaStream.IsRunning())
+}
+
+func TestSofiaStream_PendingStreamBufCappedOnZeroPayloadSize(t *testing.T) {
+	s := NewSofiaStream("127.0.0.1", 34567, nil, &mockMediaStream{})
+	s.gotKeyframe = true
+
+	// Feed a malformed I-frame record header with payloadSize == 0 and no subsequent record marker.
+	headerOnly := bytes.Clone(MarkerIFrame)
+	headerOnly = append(headerOnly, make([]byte, 12)...) // payloadSize == 0 at bytes 12..16
+	s.handleMediaPayload(headerOnly)
+
+	chunk := make([]byte, 256*1024)
+	for i := range chunk {
+		chunk[i] = 0xAA // never matches 00 00 01 [F8..FE]
+	}
+	for range 9 { // 9 * 256 KB = 2.25 MB > maxSofiaStreamBuf (2 MB)
+		s.handleMediaPayload(chunk)
+	}
+
+	s.tsMu.Lock()
+	bufLen := len(s.streamBuf)
+	gotKey := s.gotKeyframe
+	s.tsMu.Unlock()
+
+	assert.LessOrEqual(t, bufLen, 3, "oversized unclosed payloadSize==0 buffer must be reset to prevent unbounded memory growth")
+	assert.False(t, gotKey)
+}
+
+type orderRecordingWriter struct {
+	mockVideoParamsWriter
+	paramsPresentAtSwitch bool
+}
+
+func (w *orderRecordingWriter) SetVideoCodec(codec string) bool {
+	w.mu.Lock()
+	w.paramsPresentAtSwitch = len(w.vps) > 0 && len(w.sps) > 0 && len(w.pps) > 0
+	changed := w.codec != codec
+	w.codec = codec
+	w.mu.Unlock()
+	return changed
+}
+
+func TestSofiaStream_PublishesH265ParametersBeforeSetVideoCodec(t *testing.T) {
+	writer := &orderRecordingWriter{}
+	writer.codec = videoCodecH264
+	s := NewSofiaStream("127.0.0.1", 34567, nil, writer)
+	pktz, err := newVideoPacketizer(videoCodecH264)
+	require.NoError(t, err)
+	s.packetizer = pktz
+
+	vps := []byte{0x00, 0x00, 0x00, 0x01, 0x40, 0x01, 0x0c, 0x01, 0xff, 0xff, 0x01, 0x60}
+	sps := []byte{0x00, 0x00, 0x00, 0x01, 0x42, 0x01, 0x01, 0x01, 0x60, 0x00, 0x00, 0x03}
+	pps := []byte{0x00, 0x00, 0x00, 0x01, 0x44, 0x01, 0xc1, 0x72, 0xb4, 0x62, 0x40}
+	idr := []byte{0x00, 0x00, 0x00, 0x01, 0x26, 0x01, 0xaf, 0x08}
+
+	var iFrameData []byte
+	iFrameData = append(iFrameData, vps...)
+	iFrameData = append(iFrameData, sps...)
+	iFrameData = append(iFrameData, pps...)
+	iFrameData = append(iFrameData, idr...)
+
+	var rec []byte
+	rec = append(rec, MarkerIFrame...)
+	rec = append(rec, sofiaCodecH265, 6, 240, 135, 0, 0, 0, 0, 0, 0, 0, 0)
+	binary.LittleEndian.PutUint32(rec[12:16], uint32(len(iFrameData)))
+	rec = append(rec, iFrameData...)
+
+	s.handleMediaPayload(rec)
+
+	writer.mu.Lock()
+	presentAtSwitch := writer.paramsPresentAtSwitch
+	switchedCodec := writer.codec
+	writer.mu.Unlock()
+
+	assert.Equal(t, videoCodecH265, switchedCodec)
+	assert.True(t, presentAtSwitch, "VPS/SPS/PPS must be published before SetVideoCodec creates the new RTSP stream")
+}
+
+func TestDriver_OnDemandFallsBackToRTSPIngestAfterRepeatedSofiaStreamFailures(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer func() { _ = l.Close() }()
+
+	port := mustTCPPort(t, l)
+	var startAttempts atomic.Int32
+
+	go func() {
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer func() { _ = c.Close() }()
+				hdrBuf := make([]byte, HeaderLength)
+				for {
+					if _, err := io.ReadFull(c, hdrBuf); err != nil {
+						return
+					}
+					hdr, err := DecodeHeader(hdrBuf)
+					if err != nil {
+						return
+					}
+					payload := make([]byte, hdr.DataLength)
+					if _, err := io.ReadFull(c, payload); err != nil {
+						return
+					}
+					cleanPayload := strings.TrimRight(string(payload), "\x00\r\n ")
+
+					switch hdr.MsgID {
+					case MsgLoginReq:
+						respData, _ := json.Marshal(LoginResp{Ret: 100, SessionID: "0x0A"})
+						respTerm := append(respData, 0x0A, 0x00)
+						rHdr := Header{Magic: HeaderMagic, SessionID: 0x0A, Sequence: hdr.Sequence, MsgID: MsgLoginResp, DataLength: uint32(len(respTerm))}
+						_, _ = c.Write(append(rHdr.Encode(), respTerm...))
+
+					case MsgTransStartReq:
+						respData, _ := json.Marshal(map[string]interface{}{"Ret": 100, "SessionID": "0x0000000A"})
+						respTerm := append(respData, 0x0A, 0x00)
+						rHdr := Header{Magic: HeaderMagic, SessionID: 0x0A, Sequence: hdr.Sequence, MsgID: MsgTransStartResp, DataLength: uint32(len(respTerm))}
+						_, _ = c.Write(append(rHdr.Encode(), respTerm...))
+
+					case MsgMonitorClaimReq:
+						respTerm := []byte(`{"Name":"OPMonitor","Ret":100}` + "\x00")
+						rHdr := Header{Magic: HeaderMagic, SessionID: 0x0A, Sequence: hdr.Sequence, MsgID: MsgMonitorClaimResp, DataLength: uint32(len(respTerm))}
+						_, _ = c.Write(append(rHdr.Encode(), respTerm...))
+
+					case MsgMonitorStartReq:
+						if strings.Contains(cleanPayload, `"Action":"Start"`) {
+							startAttempts.Add(1)
+						}
+						respTerm := []byte(`{"Name":"OPMonitor","Ret":127}` + "\x00")
+						rHdr := Header{Magic: HeaderMagic, SessionID: 0x0A, Sequence: hdr.Sequence, MsgID: MsgMonitorStartResp, DataLength: uint32(len(respTerm))}
+						_, _ = c.Write(append(rHdr.Encode(), respTerm...))
+
+					default:
+						respTerm := []byte(`{"Ret":100}` + "\x00")
+						rHdr := Header{Magic: HeaderMagic, SessionID: 0x0A, Sequence: hdr.Sequence, MsgID: hdr.MsgID + 1, DataLength: uint32(len(respTerm))}
+						_, _ = c.Write(append(rHdr.Encode(), respTerm...))
+					}
+				}
+			}(conn)
+		}
+	}()
+
+	mockStream := &recordingOnDemandRTSPServer{}
+	mockStream.clients.Store(0) // Idle at boot -> Driver.Start assumes Sofia is available and leaves d.ingest == nil.
+
+	d := NewDriver("127.0.0.1", "admin", "", "1080p", mockStream, nil)
+	d.client.addr = fmt.Sprintf("127.0.0.1:%d", port)
+	d.sofiaStream.port = port
+	d.onDemandTickInterval = 25 * time.Millisecond
+	d.initialStreamBackoff = 25 * time.Millisecond
+	defer func() { _ = d.Close() }()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	require.NoError(t, d.Start(ctx))
+	d.ingestMu.Lock()
+	initialIngest := d.ingest
+	d.ingestMu.Unlock()
+	require.Nil(t, initialIngest, "fallback ingest must start nil when Sofia login succeeds with 0 clients")
+
+	// Client connects later, and OPMonitor Start is repeatedly rejected by camera firmware.
+	mockStream.clients.Store(1)
+
+	require.Eventually(t, func() bool {
+		d.ingestMu.Lock()
+		hasFallback := d.ingest != nil
+		d.ingestMu.Unlock()
+		return startAttempts.Load() >= maxSofiaStreamFailuresBeforeFallback && hasFallback
+	}, 2*time.Second, 25*time.Millisecond, "repeated OPMonitor failures must activate runtime RTSP fallback ingest")
+}
+
+func TestSofiaStream_PFramesKeepSilenceWatchdogAliveDuringLongGOP(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer func() { _ = l.Close() }()
+
+	port := mustTCPPort(t, l)
+	var mediaMu sync.Mutex
+	var latestMediaConn net.Conn
+
+	go func() {
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer func() { _ = c.Close() }()
+				hdrBuf := make([]byte, HeaderLength)
+				for {
+					if _, err := io.ReadFull(c, hdrBuf); err != nil {
+						return
+					}
+					hdr, err := DecodeHeader(hdrBuf)
+					if err != nil {
+						return
+					}
+					payload := make([]byte, hdr.DataLength)
+					if _, err := io.ReadFull(c, payload); err != nil {
+						return
+					}
+					cleanPayload := strings.TrimRight(string(payload), "\x00\r\n ")
+
+					switch hdr.MsgID {
+					case MsgLoginReq:
+						respData, _ := json.Marshal(LoginResp{Ret: 100, SessionID: "0x0000007b"})
+						respTerm := append(respData, 0x00)
+						rHdr := Header{Magic: HeaderMagic, SessionID: 0x7b, Sequence: hdr.Sequence, MsgID: MsgLoginResp, DataLength: uint32(len(respTerm))}
+						_, _ = c.Write(append(rHdr.Encode(), respTerm...))
+
+					case MsgMonitorClaimReq:
+						if strings.Contains(cleanPayload, `"Action1":"Start"`) {
+							mediaMu.Lock()
+							latestMediaConn = c
+							mediaMu.Unlock()
+						}
+						respTerm := []byte(`{"Name":"OPMonitor","Ret":100}` + "\x00")
+						rHdr := Header{Magic: HeaderMagic, SessionID: 0x7b, Sequence: hdr.Sequence, MsgID: MsgMonitorClaimResp, DataLength: uint32(len(respTerm))}
+						_, _ = c.Write(append(rHdr.Encode(), respTerm...))
+
+					case MsgMonitorStartReq:
+						respTerm := []byte(`{"Name":"OPMonitor","Ret":100}` + "\x00")
+						rHdr := Header{Magic: HeaderMagic, Channel: hdr.Channel, SessionID: 0x7b, Sequence: hdr.Sequence, MsgID: MsgMonitorStartResp, DataLength: uint32(len(respTerm))}
+						_, _ = c.Write(append(rHdr.Encode(), respTerm...))
+
+						if strings.Contains(cleanPayload, `"Action":"Start"`) {
+							mediaMu.Lock()
+							mConn := latestMediaConn
+							mediaMu.Unlock()
+							if mConn != nil {
+								// Stream continuous P-frames (0xFD) without an I-frame: must NOT trip the
+								// 120ms video-record silence timeout, and must recover once keyframeWaitTimeout (420ms) expires.
+								go func(mc net.Conn) {
+									pNalu := []byte{0x00, 0x00, 0x00, 0x01, 0x41, 0x9a, 0x01, 0x02}
+									pRec := append([]byte(nil), MarkerPFrame...)
+									pRec = append(pRec, make([]byte, 4)...)
+									binary.LittleEndian.PutUint32(pRec[4:8], uint32(len(pNalu)))
+									pRec = append(pRec, pNalu...)
+									for seq := uint32(1); seq <= 30; seq++ {
+										vHdr := Header{Magic: HeaderMagic, Channel: 1, SessionID: 0x7b, Sequence: seq, MsgID: MsgMonitorData, DataLength: uint32(len(pRec))}
+										if _, wErr := mc.Write(append(vHdr.Encode(), pRec...)); wErr != nil {
+											return
+										}
+										time.Sleep(25 * time.Millisecond)
+									}
+								}(mConn)
+							}
+						}
+
+					default:
+						respTerm := []byte(`{"Ret":100}` + "\x00")
+						rHdr := Header{Magic: HeaderMagic, Channel: hdr.Channel, SessionID: hdr.SessionID, Sequence: hdr.Sequence, MsgID: hdr.MsgID + 1, DataLength: uint32(len(respTerm))}
+						_, _ = c.Write(append(rHdr.Encode(), respTerm...))
+					}
+				}
+			}(conn)
+		}
+	}()
+
+	client := NewClient("127.0.0.1", port, "admin", "testpwd")
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, client.Connect(ctx))
+	defer func() { _ = client.Close() }()
+
+	sofiaStream := NewSofiaStream("127.0.0.1", port, client, &mockMediaStream{})
+	sofiaStream.mu.Lock()
+	sofiaStream.videoSilenceTimeout = 120 * time.Millisecond
+	sofiaStream.keyframeWaitTimeout = 420 * time.Millisecond
+	sofiaStream.mu.Unlock()
+
+	require.NoError(t, sofiaStream.Start(ctx))
+	time.Sleep(220 * time.Millisecond)
+	assert.True(t, sofiaStream.IsRunning(), "incoming P-frames during a long GOP must not trip videoSilenceTimeout")
+
+	require.Eventually(t, func() bool {
+		return !sofiaStream.IsRunning()
+	}, 2*time.Second, 25*time.Millisecond, "stream stuck on P-frames past keyframeWaitTimeout must eventually recover")
+}
+
+func TestRequestKeyframe_SecondViewerDoesNotDropExistingViewerPFrames(t *testing.T) {
+	mockStream := &recordingOnDemandRTSPServer{}
+	d := NewDriver("127.0.0.1", "admin", "", "1080p", mockStream, nil)
+	defer func() { _ = d.Close() }()
+
+	// Simulate an active stream that already delivered an I-frame to viewer #1.
+	d.sofiaStream.running.Store(true)
+	d.mu.Lock()
+	d.idleSinceLastClient = false
+	d.mu.Unlock()
+
+	iFramePkt := buildTestH264IFramePacket(0x7b, 1)
+	d.sofiaStream.handleMediaPayload(iFramePkt[HeaderLength:])
+	require.Greater(t, mockStream.videoPackets.Load(), int64(0))
+
+	// Viewer #2 connects: RequestKeyframe must NOT clear gotKeyframe or drop P-frames for viewer #1.
+	mockStream.clients.Store(2)
+	d.RequestKeyframe()
+
+	before := mockStream.videoPackets.Load()
+	pNalu := []byte{0x00, 0x00, 0x00, 0x01, 0x41, 0x9a, 0x01, 0x02}
+	pRec := append([]byte(nil), MarkerPFrame...)
+	pRec = append(pRec, make([]byte, 4)...)
+	binary.LittleEndian.PutUint32(pRec[4:8], uint32(len(pNalu)))
+	pRec = append(pRec, pNalu...)
+	d.sofiaStream.handleMediaPayload(pRec)
+
+	assert.Greater(t, mockStream.videoPackets.Load(), before, "joining a second viewer must not drop P-frames for existing viewers")
+}
+
+func TestDriver_SuperviseOnDemandLoop_FallbackThrottlingAndControlOutage(t *testing.T) {
+	t.Run("does not thrash OPMonitor Start while fallback ingest is active", func(t *testing.T) {
+		l, err := net.Listen("tcp", "127.0.0.1:0")
+		require.NoError(t, err)
+		defer func() { _ = l.Close() }()
+
+		port := mustTCPPort(t, l)
+		var startAttempts atomic.Int32
+
+		go func() {
+			for {
+				conn, acceptErr := l.Accept()
+				if acceptErr != nil {
+					return
+				}
+				go func(c net.Conn) {
+					defer func() { _ = c.Close() }()
+					hdrBuf := make([]byte, HeaderLength)
+					for {
+						if _, rErr := io.ReadFull(c, hdrBuf); rErr != nil {
+							return
+						}
+						hdr, dErr := DecodeHeader(hdrBuf)
+						if dErr != nil {
+							return
+						}
+						payload := make([]byte, hdr.DataLength)
+						if _, rErr := io.ReadFull(c, payload); rErr != nil {
+							return
+						}
+						cleanPayload := strings.TrimRight(string(payload), "\x00\r\n ")
+
+						switch hdr.MsgID {
+						case MsgLoginReq:
+							respData, _ := json.Marshal(LoginResp{Ret: 100, SessionID: "0x0A"})
+							respTerm := append(respData, 0x00)
+							rHdr := Header{Magic: HeaderMagic, SessionID: 0x0A, Sequence: hdr.Sequence, MsgID: MsgLoginResp, DataLength: uint32(len(respTerm))}
+							_, _ = c.Write(append(rHdr.Encode(), respTerm...))
+						case MsgMonitorClaimReq:
+							respTerm := []byte(`{"Name":"OPMonitor","Ret":100}` + "\x00")
+							rHdr := Header{Magic: HeaderMagic, SessionID: 0x0A, Sequence: hdr.Sequence, MsgID: MsgMonitorClaimResp, DataLength: uint32(len(respTerm))}
+							_, _ = c.Write(append(rHdr.Encode(), respTerm...))
+						case MsgMonitorStartReq:
+							if strings.Contains(cleanPayload, `"Action":"Start"`) {
+								startAttempts.Add(1)
+							}
+							respTerm := []byte(`{"Name":"OPMonitor","Ret":127}` + "\x00")
+							rHdr := Header{Magic: HeaderMagic, SessionID: 0x0A, Sequence: hdr.Sequence, MsgID: MsgMonitorStartResp, DataLength: uint32(len(respTerm))}
+							_, _ = c.Write(append(rHdr.Encode(), respTerm...))
+						default:
+							respTerm := []byte(`{"Ret":100}` + "\x00")
+							rHdr := Header{Magic: HeaderMagic, SessionID: 0x0A, Sequence: hdr.Sequence, MsgID: hdr.MsgID + 1, DataLength: uint32(len(respTerm))}
+							_, _ = c.Write(append(rHdr.Encode(), respTerm...))
+						}
+					}
+				}(conn)
+			}
+		}()
+
+		mockStream := &recordingOnDemandRTSPServer{}
+		mockStream.clients.Store(0)
+
+		d := NewDriver("127.0.0.1", "admin", "", "1080p", mockStream, nil)
+		d.client.addr = fmt.Sprintf("127.0.0.1:%d", port)
+		d.sofiaStream.port = port
+		d.onDemandTickInterval = 20 * time.Millisecond
+		d.initialStreamBackoff = 15 * time.Millisecond
+		d.sofiaProbeInterval = 5 * time.Second
+		defer func() { _ = d.Close() }()
+
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
+		require.NoError(t, d.Start(ctx))
+
+		mockStream.clients.Store(1)
+		d.RequestKeyframe()
+
+		require.Eventually(t, func() bool {
+			return d.hasFallbackIngest()
+		}, 2*time.Second, 20*time.Millisecond)
+
+		attemptsAtFallback := startAttempts.Load()
+		time.Sleep(150 * time.Millisecond)
+		assert.Equal(t, attemptsAtFallback, startAttempts.Load(), "active fallback ingest must suppress rapid OPMonitor Start retries")
+	})
+
+	t.Run("activates fallback ingest when control socket is down while clients wait", func(t *testing.T) {
+		mockStream := &recordingOnDemandRTSPServer{}
+		mockStream.clients.Store(1)
+
+		d := NewDriver("127.0.0.1", "admin", "", "1080p", mockStream, nil)
+		d.onDemandTickInterval = 15 * time.Millisecond
+		d.controlOutageGrace = 45 * time.Millisecond
+		d.running = true
+		defer func() { _ = d.Close() }()
+
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		go d.superviseOnDemandLoop(ctx)
+
+		require.Eventually(t, func() bool {
+			return d.hasFallbackIngest()
+		}, 2*time.Second, 15*time.Millisecond, "prolonged control-socket outage with active clients must activate fallback RTSP ingest")
+	})
 }

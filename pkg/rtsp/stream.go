@@ -38,31 +38,35 @@ var _ MediaStream = (*Server)(nil)
 
 // Stream encapsulates the media tracks, encoding and client state for a single camera RTSP stream.
 type Stream struct {
-	pathName                string
-	serverStream            *gortsplib.ServerStream
-	session                 *description.Session
-	videoFormat             *format.H264
-	h265Format              *format.H265
-	videoCodec              string // "h264" (default) or "h265"
-	gortspServer            *gortsplib.Server
-	audioCodec              string
-	audioFormat             format.Format
-	aacRTPEncoder           *rtpmpeg4audio.Encoder
-	backchannelFormat       *format.G711
-	videoMedia              *description.Media
-	audioMedia              *description.Media
-	backchannelMedia        *description.Media
-	audioBackchannelHandler AudioBackchannelHandler
-	onPlayHandler           OnPlayHandler
-	backchannelPacketCount  atomic.Uint64
-	activeClients           atomic.Int64
-	playingSessions         sync.Map // *gortsplib.ServerSession -> struct{}
-	backchannelMu           sync.Mutex
-	activeTalkSession       *gortsplib.ServerSession
-	lastTalkTime            time.Time
-	video                   *videoPipe
-	holdStop                chan struct{}
-	mu                      sync.RWMutex
+	pathName                  string
+	serverStream              *gortsplib.ServerStream
+	session                   *description.Session
+	videoFormat               *format.H264
+	h265Format                *format.H265
+	h264SPS, h264PPS          []byte
+	h265VPS, h265SPS, h265PPS []byte
+	videoCodec                string // "h264" (default) or "h265"
+	gortspServer              *gortsplib.Server
+	audioCodec                string
+	audioFormat               format.Format
+	aacRTPEncoder             *rtpmpeg4audio.Encoder
+	backchannelFormat         *format.G711
+	videoMedia                *description.Media
+	audioMedia                *description.Media
+	backchannelMedia          *description.Media
+	audioBackchannelHandler   AudioBackchannelHandler
+	onPlayHandler             OnPlayHandler
+	onDescribeHandler         OnDescribeHandler
+	backchannelPacketCount    atomic.Uint64
+	activeClients             atomic.Int64
+	playingSessions           sync.Map // *gortsplib.ServerSession -> struct{}
+	backchannelMu             sync.Mutex
+	audioMu                   sync.Mutex
+	activeTalkSession         *gortsplib.ServerSession
+	lastTalkTime              time.Time
+	video                     *videoPipe
+	holdStop                  chan struct{}
+	mu                        sync.RWMutex
 }
 
 // NewStream creates and configures a new Stream instance for a given path and audio codec.
@@ -320,11 +324,21 @@ func (st *Stream) SetVideoCodec(codec string) bool {
 	var vFormat format.Format
 	if codec == VideoCodecH265 {
 		st.videoFormat = nil
-		st.h265Format = &format.H265{PayloadTyp: 96}
+		st.h265Format = &format.H265{
+			PayloadTyp: 96,
+			VPS:        bytes.Clone(st.h265VPS),
+			SPS:        bytes.Clone(st.h265SPS),
+			PPS:        bytes.Clone(st.h265PPS),
+		}
 		vFormat = st.h265Format
 	} else {
 		st.h265Format = nil
-		st.videoFormat = &format.H264{PayloadTyp: 96, PacketizationMode: 1}
+		st.videoFormat = &format.H264{
+			PayloadTyp:        96,
+			PacketizationMode: 1,
+			SPS:               bytes.Clone(st.h264SPS),
+			PPS:               bytes.Clone(st.h264PPS),
+		}
 		vFormat = st.videoFormat
 	}
 	vMedia := &description.Media{
@@ -365,16 +379,80 @@ func (st *Stream) SetVideoCodec(codec string) bool {
 }
 
 // SetH265Parameters updates the VPS, SPS and PPS of the H.265 video track (sprop-vps/sps/pps in the SDP).
-// Slices are defensively cloned because gortsplib.SafeSetParams retains caller slices without copying.
+// Slices are defensively cloned and cached so SetVideoCodec("h265") can announce them immediately.
 func (st *Stream) SetH265Parameters(vps, sps, pps []byte) {
 	if len(vps) == 0 || len(sps) == 0 || len(pps) == 0 {
 		return
 	}
+
 	st.mu.RLock()
-	f := st.h265Format
+	unchanged := bytes.Equal(st.h265VPS, vps) && bytes.Equal(st.h265SPS, sps) && bytes.Equal(st.h265PPS, pps)
 	st.mu.RUnlock()
+	if unchanged {
+		return
+	}
+
+	vpsCopy := bytes.Clone(vps)
+	spsCopy := bytes.Clone(sps)
+	ppsCopy := bytes.Clone(pps)
+
+	st.mu.Lock()
+	st.h265VPS = vpsCopy
+	st.h265SPS = spsCopy
+	st.h265PPS = ppsCopy
+	f := st.h265Format
+	st.mu.Unlock()
+
 	if f != nil {
-		f.SafeSetParams(bytes.Clone(vps), bytes.Clone(sps), bytes.Clone(pps))
+		f.SafeSetParams(bytes.Clone(vpsCopy), bytes.Clone(spsCopy), bytes.Clone(ppsCopy))
+	}
+}
+
+// ResetVideoParameters clears cached out-of-band SPS/PPS/VPS parameter sets when switching
+// between camera streams of different resolutions (e.g. Main 1080p <-> Extra1 360p) while idle,
+// so subsequent DESCRIBE responses do not advertise stale picture dimensions before the new stream starts.
+func (st *Stream) ResetVideoParameters() {
+	st.mu.Lock()
+	st.h264SPS, st.h264PPS = nil, nil
+	st.h265VPS, st.h265SPS, st.h265PPS = nil, nil, nil
+	f264 := st.videoFormat
+	f265 := st.h265Format
+	st.mu.Unlock()
+
+	if f264 != nil {
+		f264.SafeSetParams(nil, nil)
+	}
+	if f265 != nil {
+		f265.SafeSetParams(nil, nil, nil)
+	}
+}
+
+// HasVideoParameters reports whether out-of-band video parameter sets (SPS/PPS or VPS/SPS/PPS)
+// have already been learned for the currently active video codec.
+func (st *Stream) HasVideoParameters() bool {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	if st.videoCodec == VideoCodecH265 {
+		return len(st.h265VPS) > 0 && len(st.h265SPS) > 0 && len(st.h265PPS) > 0
+	}
+	return len(st.h264SPS) > 0 && len(st.h264PPS) > 0
+}
+
+// SetOnDescribeHandler registers a callback executed during RTSP DESCRIBE before reading
+// serverStream, allowing on-demand camera drivers to warm the stream and settle codec/SDP
+// parameters so single-shot players (such as VLC Desktop) never get disconnected on first play.
+func (st *Stream) SetOnDescribeHandler(handler OnDescribeHandler) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	st.onDescribeHandler = handler
+}
+
+func (st *Stream) runOnDescribe() {
+	st.mu.RLock()
+	handler := st.onDescribeHandler
+	st.mu.RUnlock()
+	if handler != nil {
+		handler()
 	}
 }
 
@@ -502,17 +580,19 @@ func (st *Stream) sendJoinBurst(sess *gortsplib.ServerSession) {
 
 // WriteAACFrame encodes and writes an AAC frame to all clients connected to this stream.
 func (st *Stream) WriteAACFrame(au []byte, pts time.Duration) {
-	st.mu.Lock()
+	st.mu.RLock()
 	sStream := st.serverStream
 	aMedia := st.audioMedia
 	enc := st.aacRTPEncoder
-	st.mu.Unlock()
+	st.mu.RUnlock()
 
 	if sStream == nil || enc == nil || len(au) == 0 || aMedia == nil {
 		return
 	}
 
+	st.audioMu.Lock()
 	pkts, err := enc.Encode([][]byte{au})
+	st.audioMu.Unlock()
 	if err != nil {
 		return
 	}
@@ -524,32 +604,55 @@ func (st *Stream) WriteAACFrame(au []byte, pts time.Duration) {
 	}
 }
 
-// WriteAudioPacket forwards a PCMU RTP packet to all clients connected to this stream.
+// WriteAudioPacket forwards an audio RTP packet (PCMU or AAC) to all clients connected to this stream.
 func (st *Stream) WriteAudioPacket(pkt *rtp.Packet) {
+	if pkt == nil {
+		return
+	}
 	st.mu.RLock()
 	sStream := st.serverStream
 	aMedia := st.audioMedia
+	aCodec := st.audioCodec
 	st.mu.RUnlock()
 
 	if sStream == nil || aMedia == nil {
 		return
 	}
-	pkt.PayloadType = 0
-	_ = sStream.WritePacketRTP(aMedia, pkt)
+	cp := *pkt
+	if aCodec == "pcmu" {
+		cp.PayloadType = 0
+	} else {
+		cp.PayloadType = 97
+	}
+	_ = sStream.WritePacketRTP(aMedia, &cp)
 }
 
 // SetH264Parameters dynamically updates the SPS and PPS parameter sets for the H.264 video track.
 // Subsequent RTSP DESCRIBE requests return sprop-parameter-sets and profile-level-id in the SDP.
-// Slices are defensively cloned because gortsplib.SafeSetParams retains caller slices without copying.
+// Slices are defensively cloned and cached so SetVideoCodec("h264") can announce them immediately.
 func (st *Stream) SetH264Parameters(sps, pps []byte) {
 	if len(sps) == 0 || len(pps) == 0 {
 		return
 	}
+
 	st.mu.RLock()
-	f := st.videoFormat
+	unchanged := bytes.Equal(st.h264SPS, sps) && bytes.Equal(st.h264PPS, pps)
 	st.mu.RUnlock()
+	if unchanged {
+		return
+	}
+
+	spsCopy := bytes.Clone(sps)
+	ppsCopy := bytes.Clone(pps)
+
+	st.mu.Lock()
+	st.h264SPS = spsCopy
+	st.h264PPS = ppsCopy
+	f := st.videoFormat
+	st.mu.Unlock()
+
 	if f != nil {
-		f.SafeSetParams(bytes.Clone(sps), bytes.Clone(pps))
+		f.SafeSetParams(bytes.Clone(spsCopy), bytes.Clone(ppsCopy))
 	}
 }
 
@@ -614,4 +717,14 @@ func (st *Stream) handleBackchannelPacket(medi *description.Media, pkt *rtp.Pack
 			_ = handler(pkt)
 		}
 	}
+}
+
+// ResolveVideoCodec warms on-demand camera streams once when out-of-band video
+// parameters have not yet been learned (for example when Scrypted queries ONVIF
+// GetProfiles on cold boot before opening RTSP) and returns the active codec ("h264" or "h265").
+func (st *Stream) ResolveVideoCodec() string {
+	if !st.HasVideoParameters() {
+		st.runOnDescribe()
+	}
+	return st.VideoCodec()
 }

@@ -185,8 +185,11 @@ Die L 620 Firmware besitzt auf ihrem internen RTSP-Server (Port 554) bekannte Sp
 4. **Frame-Demuxing & Automatische H.264/H.265 Codec-Erkennung (`MsgMonitorData` 1412)**:
    - Die Kamera überträgt rohe Video-Chunks mit Sofia-Headern.
    - I-Frames beginnen mit Magic `00 00 01 FC` (16-Byte Record-Header), P-Frames mit `00 00 01 FD` (8-Byte Record-Header).
-   - Da bestimmte Firmware-Versionen (z. B. Steinel XLED CAM 1) auf dem nativen Sofia-Kanal H.265/HEVC liefern, obwohl `Simplify.Encode` `Compression: "H.264"` meldet, erkennt `SofiaStream` (`pkg/xiongmai/sofia_video.go`) auf jedem I-Frame anhand der Annex-B NAL-Header (sowie dem Xiongmai-Codec-Byte als Fallback) automatisch zwischen **H.264** und **H.265**.
-   - Die Bridge extrahiert die NAL-Units, aktualisiert die SDP-Parameter (`sprop-parameter-sets` bzw. `sprop-vps`/`sprop-sps`/`sprop-pps` mit defensivem `bytes.Clone`) und paketiert sie konform nach **RFC 6184** (`rtph264.Encoder`) bzw. **RFC 7798** (`rtph265.Encoder`) über das `videoPacketizer`-Interface direkt in den RTSP-Server.
+   - Da bestimmte Firmware-Versionen (z. B. Steinel XLED CAM 1) auf dem nativen Sofia-Kanal H.265/HEVC liefern, obwohl `Simplify.Encode` `Compression: "H.264"` meldet, erkennt `SofiaStream` (`pkg/xiongmai/sofia_demux.go` & `pkg/xiongmai/sofia_video.go`) auf jedem I-Frame anhand der Annex-B NAL-Header (sowie dem Xiongmai-Codec-Byte als Fallback) automatisch zwischen **H.264** und **H.265**.
+   - Die Bridge publiziert die SDP-Parameter (`sprop-parameter-sets` bzw. `sprop-vps`/`sprop-sps`/`sprop-pps` mit defensivem `bytes.Clone`) bereits vor `SetVideoCodec` in `rtsp.Stream` und paketiert die NAL-Units konform nach **RFC 6184** (`rtph264.Encoder`) bzw. **RFC 7798** (`rtph265.Encoder`) über das `videoPacketizer`-Interface direkt in den RTSP-Server.
+5. **Automatische Stream-Recovery & GOP-sicherer Watchdog (`pkg/xiongmai/sofia_stream.go`)**:
+   - Bricht der sekundäre Media-Socket ab (EOF, 5-s-Read-Timeout, DVRIP-Resync-Fehler), räumt `readLoop` den Zustand atomar auf, sendet `OPMonitor Stop` auf dem Kontrollsocket und ermöglicht `superviseOnDemandLoop` den sofortigen Wiederanlauf auch bei dauerhaft verbundenen 24/7-Clients (z. B. Frigate).
+   - Ein zweistufiger Watchdog prüft getrennt auf fehlende eingehende Video-Records (> 15 s, fängt Audio-/Metadaten-Only-Hänger ab, ohne lange GOPs zu stören) und ausbleibende Keyframes (> 30 s).
 
 ### 2. Ressourcenschonendes On-Demand Streaming
 Der Xiongmai SoC erhitzt sich bei dauerhaftem 24/7-Videostreaming stark, was zu WLAN-Abbrüchen führen kann.
@@ -194,7 +197,7 @@ Der Xiongmai SoC erhitzt sich bei dauerhaftem 24/7-Videostreaming stark, was zu 
 - **15s Standby-Cooldown**: Trennen alle Clients die Verbindung, bleibt der Stream für 15 Sekunden gepuffert (`defaultIdleGracePeriod`). Verbindet sich in dieser Zeit kein neuer Client, wird der Medien-Socket geschlossen und die Kamera in den Ruhemodus versetzt.
 
 ### 3. Fallback-Pfad: RTSP-Ingest (Port 554)
-Schlägt die Verbindung zu Sofia Port 34567 fehl (oder ist `ForceRTSPIngest` aktiv), schaltet die Bridge auf den internen RTSP-Server der Kamera um:
+Schlägt die Verbindung zu Sofia Port 34567 beim Start fehl, lehnt die Kamera `OPMonitor` zur Laufzeit dreimal in Folge ab oder ist `ForceRTSPIngest` aktiv, schaltet die Bridge automatisch auf den internen RTSP-Server der Kamera um:
 - **Kanonischer Pfad**: `rtsp://<ip>:554/user=admin_password=***_channel=1_stream=0.sdp`
 - **H.264/H.265-Track-Auswahl**: Bevorzugt H.264 aus dem Kamera-SDP; liefert die Kamera nur H.265 (HEVC), schaltet der Ingest den lokalen RTSP-Ausgang über `SetVideoCodec("h265")` um und übernimmt VPS/SPS/PPS aus dem SDP oder in-band aus eingehenden RTP-Paketen über `SetH265Parameters`.
 - **Zero-Packet Watchdog (5s)**: Schaltet sofort auf alternative URL-Pfade um, wenn nach `PLAY` keine RTP-Pakete eintreffen.

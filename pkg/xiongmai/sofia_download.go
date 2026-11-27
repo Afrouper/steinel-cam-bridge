@@ -247,6 +247,7 @@ func (d *SofiaDownloader) Download(ctx context.Context, rec *storage.RecordingIt
 	}
 	packetCount := 0
 	hdrBuf := make([]byte, HeaderLength)
+	var payloadBuf []byte
 
 	downloadTimeout := 45 * time.Second
 	if d.rateLimitKBps > 0 {
@@ -295,7 +296,7 @@ func (d *SofiaDownloader) Download(ctx context.Context, rec *storage.RecordingIt
 			break
 		}
 
-		hdr, err := DecodeHeader(hdrBuf)
+		hdr, err := DecodeHeaderValue(hdrBuf)
 		if err != nil {
 			return fmt.Errorf("invalid Sofia header during download of %s: %w", rec.ID, err)
 		}
@@ -311,7 +312,10 @@ func (d *SofiaDownloader) Download(ctx context.Context, rec *storage.RecordingIt
 			break
 		}
 
-		payload := make([]byte, hdr.DataLength)
+		if cap(payloadBuf) < int(hdr.DataLength) {
+			payloadBuf = make([]byte, hdr.DataLength)
+		}
+		payload := payloadBuf[:hdr.DataLength]
 		_ = conn.SetReadDeadline(time.Now().Add(20 * time.Second))
 		if _, err := io.ReadFull(mediaReader, payload); err != nil {
 			logger.Warn("Xiongmai Download", "⚠️ Incomplete payload read: %v", err)
