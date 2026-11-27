@@ -19,7 +19,8 @@ import (
 // for pre-login security negotiation (MsgID 1413 / 1414) and outer login packet framing.
 const DefaultSofiaAESKey = "dashoiahfarqdasr"
 
-// encryptAES128CBC encrypts plaintext using AES-128-CBC with zero IV and PKCS#7 padding.
+// encryptAES128CBC encrypts plaintext using AES-128-CBC with zero IV and PKCS#7 padding
+// without mutating plaintext's backing array.
 func encryptAES128CBC(key []byte, plaintext []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
@@ -27,11 +28,13 @@ func encryptAES128CBC(key []byte, plaintext []byte) ([]byte, error) {
 	}
 
 	padLen := aes.BlockSize - (len(plaintext) % aes.BlockSize)
-	padded := append(plaintext, bytes.Repeat([]byte{byte(padLen)}, padLen)...)
+	// The full slice expression caps the capacity at len(plaintext), so append always
+	// copies into a fresh array and never writes padding into the caller's spare capacity.
+	ciphertext := append(plaintext[:len(plaintext):len(plaintext)], bytes.Repeat([]byte{byte(padLen)}, padLen)...)
 
-	ciphertext := make([]byte, len(padded))
-	mode := cipher.NewCBCEncrypter(block, make([]byte, aes.BlockSize))
-	mode.CryptBlocks(ciphertext, padded)
+	var zeroIV [aes.BlockSize]byte
+	mode := cipher.NewCBCEncrypter(block, zeroIV[:])
+	mode.CryptBlocks(ciphertext, ciphertext)
 
 	return ciphertext, nil
 }
@@ -51,7 +54,8 @@ func decryptAES128CBC(key []byte, ciphertext []byte) ([]byte, error) {
 	}
 
 	plaintext := make([]byte, len(ciphertext))
-	mode := cipher.NewCBCDecrypter(block, make([]byte, aes.BlockSize))
+	var zeroIV [aes.BlockSize]byte
+	mode := cipher.NewCBCDecrypter(block, zeroIV[:])
 	mode.CryptBlocks(plaintext, ciphertext)
 
 	// Strip PKCS#7 padding if valid
@@ -118,18 +122,31 @@ func encryptRSAPublicKey(pubKey *rsa.PublicKey, data []byte) (string, error) {
 	return strings.ToUpper(hex.EncodeToString(ciphertext)), nil
 }
 
-// generateCommunicateKey generates a random 16-character alphanumeric string [0-9A-Za-z]
+// generateCommunicateKey generates an unbiased random 16-character alphanumeric string [0-9A-Za-z]
 // as required by Xiongmai / JFTech NetIP protocol (CProtocolNetIP::NewLoginPTL).
 func generateCommunicateKey() (string, error) {
-	const charset = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-	randBytes := make([]byte, 16)
-	if _, err := rand.Read(randBytes); err != nil {
-		return "", fmt.Errorf("failed to generate random communicate key: %w", err)
+	const (
+		charset   = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+		maxUnbias = 256 - (256 % len(charset)) // 248 = 62 * 4
+	)
+	var (
+		result  [16]byte
+		randBuf [32]byte
+	)
+	pos := 0
+	for pos < len(result) {
+		if _, err := rand.Read(randBuf[:]); err != nil {
+			return "", fmt.Errorf("failed to generate random communicate key: %w", err)
+		}
+		for _, b := range randBuf {
+			if int(b) < maxUnbias {
+				result[pos] = charset[int(b)%len(charset)]
+				pos++
+				if pos == len(result) {
+					break
+				}
+			}
+		}
 	}
-
-	result := make([]byte, 16)
-	for i := 0; i < 16; i++ {
-		result[i] = charset[int(randBytes[i])%len(charset)]
-	}
-	return string(result), nil
+	return string(result[:]), nil
 }

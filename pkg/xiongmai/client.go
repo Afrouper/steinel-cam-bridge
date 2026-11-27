@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"strconv"
 	"strings"
@@ -30,13 +29,16 @@ type Client struct {
 	dataEncryptionAES   bool
 	notEncryptMsgIDs    map[uint16]bool
 	conn                net.Conn
+	demux               *controlDemux
 	sessionID           uint32
 	sequence            uint32
 	mu                  sync.Mutex
+	pushMu              sync.Mutex // leaf lock guarding telemetryBuf, lastMCUConfig, telemetryNotify, onTelemetry, onAlarm
 	isLoggedIn          bool
 	serialTransActive   bool
 	lastMCUConfig       *MCUConfig
 	telemetryBuf        string
+	telemetryNotify     chan struct{}
 	videoFPS            int
 	videoResolution     string
 	videoCompression    string
@@ -47,7 +49,7 @@ type Client struct {
 	onAlarm             func(event string, isStart bool)
 	mcuTelemetryTimeout time.Duration
 	telemetrySeq        atomic.Uint64
-	telemetryMu         sync.Mutex // lock order: telemetryMu -> c.mu (never acquire while holding c.mu)
+	telemetryMu         sync.Mutex // lock order: telemetryMu -> c.mu -> c.pushMu
 	appliedTelemetrySeq uint64     // guarded by telemetryMu
 	closeChan           chan struct{}
 	closed              atomic.Bool
@@ -55,7 +57,6 @@ type Client struct {
 
 const (
 	defaultMCUTelemetryTimeout = 600 * time.Millisecond
-	keepAliveTelemetryTimeout  = 150 * time.Millisecond
 )
 
 // defaultNotEncryptMsgIDs lists messages exempted from payload encryption
@@ -123,6 +124,7 @@ func NewClient(cameraIP string, port int, user, password string) *Client {
 		user:              user,
 		password:          password,
 		effectivePassword: password,
+		telemetryNotify:   make(chan struct{}),
 		closeChan:         make(chan struct{}),
 	}
 }
@@ -136,22 +138,22 @@ func (c *Client) GetEffectivePassword() string {
 
 // SetOnTelemetry registers a callback invoked when new MCU telemetry is pushed (MsgID 1582).
 func (c *Client) SetOnTelemetry(fn func(*MCUConfig)) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.pushMu.Lock()
+	defer c.pushMu.Unlock()
 	c.onTelemetry = fn
 }
 
 // SetOnAlarm registers a callback invoked when motion or alarm events are pushed (MsgID 1500).
 func (c *Client) SetOnAlarm(fn func(event string, isStart bool)) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.pushMu.Lock()
+	defer c.pushMu.Unlock()
 	c.onAlarm = fn
 }
 
 // GetLastMCUConfig returns a defensive copy of the most recently received MCU configuration frame.
 func (c *Client) GetLastMCUConfig() *MCUConfig {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.pushMu.Lock()
+	defer c.pushMu.Unlock()
 	if c.lastMCUConfig == nil {
 		return nil
 	}
@@ -169,7 +171,7 @@ func (c *Client) Connect(ctx context.Context) error {
 	c.dataEncryptionAES = false
 	c.communicateKey = nil
 	c.notEncryptMsgIDs = nil
-	c.telemetryBuf = ""
+	c.clearTelemetryBuf()
 	c.sessionID = 0
 	c.sequence = 0
 
@@ -179,17 +181,14 @@ func (c *Client) Connect(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to connect to camera on %s: %w", c.addr, err)
 	}
-	c.conn = conn
-	c.isLoggedIn = false
-	c.serialTransActive = false
-	c.telemetryBuf = ""
+	c.attachDemuxLocked(conn)
 	c.closed.Store(false)
 	c.closeChan = make(chan struct{})
 	logger.Trace("Xiongmai", "🔌 TCP socket connected to %s, starting login handshake", c.addr)
 
 	// Step 1: Login
 	if err := c.loginLocked(); err != nil {
-		c.resetConnStateLocked()
+		c.resetConnLocked()
 		return fmt.Errorf("xiongmai login failed: %w", err)
 	}
 
@@ -924,6 +923,24 @@ func (c *Client) mcuWaitTimeout() time.Duration {
 	return defaultMCUTelemetryTimeout
 }
 
+func (c *Client) resetConnLocked() {
+	demux := c.demux
+	conn := c.conn
+	c.demux = nil
+	c.conn = nil
+	c.isLoggedIn = false
+	c.serialTransActive = false
+	c.dataEncryptionAES = false
+	c.communicateKey = nil
+	c.notEncryptMsgIDs = nil
+	c.clearTelemetryBuf()
+	if demux != nil {
+		_ = demux.shutdown()
+	} else if conn != nil {
+		_ = conn.Close()
+	}
+}
+
 // SetLightMode switches the L 620 MCU operating mode via OPTrans RS232
 // ("on"/"dauerlicht" -> BMdU, "off"/"auto"/"sensor" -> BMbU, "aus" -> BMaU)
 // and retries once if the synchronized MCU telemetry still reports the prior mode.
@@ -938,30 +955,15 @@ func (c *Client) SetLightMode(mode string) error {
 		return err
 	}
 
-	c.mu.Lock()
-	needsRetry := c.lastMCUConfig != nil && c.lastMCUConfig.Mode != expectedMode
-	actualMode := -1
-	if c.lastMCUConfig != nil {
-		actualMode = c.lastMCUConfig.Mode
-	}
-	c.mu.Unlock()
-
-	if needsRetry {
-		logger.Debug("Xiongmai", "🔄 MCU mode still %d after %q (expected %d), retrying once...", actualMode, cmd, expectedMode)
+	if cfg := c.GetLastMCUConfig(); cfg != nil && cfg.Mode != expectedMode {
+		logger.Debug("Xiongmai", "🔄 MCU mode still %d after %q (expected %d), retrying once...", cfg.Mode, cmd, expectedMode)
 		if err := c.SendMCUCommand(cmd); err != nil {
 			return err
 		}
 	}
 
-	c.mu.Lock()
-	mismatch := c.lastMCUConfig != nil && c.lastMCUConfig.Mode != expectedMode
-	actual := -1
-	if c.lastMCUConfig != nil {
-		actual = c.lastMCUConfig.Mode
-	}
-	c.mu.Unlock()
-	if mismatch {
-		return fmt.Errorf("xiongmai: MCU remained in mode %d after retry for %q (expected %d)", actual, mode, expectedMode)
+	if cfg := c.GetLastMCUConfig(); cfg != nil && cfg.Mode != expectedMode {
+		return fmt.Errorf("xiongmai: MCU remained in mode %d after retry for %q (expected %d)", cfg.Mode, mode, expectedMode)
 	}
 	return nil
 }
@@ -996,17 +998,16 @@ func (c *Client) QueryMCUConfig() (*MCUConfig, error) {
 		return nil, err
 	}
 
+	beforeSeq, notifyCh := c.telemetrySnapshot()
 	_, _, err := c.sendRawPacketLocked(MsgTransSendData, []byte(BuildQueryMCUCommand()))
 	if err != nil {
 		return nil, fmt.Errorf("failed to send MCU query command: %w", err)
 	}
 
-	// Drain immediate telemetry push (1582) that follows 1573
-	c.drainPendingTelemetryLocked(c.mcuWaitTimeout())
+	c.waitForTelemetrySinceLocked(beforeSeq, notifyCh, c.mcuWaitTimeout())
 
-	if c.lastMCUConfig != nil {
-		cp := *c.lastMCUConfig
-		return &cp, nil
+	if cfg := c.GetLastMCUConfig(); cfg != nil {
+		return cfg, nil
 	}
 	return nil, errors.New("no MCU telemetry received after query")
 }
@@ -1023,20 +1024,22 @@ func (c *Client) SendMCUCommand(cmd string) error {
 		return err
 	}
 
+	beforeSeq, notifyCh := c.telemetrySnapshot()
 	_, _, err := c.sendRawPacketLocked(MsgTransSendData, []byte(cmd))
 	if err != nil {
 		return fmt.Errorf("failed to send MCU command %q: %w", cmd, err)
 	}
 
 	waitTimeout := c.mcuWaitTimeout()
-	gotTelemetry := c.drainPendingTelemetryLocked(waitTimeout)
+	gotTelemetry := c.waitForTelemetrySinceLocked(beforeSeq, notifyCh, waitTimeout)
 
 	if !gotTelemetry && cmd != BuildQueryMCUCommand() && c.conn != nil {
 		logger.Trace("Xiongmai MCU", "-> No immediate 1582 telemetry after %q; syncing MCU state via BFbU...", cmd)
+		qSeq, qNotify := c.telemetrySnapshot()
 		if _, _, qErr := c.sendRawPacketLocked(MsgTransSendData, []byte(BuildQueryMCUCommand())); qErr != nil {
 			return fmt.Errorf("follow-up MCU status sync after %q failed: %w", cmd, qErr)
 		}
-		c.drainPendingTelemetryLocked(waitTimeout)
+		c.waitForTelemetrySinceLocked(qSeq, qNotify, waitTimeout)
 	}
 	return nil
 }
@@ -1085,46 +1088,36 @@ func (c *Client) SendKeepAlive() error {
 	_, err := c.sendPacketLocked(MsgKeepAliveReq, payload)
 	if err == nil {
 		logger.Trace("Xiongmai", "<- KeepAlive acknowledged")
-		c.drainPendingTelemetryLocked(keepAliveTelemetryTimeout)
 	}
 	return err
 }
 
-func (c *Client) resetConnStateLocked() {
-	if c.conn != nil {
-		_ = c.conn.Close()
-		c.conn = nil
-	}
-	c.isLoggedIn = false
-	c.serialTransActive = false
-	c.dataEncryptionAES = false
-	c.communicateKey = nil
-	c.notEncryptMsgIDs = nil
-	c.telemetryBuf = ""
-}
-
 // sendRawPacketWithHeaderLocked encodes the Sofia header with custom channel, totalPkt and sessionID,
-// sends the packet and reads the response without logging request payloads (essential to prevent sensitive
-// credentials like PassWord from leaking - CWE-312).
+// sends the packet over the serialized control writer and awaits the Sequence-correlated response
+// from controlDemux without logging request payloads (preventing PassWord leaks - CWE-312).
 func (c *Client) sendRawPacketWithHeaderLocked(msgID uint16, channel byte, totalPkt byte, sessionID uint32, payload []byte) ([]byte, *Header, error) {
-	if c.conn == nil {
-		return nil, nil, errors.New("connection is closed")
+	demux, err := c.ensureDemuxLocked()
+	if err != nil {
+		return nil, nil, err
 	}
 
 	c.sequence++
-	// Sofia/NetIP payloads require a single 0x00 null terminator.
+	reqSeq := c.sequence
+
+	// Sofia/NetIP payloads require a single 0x00 null terminator; full-slice expression
+	// prevents mutating a caller's shared backing array when cap(payload) > len(payload).
 	var dataWithTerminator []byte
 	if len(payload) > 0 && payload[len(payload)-1] == 0x00 {
 		dataWithTerminator = payload
 	} else {
-		dataWithTerminator = append(payload, 0x00)
+		dataWithTerminator = append(payload[:len(payload):len(payload)], 0x00)
 	}
 
 	hdr := Header{
 		Magic:      HeaderMagic,
 		Channel:    channel,
 		SessionID:  sessionID,
-		Sequence:   c.sequence,
+		Sequence:   reqSeq,
 		TotalPkt:   totalPkt,
 		MsgID:      msgID,
 		DataLength: uint32(len(dataWithTerminator)),
@@ -1133,248 +1126,47 @@ func (c *Client) sendRawPacketWithHeaderLocked(msgID uint16, channel byte, total
 	logger.Trace("Xiongmai", "-> Sofia Raw Packet: MsgID=%d (0x%04X), Seq=%d, Channel=0x%02X, TotalPkt=0x%02X, SessionID=0x%08X, Len=%d",
 		hdr.MsgID, hdr.MsgID, hdr.Sequence, hdr.Channel, hdr.TotalPkt, hdr.SessionID, hdr.DataLength)
 
-	packet := append(hdr.Encode(), dataWithTerminator...)
+	waiter, err := demux.registerPending(reqSeq, msgID)
+	if err != nil {
+		c.resetConnLocked()
+		return nil, nil, err
+	}
+	defer demux.unregisterPending(reqSeq, waiter)
 
 	timeout := 10 * time.Second
-	if msgID == MsgFileSearchReq || msgID == MsgFileSearchResp {
+	switch msgID {
+	case MsgFileSearchReq, MsgFileSearchResp:
 		timeout = 25 * time.Second
+	case MsgLogoutReq:
+		timeout = 1 * time.Second
 	}
-	overallDeadline := time.Now().Add(timeout)
-	_ = c.conn.SetDeadline(overallDeadline)
-	defer func() {
-		if c.conn != nil {
-			_ = c.conn.SetDeadline(time.Time{})
-		}
-	}()
-	if _, err := c.conn.Write(packet); err != nil {
-		c.resetConnStateLocked()
+
+	packet := append(hdr.Encode(), dataWithTerminator...)
+	if err := demux.writePacket(packet, timeout); err != nil {
+		c.resetConnLocked()
 		return nil, nil, fmt.Errorf("write error: %w", err)
 	}
 
-	// Read response header (20 bytes)
-	for {
-		_ = c.conn.SetReadDeadline(overallDeadline)
-		respHdrBuf := make([]byte, HeaderLength)
-		if _, err := io.ReadFull(c.conn, respHdrBuf); err != nil {
-			c.resetConnStateLocked()
-			return nil, nil, fmt.Errorf("failed to read response header: %w", err)
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	select {
+	case resp := <-waiter.ch:
+		if resp.hdr != nil && resp.hdr.Sequence > c.sequence && resp.hdr.Sequence-c.sequence <= 16 {
+			c.sequence = resp.hdr.Sequence
 		}
-
-		respHdr, err := DecodeHeader(respHdrBuf)
-		if err != nil {
-			c.resetConnStateLocked()
-			return nil, nil, fmt.Errorf("invalid response header: %w", err)
-		}
-
-		logger.Trace("Xiongmai", "<- Sofia Raw Header: MsgID=%d (0x%04X), Seq=%d, Channel=0x%02X, TotalPkt=0x%02X, SessionID=0x%08X, Len=%d",
-			respHdr.MsgID, respHdr.MsgID, respHdr.Sequence, respHdr.Channel, respHdr.TotalPkt, respHdr.SessionID, respHdr.DataLength)
-
-		if respHdr.DataLength > 65535 {
-			c.resetConnStateLocked()
-			return nil, nil, fmt.Errorf("response payload too large: %d bytes", respHdr.DataLength)
-		}
-
-		// Ensure payload read is bounded by overallDeadline (and at least 10s if header just arrived)
-		payloadDeadline := time.Now().Add(10 * time.Second)
-		if overallDeadline.After(payloadDeadline) {
-			payloadDeadline = overallDeadline
-		}
-		_ = c.conn.SetReadDeadline(payloadDeadline)
-		respPayload := make([]byte, respHdr.DataLength)
-		if _, err := io.ReadFull(c.conn, respPayload); err != nil {
-			c.resetConnStateLocked()
-			return nil, nil, fmt.Errorf("failed to read response payload: %w", err)
-		}
-
-		// Trim trailing null/newlines
-		cleanPayload := strings.TrimRight(string(respPayload), "\x00\r\n ")
-
-		// Handle unsolicited / push MCU telemetry (MsgID 1582)
-		if respHdr.MsgID == MsgTransSerialData {
-			c.handleTelemetryPushLocked(cleanPayload)
-			if msgID == MsgTransSerialData && c.telemetryBuf == "" {
-				return []byte(cleanPayload), respHdr, nil
-			}
-			continue
-		}
-
-		// Handle unsolicited / push Alarm notification (MsgID 1500)
-		if respHdr.MsgID == MsgAlarmReq {
-			c.handleAlarmPushLocked(respHdr, respPayload)
-			if msgID == MsgAlarmReq {
-				return []byte(cleanPayload), respHdr, nil
-			}
-			continue
-		}
-
-		return []byte(cleanPayload), respHdr, nil
-	}
-}
-
-func (c *Client) handleTelemetryPushLocked(raw string) bool {
-	raw = strings.Trim(raw, "\x00\r\n ")
-	if raw == "" {
-		return false
-	}
-
-	full := c.telemetryBuf + raw
-
-	// If the accumulated string does not end with "U", buffer it and wait for next chunk
-	if !strings.HasSuffix(full, "U") {
-		// If it contains "B", start buffering from the last "B"
-		if startIdx := strings.LastIndex(full, "B"); startIdx >= 0 {
-			c.telemetryBuf = full[startIdx:]
-		} else {
-			c.telemetryBuf = ""
-		}
-		return false
-	}
-
-	// Full frame received: locate starting "B"
-	c.telemetryBuf = ""
-	startIdx := strings.LastIndex(full, "B")
-	if startIdx < 0 {
-		return false
-	}
-	frame := full[startIdx:]
-
-	cfg, err := ParseMCUString(frame)
-	if err != nil {
-		logger.Debug("Xiongmai", "⚠️ Could not parse MsgID 1582 telemetry string %q: %v", frame, err)
-		return false
-	}
-	c.lastMCUConfig = cfg
-	seq := c.telemetrySeq.Add(1)
-	logger.Debug("Xiongmai", "💡 Received MCU Telemetry (1582): %q -> LightOn=%v, Dim=%d%%, Lux=%d, Dist=%dm, Delay=%ds, Lowlight=%d%% (%s)",
-		frame, cfg.IsLightOn(), cfg.Highlight, cfg.TwilightLux, cfg.Distance, cfg.HighlightDelaySec, cfg.Lowlight, cfg.LowlightDuration)
-	if c.onTelemetry != nil {
-		cb := c.onTelemetry
-		cfgCopy := *cfg
-		go func() {
-			c.telemetryMu.Lock()
-			defer c.telemetryMu.Unlock()
-			if c.telemetrySeq.Load() != seq {
-				return
-			}
-			cb(&cfgCopy)
-			c.appliedTelemetrySeq = seq
-		}()
-	}
-	return true
-}
-
-// runSerializedTelemetry runs fn serialized with async telemetry callbacks and
-// invalidates any older queued telemetry goroutines that have not started yet.
-// alreadyApplied is true when the latest received telemetry frame was already
-// delivered to onTelemetry, allowing callers to skip duplicate status updates.
-func (c *Client) runSerializedTelemetry(fn func(cfg *MCUConfig, alreadyApplied bool)) {
-	c.telemetryMu.Lock()
-	defer c.telemetryMu.Unlock()
-	latestSeq := c.telemetrySeq.Load()
-	alreadyApplied := latestSeq > 0 && c.appliedTelemetrySeq == latestSeq
-	if !alreadyApplied {
-		nextSeq := c.telemetrySeq.Add(1)
-		c.appliedTelemetrySeq = nextSeq
-	}
-	cfg := c.GetLastMCUConfig()
-	fn(cfg, alreadyApplied)
-}
-
-func (c *Client) drainPendingTelemetryLocked(timeout time.Duration) bool {
-	if c.conn == nil {
-		return false
-	}
-	if timeout <= 0 {
-		timeout = defaultMCUTelemetryTimeout
-	}
-	received := false
-	// Try reading up to 2 packets in case the 1582 frame was split into 2 chunks
-	for i := 0; i < 2; i++ {
-		_ = c.conn.SetReadDeadline(time.Now().Add(timeout))
-		respHdrBuf := make([]byte, HeaderLength)
-		n, err := io.ReadFull(c.conn, respHdrBuf)
-		if err != nil || n < HeaderLength {
-			_ = c.conn.SetDeadline(time.Time{})
-			break
-		}
-		respHdr, err := DecodeHeader(respHdrBuf)
-		if err != nil || respHdr.DataLength > 65535 {
-			_ = c.conn.SetDeadline(time.Time{})
-			break
-		}
-		_ = c.conn.SetReadDeadline(time.Now().Add(timeout))
-		respPayload := make([]byte, respHdr.DataLength)
-		if _, err := io.ReadFull(c.conn, respPayload); err != nil {
-			_ = c.conn.SetDeadline(time.Time{})
-			break
-		}
-		_ = c.conn.SetDeadline(time.Time{})
-		cleanPayload := strings.TrimRight(string(respPayload), "\x00\r\n ")
-		if respHdr.MsgID == MsgTransSerialData {
-			if c.handleTelemetryPushLocked(cleanPayload) {
-				received = true
-				break
-			}
-		} else if respHdr.MsgID == MsgAlarmReq {
-			c.handleAlarmPushLocked(respHdr, respPayload)
-		}
-	}
-	return received
-}
-
-func (c *Client) handleAlarmPushLocked(hdr *Header, rawPayload []byte) {
-	cleanPayload := strings.Trim(string(rawPayload), "\x00\r\n ")
-	logger.Debug("Xiongmai", "🚨 Received Alarm notification (MsgID 1500): %s", cleanPayload)
-
-	// Send standard acknowledgement MsgAlarmResp (1501)
-	ack := map[string]interface{}{
-		"Name":      "AlarmInfo",
-		"SessionID": fmt.Sprintf("0x%08X", hdr.SessionID),
-		"Ret":       100,
-	}
-	ackBytes, _ := json.Marshal(ack)
-	ackBytes = append(ackBytes, 0x00)
-
-	ackHdr := Header{
-		Magic:      HeaderMagic,
-		Channel:    hdr.Channel,
-		TotalPkt:   hdr.TotalPkt,
-		SessionID:  hdr.SessionID,
-		Sequence:   hdr.Sequence,
-		MsgID:      MsgAlarmResp,
-		DataLength: uint32(len(ackBytes)),
-	}
-
-	if c.conn != nil {
-		_ = c.conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
-		_, _ = c.conn.Write(append(ackHdr.Encode(), ackBytes...))
-		_ = c.conn.SetWriteDeadline(time.Time{})
-	}
-
-	var push AlarmPushResp
-	if err := json.Unmarshal([]byte(cleanPayload), &push); err == nil {
-		eventType := push.AlarmInfo.Event
-		if eventType == "" {
-			eventType = push.Event
-		}
-		if eventType == "" {
-			eventType = "MotionDetect"
-		}
-		isStart := !strings.EqualFold(push.AlarmInfo.State, "Stop") && !strings.EqualFold(push.Status, "Stop")
-
-		if c.onAlarm != nil {
-			cb := c.onAlarm
-			go cb(eventType, isStart)
-		}
-	} else {
-		// Fallback: check if payload contains "motion" or "detect"
-		lower := strings.ToLower(cleanPayload)
-		if strings.Contains(lower, "motion") || strings.Contains(lower, "detect") {
-			if c.onAlarm != nil {
-				cb := c.onAlarm
-				go cb("MotionDetect", true)
-			}
-		}
+		return resp.payload, resp.hdr, nil
+	case <-demux.closedCh:
+		readErr := demux.getReadErr()
+		c.resetConnLocked()
+		return nil, nil, readErr
+	case <-demux.done:
+		readErr := demux.getReadErr()
+		c.resetConnLocked()
+		return nil, nil, readErr
+	case <-timer.C:
+		c.resetConnLocked()
+		return nil, nil, fmt.Errorf("timed out waiting for sofia response (msg_id=%d, seq=%d)", msgID, reqSeq)
 	}
 }
 
@@ -1515,8 +1307,6 @@ func (c *Client) SetTime(t time.Time) error {
 // Close gracefully logs out and closes the connection.
 func (c *Client) Close() error {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	c.closed.Store(true)
 	if c.closeChan != nil {
 		select {
@@ -1527,11 +1317,12 @@ func (c *Client) Close() error {
 		}
 	}
 
+	var demux *controlDemux
+	var closeErr error
 	if c.conn != nil {
 		if c.isLoggedIn {
-			// Bound logout write/read so Close() never stalls on an unresponsive camera.
-			_ = c.conn.SetDeadline(time.Now().Add(1 * time.Second))
-			req := map[string]interface{}{
+			// Bound logout write so Close() never stalls on an unresponsive camera.
+			req := map[string]any{
 				"Name":      "OPUserLogout",
 				"SessionID": fmt.Sprintf("0x%08X", c.sessionID),
 			}
@@ -1554,19 +1345,36 @@ func (c *Client) Close() error {
 				MsgID:      MsgLogoutReq,
 				DataLength: uint32(len(payload) + 1),
 			}
-			_, _ = c.conn.Write(append(hdr.Encode(), append(payload, 0x00)...))
+			logoutPkt := append(hdr.Encode(), append(payload, 0x00)...)
+			if c.demux != nil {
+				_ = c.demux.writePacket(logoutPkt, 1*time.Second)
+			} else {
+				_ = c.conn.SetWriteDeadline(time.Now().Add(1 * time.Second))
+				_, _ = c.conn.Write(logoutPkt)
+			}
 		}
-		err := c.conn.Close()
+		demux = c.demux
+		conn := c.conn
+		c.demux = nil
 		c.conn = nil
 		c.isLoggedIn = false
 		c.serialTransActive = false
 		c.dataEncryptionAES = false
 		c.communicateKey = nil
 		c.notEncryptMsgIDs = nil
-		c.telemetryBuf = ""
-		return err
+		c.clearTelemetryBuf()
+		if demux != nil {
+			closeErr = demux.shutdown()
+		} else if conn != nil {
+			closeErr = conn.Close()
+		}
 	}
-	return nil
+	c.mu.Unlock()
+
+	if demux != nil {
+		demux.waitClosed(controlCloseWaitTimeout)
+	}
+	return closeErr
 }
 
 // DiscoveredDevice holds network and identification details of a detected camera.
