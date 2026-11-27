@@ -119,3 +119,32 @@ func BenchmarkTranscoderProcessPCMU(b *testing.B) {
 		_ = transcoder.ProcessPCMU(pcmuChunk)
 	}
 }
+
+func TestTranscoder_SeamlessPacketBoundaryInterpolation(t *testing.T) {
+	tr := NewTranscoder(nil)
+	defer tr.Close()
+
+	// Feed two 1-byte chunks with distinct values and verify boundary sample is their exact midpoint.
+	tr.appendResampledG711Locked([]byte{0xFF}, &ulawToPCM) // 0
+	tr.appendResampledG711Locked([]byte{0x80}, &ulawToPCM) // large positive sample
+	require.Len(t, tr.pcmBuf, 8)
+
+	s0 := int16(uint16(tr.pcmBuf[2]) | uint16(tr.pcmBuf[3])<<8)
+	mid := int16(uint16(tr.pcmBuf[4]) | uint16(tr.pcmBuf[5])<<8)
+	s1 := int16(uint16(tr.pcmBuf[6]) | uint16(tr.pcmBuf[7])<<8)
+	assert.Equal(t, int16((int32(s0)+int32(s1))/2), mid, "first upsampled sample of packet 2 must interpolate smoothly from last sample of packet 1")
+}
+
+func BenchmarkG711TranscodeInto(b *testing.B) {
+	src := make([]byte, 160)
+	dst := make([]byte, 160)
+	for i := range src {
+		src[i] = byte(i)
+	}
+	b.ReportAllocs()
+	b.SetBytes(int64(len(src)))
+	b.ResetTimer()
+	for range b.N {
+		TranscodePCMUToPCMAInto(dst, src)
+	}
+}

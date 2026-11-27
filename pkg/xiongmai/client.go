@@ -75,8 +75,8 @@ var defaultNotEncryptMsgIDs = map[uint16]bool{
 	MsgPlayClaimResp:    true, // 1425
 	MsgPlayClaimData:    true, // 1426
 	MsgTalkAudioData:    true, // 1432
-	MsgTalkClaimReq:     true, // 1434
-	MsgTalkClaimResp:    true, // 1435
+	MsgTalkClaimV2Req:   true, // 1434
+	MsgTalkClaimV2Resp:  true, // 1435
 	MsgSearchDeviceReq:  true, // 1530
 	MsgSearchDeviceResp: true, // 1531
 	MsgTransRecvData:    true, // 1580
