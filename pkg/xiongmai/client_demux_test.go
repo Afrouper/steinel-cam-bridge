@@ -277,6 +277,11 @@ func TestControlDemux_ConcurrentRequestsAndPushesRaceSafe(t *testing.T) {
 				writePkt(Header{Magic: HeaderMagic, SessionID: 0x42, Sequence: hdr.Sequence, MsgID: MsgTransSendResp, DataLength: uint32(len(resp))}, resp)
 				frame := []byte("BkbwbzaqazoU\x00")
 				writePkt(Header{Magic: HeaderMagic, SessionID: 0x42, Sequence: hdr.Sequence + 10000, MsgID: MsgTransSerialData, DataLength: uint32(len(frame))}, frame)
+				// Interleave an unsolicited alarm push with the in-flight request/response traffic.
+				// The 5ms ticker above alone is not enough: the 60 concurrent requests usually
+				// complete before its first tick, so no alarm would arrive while requests are pending.
+				alarm := []byte(`{"Name":"AlarmInfo","SessionID":"0x00000042","AlarmInfo":{"Event":"MotionDetect","State":"Start","Channel":0}}` + "\x00")
+				writePkt(Header{Magic: HeaderMagic, SessionID: 0x42, Sequence: hdr.Sequence + 20000, MsgID: MsgAlarmReq, DataLength: uint32(len(alarm))}, alarm)
 			case MsgAlarmResp:
 				continue
 			default:
@@ -313,8 +318,12 @@ func TestControlDemux_ConcurrentRequestsAndPushesRaceSafe(t *testing.T) {
 	}
 	wg.Wait()
 
-	assert.Greater(t, telemetryCallbacks.Load(), int32(0))
-	assert.Greater(t, alarmCallbacks.Load(), int32(0))
+	// onTelemetry and onAlarm are dispatched asynchronously (go cb(...)), so wait for the
+	// callbacks instead of asserting immediately after the last response arrived.
+	assert.Eventually(t, func() bool { return telemetryCallbacks.Load() > 0 }, 2*time.Second, 5*time.Millisecond,
+		"expected at least one onTelemetry callback")
+	assert.Eventually(t, func() bool { return alarmCallbacks.Load() > 0 }, 2*time.Second, 5*time.Millisecond,
+		"expected at least one onAlarm callback")
 	require.NoError(t, client.Close())
 }
 
