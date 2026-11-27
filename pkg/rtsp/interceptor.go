@@ -92,18 +92,6 @@ func (c *interceptingConn) bindSession(st *Stream, sess *gortsplib.ServerSession
 	c.routeMu.Unlock()
 }
 
-func (c *interceptingConn) setBackchannelChannel(ch int) {
-	if ch < 0 || ch > 254 {
-		return
-	}
-	c.routeMu.Lock()
-	c.backchannelRTPChan = ch
-	if idx := ch / 2; idx < 64 {
-		c.usedEvenChans |= 1 << uint(idx)
-	}
-	c.routeMu.Unlock()
-}
-
 // recordTrackSetup records a TCP interleaved channel pair negotiated during SETUP
 // (either explicitly requested in the Transport header or auto-assigned sequentially
 // by gortsplib) and marks it as the backchannel RTP channel when isBackchannel is true.
@@ -238,9 +226,9 @@ func parseRTSPContentLength(hdrBytes []byte) int {
 }
 
 func (c *interceptingConn) readFullBounded(buf []byte) error {
-	_ = c.Conn.SetReadDeadline(time.Now().Add(interleavedReadTimeout))
+	_ = c.SetReadDeadline(time.Now().Add(interleavedReadTimeout))
 	_, err := io.ReadFull(c.Conn, buf)
-	_ = c.Conn.SetReadDeadline(time.Time{})
+	_ = c.SetReadDeadline(time.Time{})
 	return err
 }
 
