@@ -28,11 +28,9 @@ func encryptAES128CBC(key []byte, plaintext []byte) ([]byte, error) {
 	}
 
 	padLen := aes.BlockSize - (len(plaintext) % aes.BlockSize)
-	ciphertext := make([]byte, len(plaintext)+padLen)
-	copy(ciphertext, plaintext)
-	for i := len(plaintext); i < len(ciphertext); i++ {
-		ciphertext[i] = byte(padLen)
-	}
+	// The full slice expression caps the capacity at len(plaintext), so append always
+	// copies into a fresh array and never writes padding into the caller's spare capacity.
+	ciphertext := append(plaintext[:len(plaintext):len(plaintext)], bytes.Repeat([]byte{byte(padLen)}, padLen)...)
 
 	var zeroIV [aes.BlockSize]byte
 	mode := cipher.NewCBCEncrypter(block, zeroIV[:])
