@@ -5,7 +5,7 @@ go 1.27.0
 require (
 	github.com/bluenviron/gortsplib/v4 v4.11.2
 	github.com/bluenviron/mediacommon v1.13.1
-	github.com/eclipse/paho.mqtt.golang v1.5.1
+	github.com/eclipse/paho.mqtt.golang v1.5.2
 	github.com/google/uuid v1.6.0
 	github.com/pion/dtls/v3 v3.1.16
 	github.com/pion/rtcp v1.2.20
@@ -32,8 +32,8 @@ require (
 	github.com/pion/turn/v5 v5.1.3 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
-	golang.org/x/crypto v0.48.0 // indirect
-	golang.org/x/net v0.50.0 // indirect
-	golang.org/x/sync v0.17.0 // indirect
-	golang.org/x/sys v0.41.0 // indirect
+	golang.org/x/crypto v0.51.0 // indirect
+	golang.org/x/net v0.55.0 // indirect
+	golang.org/x/sync v0.19.0 // indirect
+	golang.org/x/sys v0.45.0 // indirect
 )
